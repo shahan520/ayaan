@@ -1,0 +1,6 @@
+{
+  "name": "TradeWeb Pro - Investment & Admin Platform",
+  "description": "Mobile-first investment and trading platform with VIP order matching, TRC-20 USDT deposit/withdrawal security flows, mandatory referral verification, and RBAC Admin Panel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
