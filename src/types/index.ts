@@ -20,10 +20,16 @@ export interface AdminUser {
 
 export interface UserWallet {
   walletName: string;
-  protocol: 'TRC-20';
+  protocol: 'TRC-20' | 'ERC-20' | 'BEP-20';
   walletAddress: string;
   accountName: string;
   boundAt: string;
+}
+
+export interface CustomComboRule {
+  stepNumber: number;
+  requiredPercent: number; // e.g. 36 means 36% of user's balance
+  commissionPercent: number; // e.g. 20 means 20% of user's balance
 }
 
 export interface User {
@@ -43,7 +49,18 @@ export interface User {
   createdAt: string;
   todayOrdersCount: number;
   todayCommission: number;
+  yesterdayCommission?: number;
+  lastActiveDate?: string; // YYYY-MM-DD for midnight reset
   completedTasksCount: number;
+  currentCycleTasks: number; // 0 to 25 tasks in current cycle
+  cycleNumber: number; // work cycle index: 1, 2, ...
+  cycleApprovedByAdmin: boolean; // locked when 25 tasks reached until admin approves
+  comboOrderStep: number; // triggers special combo order at task 14 or 15
+  isVipAccount?: boolean; // Admin VIP Account flag (triggers 5 combos or custom combos)
+  isLockedAccount?: boolean; // Admin Locked Account flag (tasks run, withdrawal strictly blocked)
+  customCombos?: CustomComboRule[]; // Custom combo rules configured by Admin
+  taxPaid?: boolean; // Indicates if 25% tax has been cleared for balance > 50,000 USDT
+  taxAmountPaid?: number;
 }
 
 export interface InviteCode {
@@ -118,6 +135,12 @@ export interface GrabbedOrder {
   status: 'incomplete' | 'completed';
   createdAt: string;
   completedAt?: string;
+  isComboOrder?: boolean;
+  comboStepNumber?: number; // e.g. 7, 8, 14, 15, 19, 23, 25
+  requiredBalance?: number;
+  comboDepositPercent?: number; // e.g. 36%, 55%, 267%
+  comboCommissionPercent?: number; // e.g. 20%, 26%, 81%
+  requiredDepositDeficit?: number; // Mandatory deposit deficit
 }
 
 export interface AuditLog {
@@ -140,6 +163,11 @@ export interface AuditLog {
     | 'DISABLE_INVITE_CODE'
     | 'CREATE_SUBADMIN'
     | 'UPDATE_SUBADMIN'
+    | 'RESET_TASK_CYCLE'
+    | 'SET_VIP_STATUS'
+    | 'TOGGLE_ACCOUNT_LOCK'
+    | 'SET_CUSTOM_COMBOS'
+    | 'CLEAR_USER_TAX'
     | 'UPDATE_SYSTEM_WALLET';
   details: string;
   targetUserUid?: string;
@@ -148,6 +176,7 @@ export interface AuditLog {
 
 export interface SystemConfig {
   trc20DepositAddress: string;
+  trc20AddressPool?: string[];
   platformName: string;
   minDeposit: number;
   minWithdrawal: number;

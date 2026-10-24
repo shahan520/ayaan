@@ -15,10 +15,12 @@ import {
   Lock,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Tag,
   Trash2,
   Unlock,
@@ -30,7 +32,8 @@ import {
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { AdminPermission, AdminUser } from '../../types';
+import { AdminPermission, AdminUser, CustomComboRule, User } from '../../types';
+import { QRCodeSVG } from '../common/QRCodeSVG';
 
 export const AdminPanel: React.FC = () => {
   const {
@@ -57,6 +60,12 @@ export const AdminPanel: React.FC = () => {
     createSubAdmin,
     updateSubAdminPermissions,
     updateSystemConfig,
+    resetUserTaskCycle,
+    resetUserToFreshCycle,
+    toggleUserVip,
+    toggleUserLock,
+    setCustomUserCombos,
+    clearUserTax,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<
@@ -80,6 +89,13 @@ export const AdminPanel: React.FC = () => {
   const [resetType, setResetType] = useState<'login' | 'withdrawal'>('login');
   const [newPassword, setNewPassword] = useState('');
 
+  // Custom Combo Configuration modal state
+  const [comboModalUser, setComboModalUser] = useState<User | null>(null);
+  const [customRulesList, setCustomRulesList] = useState<CustomComboRule[]>([]);
+  const [newComboStep, setNewComboStep] = useState<string>('14');
+  const [newComboDepositPct, setNewComboDepositPct] = useState<string>('36');
+  const [newComboCommPct, setNewComboCommPct] = useState<string>('20');
+
   // Invite code creation state
   const [newCustomCode, setNewCustomCode] = useState('');
   const [newCodeMaxUses, setNewCodeMaxUses] = useState('');
@@ -95,9 +111,12 @@ export const AdminPanel: React.FC = () => {
     'can_view_logs',
   ]);
 
-  // Wallet address edit state
+  // Wallet address & rotating pool edit state
   const [editWalletAddress, setEditWalletAddress] = useState(systemConfig.trc20DepositAddress);
-  const [walletSavedToast, setWalletSavedToast] = useState(false);
+  const [newPoolAddress, setNewPoolAddress] = useState('');
+  const [bulkPoolText, setBulkPoolText] = useState('');
+  const [showBulkPoolInput, setShowBulkPoolInput] = useState(false);
+  const [simulatedAddress, setSimulatedAddress] = useState<string | null>(null);
 
   // Global action feedback banner
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -661,6 +680,7 @@ export const AdminPanel: React.FC = () => {
                     <th className="py-3 px-3">VIP Tier</th>
                     <th className="py-3 px-3">Own Code / Referred By</th>
                     <th className="py-3 px-3">Status</th>
+                    <th className="py-3 px-3">25-Task Cycle</th>
                     <th className="py-3 px-3">Withdraw Pass</th>
                     <th className="py-3 px-3 text-right">Admin Actions</th>
                   </tr>
@@ -678,14 +698,44 @@ export const AdminPanel: React.FC = () => {
                         <td className="py-3 px-3">
                           <span className="font-semibold text-white block">{user.username}</span>
                           <span className="text-[10px] text-slate-500">{user.createdAt.substring(0, 10)}</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {user.isVipAccount && (
+                              <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[9px] font-bold">
+                                ★ VIP (5 Combos)
+                              </span>
+                            )}
+                            {user.isLockedAccount && (
+                              <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-bold">
+                                🔒 WD LOCKED
+                              </span>
+                            )}
+                            {user.customCombos && user.customCombos.length > 0 && (
+                              <span className="px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[9px] font-bold">
+                                ⚡ {user.customCombos.length} Custom Combos
+                              </span>
+                            )}
+                            {user.balance > 50000 && (
+                              user.taxPaid ? (
+                                <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
+                                  ✓ 25% Tax Paid
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold">
+                                  ⚠ 25% Tax Pending (${(user.balance * 0.25).toFixed(0)})
+                                </span>
+                              )
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 px-3 font-mono font-bold text-white text-sm">
                           {user.balance.toFixed(2)} USDT
                         </td>
                         <td className="py-3 px-3">
-                          <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold text-[10px]">
-                            VIP {user.vipLevel}
-                          </span>
+                          <div className="space-y-1">
+                            <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold text-[10px] block w-fit">
+                              VIP {user.vipLevel}
+                            </span>
+                          </div>
                         </td>
                         <td className="py-3 px-3">
                           <span className="font-mono text-emerald-400 font-semibold block">
@@ -706,6 +756,33 @@ export const AdminPanel: React.FC = () => {
                             </span>
                           )}
                         </td>
+                        {/* 25-Task Work Cycle Progress */}
+                        <td className="py-3 px-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5 font-bold text-xs">
+                              <span className="text-white">
+                                {user.currentCycleTasks || 0} / 25 Tasks
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-normal">
+                                (Cycle #{user.cycleNumber || 1})
+                              </span>
+                            </div>
+                            {(user.currentCycleTasks || 0) >= 25 || !user.cycleApprovedByAdmin ? (
+                              <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold text-[10px] inline-flex items-center gap-1">
+                                <Lock className="w-3 h-3 text-rose-400" /> Locked (Cycle Done)
+                              </span>
+                            ) : (
+                              <div className="w-28 bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                                <div
+                                  className="bg-emerald-500 h-full rounded-full transition-all"
+                                  style={{
+                                    width: `${Math.min(100, (((user.currentCycleTasks || 0) / 25) * 100))}%`,
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-3 px-3">
                           {user.withdrawalPassword ? (
                             <span className="text-emerald-400 text-[11px] flex items-center gap-1">
@@ -718,7 +795,91 @@ export const AdminPanel: React.FC = () => {
                           )}
                         </td>
                         <td className="py-3 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex flex-wrap items-center justify-end gap-1.5 max-w-[420px]">
+                            {/* Reset Task Cycle & Approve Next 25 Tasks Button */}
+                            <button
+                              onClick={() => notify(resetUserTaskCycle(user.id))}
+                              title="Reset Task Cycle & Approve Next 25 Tasks"
+                              className={`px-2 py-1 text-xs font-bold rounded transition-all flex items-center gap-1 ${
+                                (user.currentCycleTasks || 0) >= 25 || !user.cycleApprovedByAdmin
+                                  ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-md ring-2 ring-amber-400/50'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30'
+                              }`}
+                            >
+                              <RefreshCw className="w-3 h-3 shrink-0" />
+                              <span className="whitespace-nowrap">Approve 25 Tasks</span>
+                            </button>
+
+                            {/* Reset to Fresh Cycle 1 Button */}
+                            <button
+                              onClick={() => notify(resetUserToFreshCycle(user.id))}
+                              title="Reset user to Fresh Cycle 1 (Progress 0, 1 Combo planned for Task #14 or #15)"
+                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-cyan-500/20"
+                            >
+                              <RotateCcw className="w-3 h-3 text-cyan-400" />
+                              <span className="whitespace-nowrap">Fresh Cycle 1</span>
+                            </button>
+
+                            {/* VIP Toggle (5 Combo Orders schedule) */}
+                            <button
+                              onClick={() => notify(toggleUserVip(user.id))}
+                              title={user.isVipAccount ? 'Disable VIP Account' : 'Mark as VIP Account (Enforces 5 Combos schedule)'}
+                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 ${
+                                user.isVipAccount
+                                  ? 'bg-purple-900/80 text-purple-200 border border-purple-500 hover:bg-purple-800'
+                                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                              }`}
+                            >
+                              <Sparkles className="w-3 h-3 text-purple-400" />
+                              <span>{user.isVipAccount ? 'VIP (5 Combos)' : 'Set VIP'}</span>
+                            </button>
+
+                            {/* Account Lock Toggle (Tasks work, Withdrawal blocked) */}
+                            <button
+                              onClick={() => notify(toggleUserLock(user.id))}
+                              title={user.isLockedAccount ? 'Unlock Account Withdrawal' : 'Lock Account Withdrawal (Tasks work, WD strictly blocked)'}
+                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 ${
+                                user.isLockedAccount
+                                  ? 'bg-rose-900/80 text-rose-200 border border-rose-500 hover:bg-rose-800'
+                                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                              }`}
+                            >
+                              {user.isLockedAccount ? (
+                                <Lock className="w-3 h-3 text-rose-400" />
+                              ) : (
+                                <Unlock className="w-3 h-3 text-slate-400" />
+                              )}
+                              <span>{user.isLockedAccount ? 'WD Locked' : 'Lock WD'}</span>
+                            </button>
+
+                            {/* Custom Combos Config Button */}
+                            <button
+                              onClick={() => {
+                                setComboModalUser(user);
+                                setCustomRulesList(user.customCombos || []);
+                                setNewComboStep('14');
+                                setNewComboDepositPct('36');
+                                setNewComboCommPct('20');
+                              }}
+                              title="Configure Custom Combo Triggers & Percentages"
+                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-amber-500/20"
+                            >
+                              <Layers className="w-3 h-3 text-amber-400" />
+                              <span>Custom Combos</span>
+                            </button>
+
+                            {/* Clear Tax Button if balance > 50k and not paid */}
+                            {user.balance > 50000 && !user.taxPaid && (
+                              <button
+                                onClick={() => notify(clearUserTax(user.id))}
+                                title="Clear / Approve 25% Tax Requirement"
+                                className="px-2 py-1 bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-emerald-500"
+                              >
+                                <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                                <span>Clear Tax</span>
+                              </button>
+                            )}
+
                             {/* Adjust balance */}
                             <button
                               onClick={() => {
@@ -1113,36 +1274,221 @@ export const AdminPanel: React.FC = () => {
         {/* ------------------------------------------------------------- */}
         {/* 7. SYSTEM WALLET CONFIG TAB */}
         {/* ------------------------------------------------------------- */}
+        {/* ------------------------------------------------------------- */}
+        {/* 7. SYSTEM WALLET CONFIG TAB & ROTATING POOL */}
+        {/* ------------------------------------------------------------- */}
         {activeTab === 'wallet' && (
-          <div className="max-w-2xl mx-auto bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xs space-y-6">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Wallet className="w-5 h-5 text-emerald-400" />
-                System TRC-20 Wallet Configuration
-              </h2>
-              <p className="text-xs text-slate-400 mt-1">
-                Configure the master TRON (TRC-20) address that is shown to all users on the Deposit screen
-              </p>
-            </div>
-
-            <div className="space-y-4">
+          <div className="max-w-3xl mx-auto bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xs space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                  Official TRC-20 Deposit Wallet Address
-                </label>
-                <input
-                  type="text"
-                  value={editWalletAddress}
-                  onChange={(e) => setEditWalletAddress(e.target.value.trim())}
-                  disabled={!hasPermission('can_modify_wallet')}
-                  className="w-full bg-slate-900 border border-slate-800 text-xs font-mono text-white rounded-lg px-3 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-red-500"
-                />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Must be a valid TRON address starting with "T". Updating this will immediately
-                  reflect on the user QR deposit page.
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-emerald-400" />
+                  System TRC-20 Wallet & Rotation Pool
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Manage multiple rotating TRC-20 deposit addresses. Users will receive a randomly selected address and dynamic QR code on the Deposit page.
                 </p>
               </div>
+              <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                {(systemConfig.trc20AddressPool?.length || 1)} Addresses in Pool
+              </span>
+            </div>
 
+            {/* Address Pool List & Add Section */}
+            <div className="space-y-4 bg-slate-900/60 border border-slate-800/80 p-4 rounded-xl">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-200">
+                  Active TRC-20 Addresses Pool (Random Selection)
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowBulkPoolInput(!showBulkPoolInput)}
+                  className="text-xs text-red-400 hover:text-red-300 font-semibold underline cursor-pointer"
+                >
+                  {showBulkPoolInput ? 'Hide Bulk Import' : '+ Bulk Import / Replace'}
+                </button>
+              </div>
+
+              {/* Add Single Address Input */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newPoolAddress}
+                  onChange={(e) => setNewPoolAddress(e.target.value.trim())}
+                  placeholder="Paste new TRC-20 address (starts with T)..."
+                  disabled={!hasPermission('can_modify_wallet')}
+                  className="flex-1 bg-slate-950 border border-slate-800 text-xs font-mono text-white rounded-lg px-3 py-2 focus:outline-hidden focus:ring-1 focus:ring-red-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!newPoolAddress.startsWith('T') || newPoolAddress.length < 30) {
+                      notify({ success: false, message: 'Invalid TRON address format (must start with T)' });
+                      return;
+                    }
+                    const pool = systemConfig.trc20AddressPool || [systemConfig.trc20DepositAddress];
+                    if (pool.includes(newPoolAddress)) {
+                      notify({ success: false, message: 'Address already exists in rotation pool' });
+                      return;
+                    }
+                    const updated = [...pool, newPoolAddress];
+                    updateSystemConfig({ trc20AddressPool: updated, trc20DepositAddress: updated[0] });
+                    setNewPoolAddress('');
+                    notify({ success: true, message: 'Added new TRC-20 address to pool!' });
+                  }}
+                  disabled={!hasPermission('can_modify_wallet')}
+                  className="px-4 py-2 bg-red-700 hover:bg-red-600 disabled:bg-slate-800 text-white font-bold text-xs rounded-lg transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add to Pool</span>
+                </button>
+              </div>
+
+              {/* Bulk Import Textarea */}
+              {showBulkPoolInput && (
+                <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-2 animate-in fade-in duration-150">
+                  <label className="text-[11px] font-bold text-slate-300 block">
+                    Bulk Paste TRC-20 Addresses (One address per line):
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={bulkPoolText}
+                    onChange={(e) => setBulkPoolText(e.target.value)}
+                    placeholder="TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5&#10;TYDzsYUEpvnYmQk4zGP9sWWcTEd36mDksB&#10;TXn8g8G7Lq17kQmom6dj1GmaK1vo2Mpt9"
+                    className="w-full bg-slate-900 border border-slate-800 text-xs font-mono text-white rounded-lg p-2.5 focus:outline-hidden focus:ring-1 focus:ring-red-500"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowBulkPoolInput(false)}
+                      className="px-3 py-1.5 text-xs text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const lines = bulkPoolText
+                          .split('\n')
+                          .map((l) => l.trim())
+                          .filter((l) => l.startsWith('T') && l.length >= 30);
+                        if (lines.length === 0) {
+                          notify({ success: false, message: 'No valid TRON addresses found' });
+                          return;
+                        }
+                        const unique = Array.from(new Set(lines));
+                        updateSystemConfig({ trc20AddressPool: unique, trc20DepositAddress: unique[0] });
+                        setBulkPoolText('');
+                        setShowBulkPoolInput(false);
+                        notify({ success: true, message: `Updated pool with ${unique.length} addresses!` });
+                      }}
+                      className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-lg cursor-pointer"
+                    >
+                      Save Address Pool
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Address Pool Cards */}
+              <div className="space-y-2 pt-2 max-h-60 overflow-y-auto">
+                {(systemConfig.trc20AddressPool && systemConfig.trc20AddressPool.length > 0
+                  ? systemConfig.trc20AddressPool
+                  : [systemConfig.trc20DepositAddress]
+                ).map((addr, idx) => (
+                  <div
+                    key={addr + idx}
+                    className="flex items-center justify-between p-2.5 bg-slate-950 border border-slate-800 rounded-xl hover:border-slate-700 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 pr-2">
+                      <div className="w-6 h-6 rounded-md bg-red-950 text-red-400 border border-red-800/60 font-mono text-[10px] font-bold flex items-center justify-center shrink-0">
+                        #{idx + 1}
+                      </div>
+                      <div className="w-8 h-8 bg-white p-0.5 rounded-sm shrink-0 flex items-center justify-center">
+                        <QRCodeSVG value={addr} size={28} className="p-0 border-0 shadow-none" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="font-mono text-xs text-white font-semibold truncate block">
+                          {addr}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {idx === 0 ? 'Primary Default' : 'Rotation Member'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(addr);
+                          notify({ success: true, message: 'Address copied to clipboard!' });
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                        title="Copy Address"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pool = systemConfig.trc20AddressPool || [systemConfig.trc20DepositAddress];
+                          if (pool.length <= 1) {
+                            notify({ success: false, message: 'At least one address must remain in the pool' });
+                            return;
+                          }
+                          const updated = pool.filter((a) => a !== addr);
+                          updateSystemConfig({ trc20AddressPool: updated, trc20DepositAddress: updated[0] });
+                          notify({ success: true, message: 'Removed address from pool' });
+                        }}
+                        disabled={!hasPermission('can_modify_wallet')}
+                        className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-40 cursor-pointer"
+                        title="Delete Address"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Simulation button */}
+              <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                <span className="text-slate-400">Preview random user experience:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const pool = systemConfig.trc20AddressPool || [systemConfig.trc20DepositAddress];
+                    const rand = pool[Math.floor(Math.random() * pool.length)];
+                    setSimulatedAddress(rand);
+                  }}
+                  className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3 text-amber-400" />
+                  <span>Simulate Random Draw</span>
+                </button>
+              </div>
+
+              {simulatedAddress && (
+                <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl flex items-center gap-3 animate-in fade-in">
+                  <div className="w-12 h-12 bg-white p-1 rounded-lg shrink-0 flex items-center justify-center">
+                    <QRCodeSVG value={simulatedAddress} size={40} className="p-0 border-0 shadow-none" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">
+                      Randomly Drawn Address for Deposit:
+                    </span>
+                    <span className="font-mono text-xs text-white font-bold truncate block">
+                      {simulatedAddress}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* General System Config */}
+            <div className="space-y-4 pt-2">
               <div>
                 <label className="text-xs font-bold text-slate-300 block mb-1.5">
                   Platform Name
@@ -1182,25 +1528,6 @@ export const AdminPanel: React.FC = () => {
                   />
                 </div>
               </div>
-
-              <button
-                onClick={() => {
-                  if (!editWalletAddress.startsWith('T') || editWalletAddress.length < 30) {
-                    notify({ success: false, message: 'Invalid TRON address format (must start with T)' });
-                    return;
-                  }
-                  updateSystemConfig({ trc20DepositAddress: editWalletAddress });
-                  notify({ success: true, message: 'Official TRC-20 deposit wallet updated!' });
-                }}
-                disabled={!hasPermission('can_modify_wallet')}
-                className={`w-full py-2.5 rounded-lg text-xs font-bold transition-colors ${
-                  hasPermission('can_modify_wallet')
-                    ? 'bg-red-700 hover:bg-red-600 text-white shadow-sm'
-                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                }`}
-              >
-                Save System Configuration
-              </button>
             </div>
           </div>
         )}
@@ -1558,6 +1885,191 @@ export const AdminPanel: React.FC = () => {
                   Create Sub-Admin
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 4: Custom Combo Configuration Modal */}
+      {/* ------------------------------------------------------------- */}
+      {comboModalUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-amber-500" />
+                  Custom Combo Orders: {comboModalUser.username}
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  UID: <span className="font-mono text-amber-400 font-bold">{comboModalUser.uid}</span> · Balance: {comboModalUser.balance.toFixed(2)} USDT
+                </p>
+              </div>
+              <button
+                onClick={() => setComboModalUser(null)}
+                className="text-slate-400 hover:text-white text-base p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Explanatory note */}
+            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-[11px] text-slate-300 space-y-1">
+              <span className="font-bold text-amber-400 block">Combo Rule Mechanism:</span>
+              <p className="text-slate-400 leading-relaxed">
+                When a user reaches the configured task step, a high-value Combo Order triggers. The user must deposit the specified percentage deficit before they can proceed.
+              </p>
+            </div>
+
+            {/* Current Active Rules */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-white block">Active Custom Combo Triggers</span>
+              {customRulesList.length === 0 ? (
+                <div className="p-3 bg-slate-900/50 border border-dashed border-slate-800 rounded-xl text-center text-xs text-slate-500">
+                  No custom triggers configured. Default cycle/VIP rules apply.
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {customRulesList
+                    .sort((a, b) => a.stepNumber - b.stepNumber)
+                    .map((r, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-black font-mono text-xs border border-amber-500/30">
+                            Task #{r.stepNumber}
+                          </span>
+                          <span className="text-slate-300">
+                            Deposit: <strong className="text-rose-400 font-mono">+{r.requiredPercent}%</strong> of balance
+                          </span>
+                          <span className="text-slate-300">
+                            Commission: <strong className="text-emerald-400 font-mono">+{r.commissionPercent}%</strong>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomRulesList((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                          className="text-rose-400 hover:text-rose-300 p-1"
+                          title="Remove Rule"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            {/* Add New Trigger Form */}
+            <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+              <span className="text-xs font-bold text-amber-400 block">+ Add Custom Combo Trigger</span>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                    Task Step (1-25)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="25"
+                    value={newComboStep}
+                    onChange={(e) => setNewComboStep(e.target.value)}
+                    placeholder="e.g. 14"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                    Required Deposit %
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={newComboDepositPct}
+                    onChange={(e) => setNewComboDepositPct(e.target.value)}
+                    placeholder="e.g. 36"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-rose-300 font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                    Commission %
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={newComboCommPct}
+                    onChange={(e) => setNewComboCommPct(e.target.value)}
+                    placeholder="e.g. 20"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-emerald-300 font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const s = parseInt(newComboStep, 10);
+                  const dep = parseFloat(newComboDepositPct);
+                  const comm = parseFloat(newComboCommPct);
+                  if (isNaN(s) || s < 1 || s > 25) {
+                    notify({ success: false, message: 'Step number must be between 1 and 25.' });
+                    return;
+                  }
+                  if (isNaN(dep) || dep <= 0) {
+                    notify({ success: false, message: 'Please enter a valid deposit percent.' });
+                    return;
+                  }
+                  if (isNaN(comm) || comm <= 0) {
+                    notify({ success: false, message: 'Please enter a valid commission percent.' });
+                    return;
+                  }
+
+                  // Replace if step already exists, or append
+                  setCustomRulesList((prev) => {
+                    const filtered = prev.filter((r) => r.stepNumber !== s);
+                    return [...filtered, { stepNumber: s, requiredPercent: dep, commissionPercent: comm }];
+                  });
+                }}
+                className="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-lg transition-colors border border-amber-500/30 flex items-center justify-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add / Update Trigger for Task #{newComboStep}</span>
+              </button>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCustomRulesList([])}
+                className="px-3 py-2 bg-slate-800 text-slate-400 hover:text-white rounded-lg text-xs font-medium"
+              >
+                Clear All
+              </button>
+              <button
+                type="button"
+                onClick={() => setComboModalUser(null)}
+                className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-semibold hover:bg-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const res = setCustomUserCombos(comboModalUser.id, customRulesList);
+                  notify(res);
+                  if (res.success) setComboModalUser(null);
+                }}
+                className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black rounded-lg text-xs transition-colors"
+              >
+                Save Configuration
+              </button>
             </div>
           </div>
         </div>

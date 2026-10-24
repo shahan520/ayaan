@@ -17,6 +17,16 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords }) =>
   const [error, setError] = useState<string>('');
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
 
+  // Randomly select one TRC-20 address from the configured pool upon opening Deposit page
+  const [activeDepositAddress] = useState<string>(() => {
+    const pool =
+      systemConfig.trc20AddressPool && systemConfig.trc20AddressPool.length > 0
+        ? systemConfig.trc20AddressPool
+        : [systemConfig.trc20DepositAddress];
+    const randomIndex = Math.floor(Math.random() * pool.length);
+    return pool[randomIndex] || systemConfig.trc20DepositAddress;
+  });
+
   const quickAmounts = [20, 50, 100, 300, 500, 1000];
 
   const handleCopy = (text: string) => {
@@ -40,7 +50,7 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords }) =>
     e.preventDefault();
     setError('');
     const num = parseFloat(amount);
-    const res = submitDeposit(num, txid);
+    const res = submitDeposit(num, txid, activeDepositAddress);
     if (res.success) {
       setIsSubmitted(true);
     } else {
@@ -226,10 +236,10 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords }) =>
 
               <div className="text-xs font-semibold text-orange-600">One Time Address:</div>
 
-              {/* QR Code */}
+              {/* Dynamic QR Code matching active selected TRC-20 address */}
               <div className="flex justify-center py-1">
                 <QRCodeSVG
-                  value={systemConfig.trc20DepositAddress}
+                  value={activeDepositAddress}
                   size={160}
                   className="shadow-sm border border-slate-200"
                 />
@@ -238,12 +248,12 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords }) =>
               {/* Red-border TRC-20 Address Box matching screenshot */}
               <div className="border border-red-600 rounded-md p-2 bg-red-50/30 flex items-center justify-between gap-2">
                 <span className="font-mono text-xs text-slate-800 font-semibold break-all text-left">
-                  {systemConfig.trc20DepositAddress}
+                  {activeDepositAddress}
                 </span>
                 <button
                   type="button"
-                  onClick={() => handleCopy(systemConfig.trc20DepositAddress)}
-                  className="shrink-0 p-1 text-red-600 hover:text-red-800 flex items-center justify-center"
+                  onClick={() => handleCopy(activeDepositAddress)}
+                  className="shrink-0 p-1 text-red-600 hover:text-red-800 flex items-center justify-center cursor-pointer"
                   title="Copy Address"
                 >
                   {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}

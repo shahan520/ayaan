@@ -15,10 +15,11 @@ import { RecordTab } from './tabs/RecordTab';
 import { ServiceTab } from './tabs/ServiceTab';
 
 export const UserApp: React.FC = () => {
-  const { currentUser } = useApp();
-  const [currentTab, setCurrentTab] = useState<'home' | 'service' | 'menu' | 'record' | 'mine'>('mine');
+  const { currentUser, t } = useApp();
+  const [currentTab, setCurrentTab] = useState<'home' | 'service' | 'menu' | 'record' | 'mine'>('home');
   const [activeSubpage, setActiveSubpage] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [menuKey, setMenuKey] = useState<number>(0);
 
   // Router for subpages
   const renderContent = () => {
@@ -36,8 +37,14 @@ export const UserApp: React.FC = () => {
           onBack={() => setActiveSubpage(null)}
           onNavigateToWallet={() => setActiveSubpage('wallet')}
           onNavigateToRecords={() => setActiveSubpage('withdrawal-records')}
+          onNavigateToDeposit={() => setActiveSubpage('deposit')}
+          onNavigateToService={() => {
+            setActiveSubpage(null);
+            setCurrentTab('service');
+          }}
           onNavigateToMenu={() => {
             setActiveSubpage(null);
+            setMenuKey((prev) => prev + 1);
             setCurrentTab('menu');
           }}
         />
@@ -75,6 +82,9 @@ export const UserApp: React.FC = () => {
           <HomeTab
             onNavigate={(page) => {
               if (page === 'service' || page === 'menu' || page === 'record' || page === 'mine') {
+                if (page === 'menu') {
+                  setMenuKey((prev) => prev + 1);
+                }
                 setCurrentTab(page);
               } else {
                 setActiveSubpage(page);
@@ -87,8 +97,11 @@ export const UserApp: React.FC = () => {
       case 'menu':
         return (
           <MenuTab
+            key={`menu-${menuKey}`}
             onNavigateToRecord={() => setCurrentTab('record')}
             onNavigateToDeposit={() => setActiveSubpage('deposit')}
+            onNavigateToWithdrawal={() => setActiveSubpage('withdrawal')}
+            onNavigateToSupport={() => setCurrentTab('service')}
           />
         );
       case 'record':
@@ -99,6 +112,9 @@ export const UserApp: React.FC = () => {
           <MineTab
             onNavigate={(page) => {
               if (page === 'service' || page === 'menu' || page === 'record' || page === 'home') {
+                if (page === 'menu') {
+                  setMenuKey((prev) => prev + 1);
+                }
                 setCurrentTab(page);
               } else {
                 setActiveSubpage(page);
@@ -111,11 +127,11 @@ export const UserApp: React.FC = () => {
   };
 
   const navItems = [
-    { key: 'home' as const, label: 'Home', icon: Home },
-    { key: 'service' as const, label: 'Service', icon: Headphones },
-    { key: 'menu' as const, label: 'Menu', icon: ShoppingBag },
-    { key: 'record' as const, label: 'Record', icon: Calendar },
-    { key: 'mine' as const, label: 'Mine', icon: UserIcon },
+    { key: 'home' as const, label: t('home'), icon: Home },
+    { key: 'service' as const, label: t('service'), icon: Headphones },
+    { key: 'menu' as const, label: t('menu'), icon: ShoppingBag },
+    { key: 'record' as const, label: t('record'), icon: Calendar },
+    { key: 'mine' as const, label: t('mine'), icon: UserIcon },
   ];
 
   return (
@@ -133,7 +149,12 @@ export const UserApp: React.FC = () => {
               return (
                 <button
                   key={item.key}
-                  onClick={() => setCurrentTab(item.key)}
+                  onClick={() => {
+                    if (item.key === 'menu') {
+                      setMenuKey((prev) => prev + 1);
+                    }
+                    setCurrentTab(item.key);
+                  }}
                   className="flex flex-col items-center justify-center py-1 transition-transform active:scale-95 group"
                 >
                   <Icon

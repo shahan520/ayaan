@@ -9,11 +9,14 @@ import {
   INITIAL_USERS,
   INITIAL_WITHDRAWALS,
 } from '../data/initialData';
-import { generateTieredMatchedProducts } from '../data/productCatalog';
+import { generateTieredMatchedProducts, generateComboOrderProducts } from '../data/productCatalog';
+import { getPlatformBalanceValidationMessage } from '../utils/balanceValidation';
+import { LanguageCode, translations } from '../utils/i18n';
 import {
   AdminPermission,
   AdminUser,
   AuditLog,
+  CustomComboRule,
   DepositRecord,
   GrabbedOrder,
   InviteCode,
@@ -31,6 +34,10 @@ interface AppContextType {
   setActiveView: (view: 'user' | 'admin') => void;
   deviceFrame: boolean;
   setDeviceFrame: (frame: boolean) => void;
+  // Language & i18n
+  language: LanguageCode;
+  setLanguage: (lang: LanguageCode) => void;
+  t: (key: string) => string;
 
   // Data lists
   users: User[];
@@ -51,9 +58,14 @@ interface AppContextType {
   ) => { success: boolean; message?: string; user?: User };
   logoutUser: () => void;
   switchUser: (userId: string) => void;
+  updateUserAvatar: (avatarUrl: string) => void;
   setWithdrawalPassword: (password: string) => { success: boolean; message?: string };
   bindWallet: (wallet: Omit<UserWallet, 'boundAt'>) => { success: boolean; message?: string };
-  submitDeposit: (amount: number, txid: string) => { success: boolean; message?: string };
+  submitDeposit: (
+    amount: number,
+    txid: string,
+    depositAddress?: string
+  ) => { success: boolean; message?: string };
   submitWithdrawal: (
     amount: number,
     withdrawalPassword: string,
@@ -66,12 +78,35 @@ interface AppContextType {
     success: boolean;
     message?: string;
     order?: GrabbedOrder;
+    isCycleLocked?: boolean;
+    isComboOrder?: boolean;
+    isMandatoryComboPending?: boolean;
   };
-  submitOrder: (orderId: string) => { success: boolean; message?: string };
+  submitOrder: (orderId: string) => {
+    success: boolean;
+    message?: string;
+    isInsufficientComboBalance?: boolean;
+    shortfall?: number;
+    requiredAmount?: number;
+    currentBalance?: number;
+    isCycleNowFinished?: boolean;
+  };
 
   // Admin methods
   switchAdmin: (adminId: string) => void;
   hasPermission: (permission: AdminPermission) => boolean;
+  resetUserTaskCycle: (
+    userId: string,
+    toCycle1?: boolean
+  ) => { success: boolean; message?: string };
+  resetUserToFreshCycle: (userId: string) => { success: boolean; message?: string };
+  toggleUserVip: (userId: string) => { success: boolean; message?: string };
+  toggleUserLock: (userId: string) => { success: boolean; message?: string };
+  setCustomUserCombos: (
+    userId: string,
+    combos: CustomComboRule[]
+  ) => { success: boolean; message?: string };
+  clearUserTax: (userId: string) => { success: boolean; message?: string };
   approveDeposit: (depositId: string) => { success: boolean; message?: string };
   rejectDeposit: (depositId: string, reason?: string) => { success: boolean; message?: string };
   approveWithdrawal: (withdrawalId: string) => { success: boolean; message?: string };
@@ -127,9 +162,42 @@ const STORAGE_KEYS = {
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Load state from localStorage or initial seed
+  // Load state from localStorage or initial seed with daily reset check
   const [users, setUsers] = useState<User[]>(() => {
+    const today = new Date().toISOString().substring(0, 10);
     const saved = localStorage.getItem(STORAGE_KEYS.USERS);
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
+    if (!saved) {
+      return INITIAL_USERS.map((u) => ({
+        ...u,
+        lastActiveDate: today,
+        yesterdayCommission: u.yesterdayCommission ?? (u.todayCommission || 0),
+      }));
+    }
+    try {
+      const parsed = JSON.parse(saved) as User[];
+      const existingIds = new Set(parsed.map((u) => u.id));
+      const missingInitial = INITIAL_USERS.filter((u) => !existingIds.has(u.id));
+      const combined = [...parsed, ...missingInitial];
+      return combined.map((u) => {
+        const isNewDay = u.lastActiveDate && u.lastActiveDate !== today;
+        return {
+          ...u,
+          todayOrdersCount: isNewDay ? 0 : (u.todayOrdersCount ?? 0),
+          todayCommission: isNewDay ? 0 : (u.todayCommission ?? 0),
+          yesterdayCommission: isNewDay ? (u.todayCommission ?? 0) : (u.yesterdayCommission ?? 0),
+          lastActiveDate: today,
+          completedTasksCount: u.completedTasksCount ?? 0,
+          currentCycleTasks:
+            u.currentCycleTasks ?? (u.completedTasksCount >= 25 ? 25 : u.completedTasksCount ?? 0),
+          cycleNumber: u.cycleNumber ?? 1,
+          cycleApprovedByAdmin:
+            u.cycleApprovedByAdmin ?? (u.currentCycleTasks !== undefined ? u.currentCycleTasks < 25 : true),
+          comboOrderStep: u.comboOrderStep ?? 14,
+        };
+      });
+    } catch {
+      return INITIAL_USERS;
+    }
   });
 
   const [admins, setAdmins] = useState<AdminUser[]>(() => {
@@ -177,6 +245,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [activeView, setActiveView] = useState<'user' | 'admin'>('user');
   const [deviceFrame, setDeviceFrame] = useState<boolean>(true);
+
+  // Language & i18n
+  const [language, setLanguageState] = useState<LanguageCode>(() => {
+    const saved = localStorage.getItem('app_language');
+    return (saved as LanguageCode) || 'en';
+  });
+
+  const setLanguage = (lang: LanguageCode) => {
+    setLanguageState(lang);
+    localStorage.setItem('app_language', lang);
+  };
+
+  const t = (key: string): string => {
+    return translations[language]?.[key] || translations['en']?.[key] || key;
+  };
+
+  const updateUserAvatar = (avatarUrl: string) => {
+    if (!currentUserId) return;
+    setUsers((prev) =>
+      prev.map((u) => (u.id === currentUserId ? { ...u, avatarUrl } : u))
+    );
+  };
+
+  // Automatically reset "Today's Times" count to 0 at midnight (00:00 server time)
+  useEffect(() => {
+    const checkDailyReset = () => {
+      const today = new Date().toISOString().substring(0, 10);
+      setUsers((prev) => {
+        let changed = false;
+        const updated = prev.map((u) => {
+          if (u.lastActiveDate && u.lastActiveDate !== today) {
+            changed = true;
+            return {
+              ...u,
+              todayOrdersCount: 0,
+              yesterdayCommission: u.todayCommission || 0,
+              todayCommission: 0,
+              lastActiveDate: today,
+            };
+          }
+          if (!u.lastActiveDate) {
+            changed = true;
+            return { ...u, lastActiveDate: today };
+          }
+          return u;
+        });
+        return changed ? updated : prev;
+      });
+    };
+
+    checkDailyReset();
+    const interval = setInterval(checkDailyReset, 30000); // Check every 30s
+    return () => clearInterval(interval);
+  }, []);
 
   // Sync to localStorage
   useEffect(() => {
@@ -338,6 +460,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // User's own invitation code is set to their unique UID (or uppercase string)
     const newUserInviteCode = newUid;
 
+    // STATE RESET FOR NEW ACCOUNTS:
+    // Ensure newly created account starts strictly at Cycle 1 / Progress 0 with only 1 combo planned for Task #14 or #15
+    const plannedCycle1Combo = Math.random() < 0.5 ? 14 : 15;
+
     const newUser: User = {
       id: 'user_' + Date.now(),
       uid: newUid,
@@ -356,6 +482,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       todayOrdersCount: 0,
       todayCommission: 0,
       completedTasksCount: 0,
+      currentCycleTasks: 0, // Starts strictly at Cycle 1 / Progress 0
+      cycleNumber: 1, // Starts strictly at Cycle 1
+      cycleApprovedByAdmin: true,
+      comboOrderStep: plannedCycle1Combo, // Strictly Task #14 or #15 (only 1 combo planned for Cycle 1)
+      isVipAccount: false,
+      isLockedAccount: false,
+      customCombos: [],
     };
 
     // Add user's own invite code to inviteCodes pool
@@ -433,7 +566,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // FINANCIAL METHODS (DEPOSIT & WITHDRAWAL)
   // --------------------------------------------------------------------------
 
-  const submitDeposit = (amount: number, txid: string) => {
+  const submitDeposit = (amount: number, txid: string, depositAddress?: string) => {
     if (!currentUser) return { success: false, message: 'Please log in first.' };
     if (amount < systemConfig.minDeposit) {
       return {
@@ -446,6 +579,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       txid.trim() ||
       'tx_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
 
+    const targetAddress = depositAddress || systemConfig.trc20DepositAddress;
+
     const newDeposit: DepositRecord = {
       id: 'dep_' + Date.now(),
       userId: currentUser.id,
@@ -454,7 +589,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       amount,
       currency: 'USDT',
       protocol: 'TRC-20',
-      depositAddress: systemConfig.trc20DepositAddress,
+      depositAddress: targetAddress,
       txid: cleanTxid,
       status: 'pending',
       createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
@@ -474,12 +609,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     if (!currentUser) return { success: false, message: 'Please log in first.' };
 
-    // Step 1: Task check (< 25 tasks completed)
-    const completedTasks = currentUser.completedTasksCount || 0;
-    if (completedTasks < 25) {
+    // RULE: Account Lock Check
+    // Locked accounts can complete tasks normally, but Withdrawal is strictly blocked
+    // with a popup instructing user to contact Customer Service for Admin approval.
+    if (currentUser.isLockedAccount) {
       return {
         success: false,
-        message: 'TASK_COUNT_BELOW_25',
+        message: 'ACCOUNT_LOCKED',
+      };
+    }
+
+    // RULE: Mandatory 25% Tax Notice (> 50,000 USDT Balance)
+    // When balance > 50,000 USDT: Block withdrawal attempts, trigger mandatory Tax Notice modal
+    // requiring a 25% tax payment calculated on total balance before withdrawal can be unlocked.
+    if (currentUser.balance > 50000 && !currentUser.taxPaid) {
+      return {
+        success: false,
+        message: 'TAX_REQUIRED',
+      };
+    }
+
+    // RULE: Incomplete Cycle Withdrawal Restriction
+    // When a user requests a withdrawal, check if they have completed all 25 tasks in their active work cycle.
+    // If total tasks completed in the current cycle is less than 25 (e.g., 24/25 tasks), BLOCK the withdrawal transaction.
+    const currentCycleTasks = currentUser.currentCycleTasks ?? 0;
+    if (currentCycleTasks < 25) {
+      return {
+        success: false,
+        message: 'Please complete all 25 orders in your current task cycle before initiating a withdrawal.',
       };
     }
 
@@ -552,63 +709,192 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // --------------------------------------------------------------------------
-  // VIP ORDER MATCHING / GRABBING ENGINE
+  // VIP ORDER MATCHING / GRABBING ENGINE WITH COMBO LOGIC
   // --------------------------------------------------------------------------
+
+  // Helper function to resolve combo order trigger rules:
+  // - Cycle 1: 1 Combo at #14 or #15 (36% deposit requirement, 20% commission)
+  // - Cycle 2: 3 Combos: #7 (55% dep / 26% comm), #15 (50% dep / 18% comm), #23 (50% dep / 18% comm)
+  // - Cycle 3: 4 Combos: #7 (55% dep / 26% comm), #13, #18, #23 (50% dep / 18% comm each)
+  // - VIP / Locked Accounts: 5 Combos (#8: 267%/81%, #15: 150%/81%, #19: 130%/81%, #23: 90%/81%, #25: 43%/83%)
+  // - Custom Combos configured by Admin take highest priority
+  const getComboRuleForUser = (
+    user: User,
+    taskNumber: number
+  ): { isCombo: boolean; depositPercent: number; commissionPercent: number } | null => {
+    // 1. Custom combos configured by Admin
+    if (user.customCombos && user.customCombos.length > 0) {
+      const match = user.customCombos.find((c) => c.stepNumber === taskNumber);
+      if (match) {
+        return {
+          isCombo: true,
+          depositPercent: match.requiredPercent,
+          commissionPercent: match.commissionPercent,
+        };
+      }
+      return null;
+    }
+
+    // 2. VIP or Locked Accounts: Trigger EXACTLY 5 Combo Orders schedule
+    // (at Task #8, Task #15, Task #19, Task #23, and Task #25)
+    if (user.isVipAccount || user.isLockedAccount) {
+      switch (taskNumber) {
+        case 8:
+          return { isCombo: true, depositPercent: 267, commissionPercent: 81 };
+        case 15:
+          return { isCombo: true, depositPercent: 150, commissionPercent: 81 };
+        case 19:
+          return { isCombo: true, depositPercent: 130, commissionPercent: 81 };
+        case 23:
+          return { isCombo: true, depositPercent: 90, commissionPercent: 81 };
+        case 25:
+          return { isCombo: true, depositPercent: 43, commissionPercent: 83 };
+        default:
+          return null;
+      }
+    }
+
+    const cycle = user.cycleNumber || 1;
+
+    // 3. Cycle 1 (New Account / 1st Cycle): Trigger EXACTLY 1 Combo Order (only at Task #14 or Task #15).
+    // DO NOT trigger any other combos in Cycle 1.
+    if (cycle === 1) {
+      const targetStep = user.comboOrderStep === 15 ? 15 : 14;
+      if (taskNumber === targetStep) {
+        return { isCombo: true, depositPercent: 36, commissionPercent: 20 };
+      }
+      return null;
+    }
+
+    // 4. Cycle 2 (2nd Cycle): Trigger EXACTLY 3 Combo Orders (at Task #7, Task #15, and Task #23).
+    if (cycle === 2) {
+      if (taskNumber === 7) {
+        return { isCombo: true, depositPercent: 55, commissionPercent: 26 };
+      }
+      if (taskNumber === 15) {
+        return { isCombo: true, depositPercent: 50, commissionPercent: 18 };
+      }
+      if (taskNumber === 23) {
+        return { isCombo: true, depositPercent: 50, commissionPercent: 18 };
+      }
+      return null;
+    }
+
+    // 5. Subsequent Cycles (Cycle 3+): 4 Combo Orders at Tasks #7, #13, #18, #23
+    if (cycle >= 3) {
+      if (taskNumber === 7) {
+        return { isCombo: true, depositPercent: 55, commissionPercent: 26 };
+      }
+      if (taskNumber === 13) {
+        return { isCombo: true, depositPercent: 50, commissionPercent: 18 };
+      }
+      if (taskNumber === 18) {
+        return { isCombo: true, depositPercent: 50, commissionPercent: 18 };
+      }
+      if (taskNumber === 23) {
+        return { isCombo: true, depositPercent: 50, commissionPercent: 18 };
+      }
+      return null;
+    }
+
+    return null;
+  };
 
   const grabOrder = (vipTier: 'VIP 1' | 'VIP 2' | 'VIP 3') => {
     if (!currentUser) return { success: false, message: 'Please login first.' };
 
-    // Check if user has an incomplete order
-    const hasIncomplete = orders.some(
+    // RULE 1: 25-Task Work Cycle Check
+    const currentTasks = currentUser.currentCycleTasks ?? 0;
+    if (currentTasks >= 25 || !currentUser.cycleApprovedByAdmin) {
+      return {
+        success: false,
+        isCycleLocked: true,
+        message:
+          'Work cycle completed! You have completed 25/25 tasks for this cycle. The task system is locked. Please contact Customer Support / Admin to approve and reset your next 25-task cycle.',
+      };
+    }
+
+    // RULE: Mandatory Deposit Requirement & Incomplete Order Blocker:
+    // When a Combo Order is triggered, user MUST deposit required deficit and submit before grabbing subsequent tasks.
+    const incompleteOrder = orders.find(
       (o) => o.userId === currentUser.id && o.status === 'incomplete'
     );
-    if (hasIncomplete) {
+    if (incompleteOrder) {
+      if (incompleteOrder.isComboOrder) {
+        const req = incompleteOrder.requiredBalance || incompleteOrder.orderAmount;
+        const deficit = Number(Math.max(0, req - currentUser.balance).toFixed(2));
+        return {
+          success: false,
+          isMandatoryComboPending: true,
+          order: incompleteOrder,
+          message: `Mandatory Combo Order #${incompleteOrder.comboStepNumber || 14} is pending! You must deposit the required deficit balance (${deficit > 0 ? deficit.toFixed(2) + ' USDT' : 'recharge complete'}) and submit this order before you can proceed to grab subsequent tasks.`,
+        };
+      }
       return {
         success: false,
         message: 'You have an unpaid order, please complete the payment first',
       };
     }
 
-    // VIP Balance Rules matching screenshots
-    const bal = currentUser.balance;
-    if (vipTier === 'VIP 1') {
-      if (bal < 20 || bal > 498) {
-        return {
-          success: false,
-          message: 'Amazon only allows users with balances 20-498 to grab orders',
-        };
-      }
-    } else if (vipTier === 'VIP 2') {
-      if (bal < 499 || bal > 899) {
-        return {
-          success: false,
-          message: 'Alibaba only allows users with balances 499-899 to grab orders',
-        };
-      }
-    } else if (vipTier === 'VIP 3') {
-      if (bal < 899) {
-        return {
-          success: false,
-          message: 'Aliexpress requires a minimum balance of 899 USDT to grab orders',
-        };
-      }
-    }
-
-    // Determine platform and commission rate
+    // Determine platform
     const platform =
       vipTier === 'VIP 1' ? 'Amazon' : vipTier === 'VIP 2' ? 'Alibaba' : 'Aliexpress';
-    const rate = vipTier === 'VIP 1' ? 0.04 : vipTier === 'VIP 2' ? 0.08 : 0.12;
 
-    // Calculate target order amount (typically 50-80% of balance)
-    const targetOrderAmt = Number((bal * (0.55 + Math.random() * 0.25)).toFixed(2));
-    const matchedItems = generateTieredMatchedProducts(bal, targetOrderAmt);
+    // VIP Balance Rules matching screenshots & dynamic platform suggestions
+    const bal = currentUser.balance;
+    const balanceWarning = getPlatformBalanceValidationMessage(platform, bal);
+    if (balanceWarning) {
+      return {
+        success: false,
+        message: balanceWarning,
+      };
+    }
 
-    // Sum up exact amount from matched items
-    const actualOrderAmt = Number(
-      matchedItems.reduce((acc, item) => acc + item.unitPrice * item.quantity, 0).toFixed(2)
-    );
-    const comm = Number((actualOrderAmt * rate).toFixed(4));
-    const expected = Number((actualOrderAmt + comm).toFixed(4));
+    const nextTaskNumber = currentTasks + 1;
+    const comboRule = getComboRuleForUser(currentUser, nextTaskNumber);
+    const isComboOrder = !!comboRule?.isCombo;
+
+    let rate: number;
+    let actualOrderAmt: number;
+    let comm: number;
+    let expected: number;
+    let matchedItems: ReturnType<typeof generateTieredMatchedProducts>;
+    let requiredBalance: number | undefined;
+    let comboDepositPercent: number | undefined;
+    let comboCommissionPercent: number | undefined;
+    let requiredDepositDeficit: number | undefined;
+
+    if (isComboOrder && comboRule) {
+      // SPECIAL HIGH-COMMISSION COMBO ORDER
+      comboDepositPercent = comboRule.depositPercent;
+      comboCommissionPercent = comboRule.commissionPercent;
+      // Deficit amount = (balance * comboDepositPercent) / 100
+      requiredDepositDeficit = Number(((bal * comboRule.depositPercent) / 100).toFixed(2));
+      requiredBalance = Number((bal + requiredDepositDeficit).toFixed(2));
+
+      // Combo product set target matches the required balance (User Balance + Deposit Deficit)
+      const combo = generateComboOrderProducts(bal, requiredBalance);
+      matchedItems = combo.items;
+      actualOrderAmt = combo.totalOrderAmount;
+
+      // COMMISSION CALCULATION FIX:
+      // Calculate Combo Order Commission based on the TOTAL ORDER AMOUNT (User Balance + Deposit Deficit), NOT just initial user balance.
+      // Formula: Commission = Total Order Amount * Commission Percentage
+      // Example: For Task #8 with 134.97 USDT Total Order Amount and 81% commission: 134.97 * 0.81 = 109.3257 USDT (~109.32 USDT)
+      rate = Number((comboRule.commissionPercent / 100).toFixed(4));
+      comm = Number(((actualOrderAmt * comboRule.commissionPercent) / 100).toFixed(4));
+      expected = Number((actualOrderAmt + comm).toFixed(4));
+    } else {
+      // Standard VIP Order
+      rate = vipTier === 'VIP 1' ? 0.04 : vipTier === 'VIP 2' ? 0.08 : 0.12;
+      const targetOrderAmt = Number((bal * (0.55 + Math.random() * 0.25)).toFixed(2));
+      matchedItems = generateTieredMatchedProducts(bal, targetOrderAmt);
+      actualOrderAmt = Number(
+        matchedItems.reduce((acc, item) => acc + item.unitPrice * item.quantity, 0).toFixed(2)
+      );
+      comm = Number((actualOrderAmt * rate).toFixed(4));
+      expected = Number((actualOrderAmt + comm).toFixed(4));
+    }
 
     // Order number format matching screenshot: e.g., 260111110013013260870
     const randomSuffix = Math.floor(100000000000000000 + Math.random() * 900000000000000000).toString();
@@ -621,8 +907,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       vipTier,
       platform,
       items: matchedItems,
-      productTitle: matchedItems[0]?.name || 'Retail Matched Item',
-      productImage: matchedItems[0]?.image || '/assets/aistudio/a1.3f945898_a31a0efe.png',
+      productTitle: isComboOrder
+        ? `🔥 Special High-Commission Combo Order #${nextTaskNumber}`
+        : matchedItems[0]?.name || 'Retail Matched Item',
+      productImage: matchedItems[0]?.image || '/assets/aistudio/41lyVjfaJ7L._AC_UY218__3d4a1b42.jpg',
       unitPrice: matchedItems[0]?.unitPrice || 0.26,
       quantity: matchedItems[0]?.quantity || 100,
       orderAmount: actualOrderAmt,
@@ -631,10 +919,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       expectedIncome: expected,
       status: 'incomplete',
       createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      isComboOrder,
+      comboStepNumber: isComboOrder ? nextTaskNumber : undefined,
+      requiredBalance,
+      comboDepositPercent,
+      comboCommissionPercent,
+      requiredDepositDeficit,
     };
 
     setOrders((prev) => [newOrder, ...prev]);
-    return { success: true, order: newOrder };
+    return { success: true, order: newOrder, isComboOrder };
   };
 
   const submitOrder = (orderId: string) => {
@@ -645,12 +939,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetUser = users.find((u) => u.id === order.userId);
     if (!targetUser) return { success: false, message: 'User not found.' };
 
+    // COMMISSION FORMULA: Total Order Amount * Commission Percentage for combo orders
+    const calculatedCommission =
+      order.isComboOrder && order.comboCommissionPercent
+        ? Number(((order.orderAmount * order.comboCommissionPercent) / 100).toFixed(4))
+        : order.commission;
+
+    // MANDATORY COMBO DEFICIT CHECK:
+    // Require account balance to match combo order value before successful submission
+    if (order.isComboOrder) {
+      const required = order.requiredBalance || order.orderAmount;
+      if (targetUser.balance < required) {
+        const shortfall = Number((required - targetUser.balance).toFixed(2));
+        return {
+          success: false,
+          isInsufficientComboBalance: true,
+          shortfall,
+          requiredAmount: required,
+          currentBalance: targetUser.balance,
+          message: `Mandatory Deposit Deficit: ${shortfall.toFixed(2)} USDT required for Combo Order #${order.comboStepNumber || 14}! Required balance: ${required.toFixed(2)} USDT (Deposit Requirement: +${order.comboDepositPercent || 36}%), Current balance: ${targetUser.balance.toFixed(2)} USDT. Please deposit at least ${shortfall.toFixed(2)} USDT via TRC-20 to complete this combo order and collect +${calculatedCommission.toFixed(2)} USDT commission reward.`,
+        };
+      }
+    }
+
     // Update order status to completed
     setOrders((prev) =>
       prev.map((o) =>
         o.id === orderId
           ? {
               ...o,
+              commission: calculatedCommission,
+              expectedIncome: Number((o.orderAmount + calculatedCommission).toFixed(4)),
               status: 'completed',
               completedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
             }
@@ -658,24 +977,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
-    // Credit commission directly to user's balance
+    const nextCompletedLifetime = (targetUser.completedTasksCount || 0) + 1;
+    const nextCycleTasks = (targetUser.currentCycleTasks || 0) + 1;
+    const isCycleNowFinished = nextCycleTasks >= 25;
+
+    const today = new Date().toISOString().substring(0, 10);
+
+    // Credit commission directly to user's balance and update cycle tracking
     setUsers((prev) =>
-      prev.map((u) =>
-        u.id === targetUser.id
-          ? {
-              ...u,
-              balance: Number((u.balance + order.commission).toFixed(4)),
-              todayOrdersCount: u.todayOrdersCount + 1,
-              todayCommission: Number((u.todayCommission + order.commission).toFixed(4)),
-              completedTasksCount: (u.completedTasksCount || 0) + 1,
-            }
-          : u
-      )
+      prev.map((u) => {
+        if (u.id === targetUser.id) {
+          const isNewDay = u.lastActiveDate && u.lastActiveDate !== today;
+          const currentTimes = isNewDay ? 0 : (u.todayOrdersCount ?? 0);
+          const currentComm = isNewDay ? 0 : (u.todayCommission ?? 0);
+          const yestComm = isNewDay ? (u.todayCommission ?? 0) : (u.yesterdayCommission ?? 0);
+
+          return {
+            ...u,
+            balance: Number((u.balance + calculatedCommission).toFixed(4)),
+            todayOrdersCount: currentTimes + 1, // Increment Today's Times by +1 on successful order submission
+            todayCommission: Number((currentComm + calculatedCommission).toFixed(4)),
+            yesterdayCommission: yestComm,
+            lastActiveDate: today,
+            completedTasksCount: nextCompletedLifetime,
+            currentCycleTasks: nextCycleTasks,
+            cycleApprovedByAdmin: !isCycleNowFinished, // Locks system when exactly 25 tasks hit
+          };
+        }
+        return u;
+      })
     );
+
+    if (order.isComboOrder) {
+      return {
+        success: true,
+        isCycleNowFinished,
+        message: `Special Combo Order #${order.comboStepNumber || 14} completed! Earned massive +${calculatedCommission.toFixed(4)} USDT super commission! (Task ${nextCycleTasks}/25 completed)`,
+      };
+    }
+
+    if (isCycleNowFinished) {
+      return {
+        success: true,
+        isCycleNowFinished: true,
+        message: `Task 25/25 completed! You have finished your 25-task work cycle! Withdrawal feature is now UNLOCKED. The task system is locked until approved by Admin.`,
+      };
+    }
 
     return {
       success: true,
-      message: `Order submitted successfully! Earned +${order.commission.toFixed(4)} USDT commission!`,
+      message: `Order submitted successfully! Earned +${order.commission.toFixed(4)} USDT commission! (Task ${nextCycleTasks}/25)`,
     };
   };
 
@@ -685,6 +1036,160 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const switchAdmin = (adminId: string) => {
     setCurrentAdminId(adminId);
+  };
+
+  const resetUserTaskCycle = (userId: string, toCycle1 = false) => {
+    if (!hasPermission('can_manage_users')) {
+      return {
+        success: false,
+        message: 'Permission denied: Your role cannot manage user task cycles.',
+      };
+    }
+
+    const targetUser = users.find((u) => u.id === userId);
+    if (!targetUser) return { success: false, message: 'User not found.' };
+
+    const nextCycleNum = toCycle1 ? 1 : (targetUser.cycleNumber || 1) + 1;
+    // For fresh Cycle 1, planned combo is strictly Task #14 or #15
+    const plannedCycle1Combo = Math.random() < 0.5 ? 14 : 15;
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === userId
+          ? {
+              ...u,
+              todayOrdersCount: 0, // When Admin resets task cycle, reset Today's Times back to 0
+              currentCycleTasks: 0, // Reset progress strictly to 0
+              cycleNumber: nextCycleNum,
+              cycleApprovedByAdmin: true,
+              comboOrderStep: plannedCycle1Combo, // Strictly Task #14 or #15 planned
+            }
+          : u
+      )
+    );
+
+    // If resetting to fresh Cycle 1, also clear any incomplete pending orders
+    if (toCycle1) {
+      setOrders((prev) => prev.filter((o) => !(o.userId === userId && o.status === 'incomplete')));
+    }
+
+    logAuditAction(
+      'RESET_TASK_CYCLE',
+      `Approved next 25 tasks & reset cycle for user ${targetUser.username} (UID: ${targetUser.uid}). Set to Cycle #${nextCycleNum} (0/25 tasks).`,
+      targetUser.uid
+    );
+
+    return {
+      success: true,
+      message: `Work cycle reset! User ${targetUser.username} (UID: ${targetUser.uid}) set to Cycle #${nextCycleNum} with 0/25 progress.`,
+    };
+  };
+
+  const resetUserToFreshCycle = (userId: string) => {
+    return resetUserTaskCycle(userId, true);
+  };
+
+  const toggleUserVip = (userId: string) => {
+    if (!hasPermission('can_manage_users')) {
+      return { success: false, message: 'Permission denied: Cannot manage VIP status.' };
+    }
+    const target = users.find((u) => u.id === userId);
+    if (!target) return { success: false, message: 'User not found.' };
+
+    const nextVip = !target.isVipAccount;
+    setUsers((prev) =>
+      prev.map((u) => (u.id === userId ? { ...u, isVipAccount: nextVip } : u))
+    );
+
+    logAuditAction(
+      'SET_VIP_STATUS',
+      `${nextVip ? 'Enabled' : 'Disabled'} VIP Status (5 Combo Orders schedule) for UID: ${target.uid} (${target.username})`,
+      target.uid
+    );
+
+    return {
+      success: true,
+      message: `User ${target.username} VIP status set to ${nextVip ? 'VIP (5 Combos)' : 'Normal'}.`,
+    };
+  };
+
+  const toggleUserLock = (userId: string) => {
+    if (!hasPermission('can_manage_users')) {
+      return { success: false, message: 'Permission denied: Cannot lock/unlock accounts.' };
+    }
+    const target = users.find((u) => u.id === userId);
+    if (!target) return { success: false, message: 'User not found.' };
+
+    const nextLock = !target.isLockedAccount;
+    setUsers((prev) =>
+      prev.map((u) => (u.id === userId ? { ...u, isLockedAccount: nextLock } : u))
+    );
+
+    logAuditAction(
+      'TOGGLE_ACCOUNT_LOCK',
+      `${nextLock ? 'Locked' : 'Unlocked'} account withdrawal access for UID: ${target.uid} (${target.username})`,
+      target.uid
+    );
+
+    return {
+      success: true,
+      message: `User ${target.username} withdrawal access ${nextLock ? 'LOCKED' : 'UNLOCKED'}.`,
+    };
+  };
+
+  const setCustomUserCombos = (userId: string, combos: CustomComboRule[]) => {
+    if (!hasPermission('can_manage_users')) {
+      return { success: false, message: 'Permission denied: Cannot configure custom combos.' };
+    }
+    const target = users.find((u) => u.id === userId);
+    if (!target) return { success: false, message: 'User not found.' };
+
+    setUsers((prev) =>
+      prev.map((u) => (u.id === userId ? { ...u, customCombos: combos } : u))
+    );
+
+    logAuditAction(
+      'SET_CUSTOM_COMBOS',
+      `Updated custom combo rules for UID: ${target.uid} (${target.username}): ${combos.length} triggers active`,
+      target.uid
+    );
+
+    return {
+      success: true,
+      message: `Custom combo rules updated for ${target.username} (${combos.length} triggers).`,
+    };
+  };
+
+  const clearUserTax = (userId: string) => {
+    if (!hasPermission('can_manage_users') && !hasPermission('can_approve_withdrawals')) {
+      return { success: false, message: 'Permission denied: Cannot clear user tax.' };
+    }
+    const target = users.find((u) => u.id === userId);
+    if (!target) return { success: false, message: 'User not found.' };
+
+    const taxAmount = Number((target.balance * 0.25).toFixed(2));
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === userId
+          ? {
+              ...u,
+              taxPaid: true,
+              taxAmountPaid: taxAmount,
+            }
+          : u
+      )
+    );
+
+    logAuditAction(
+      'CLEAR_USER_TAX',
+      `Cleared/Approved 25% mandatory tax (${taxAmount} USDT) for UID: ${target.uid} (${target.username}). Withdrawal unlocked.`,
+      target.uid
+    );
+
+    return {
+      success: true,
+      message: `Tax status cleared for ${target.username}. 25% tax requirement satisfied.`,
+    };
   };
 
   const approveDeposit = (depositId: string) => {
@@ -1112,11 +1617,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetId = userId || currentUser?.id;
     if (!targetId) return;
     setUsers((prev) =>
-      prev.map((u) =>
-        u.id === targetId
-          ? { ...u, completedTasksCount: Math.max(0, (u.completedTasksCount || 0) + count) }
-          : u
-      )
+      prev.map((u) => {
+        if (u.id === targetId) {
+          const nextCycleTasks = Math.min(25, (u.currentCycleTasks || 0) + count);
+          const nextCompletedCount = Math.max(0, (u.completedTasksCount || 0) + count);
+          return {
+            ...u,
+            completedTasksCount: nextCompletedCount,
+            currentCycleTasks: nextCycleTasks,
+            cycleApprovedByAdmin: nextCycleTasks >= 25 ? false : u.cycleApprovedByAdmin,
+          };
+        }
+        return u;
+      })
     );
   };
 
@@ -1129,6 +1642,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveView,
         deviceFrame,
         setDeviceFrame,
+        language,
+        setLanguage,
+        t,
         users,
         admins,
         inviteCodes,
@@ -1141,6 +1657,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         registerUser,
         logoutUser,
         switchUser,
+        updateUserAvatar,
         setWithdrawalPassword,
         bindWallet,
         submitDeposit,
@@ -1150,6 +1667,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         submitOrder,
         switchAdmin,
         hasPermission,
+        resetUserTaskCycle,
+        resetUserToFreshCycle,
+        toggleUserVip,
+        toggleUserLock,
+        setCustomUserCombos,
+        clearUserTax,
         approveDeposit,
         rejectDeposit,
         approveWithdrawal,

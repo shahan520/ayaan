@@ -152,73 +152,89 @@ export const WalletManagementPage: React.FC<Props> = ({ onBack }) => {
           </div>
         ) : null}
 
-        {/* Form view matching Screenshot_2026-06-07-12-44-45-99 */}
+        {/* Form view matching image_05a80938.png */}
         {isEditing && (
-          <form onSubmit={handleSubmit} className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs space-y-4">
-            <h2 className="font-bold text-slate-800 text-sm border-b border-slate-100 pb-2">
-              Bind Electronic Wallet (TRC-20)
+          <form onSubmit={handleSubmit} className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs divide-y divide-slate-100 space-y-4">
+            <h2 className="font-bold text-[#000000] text-sm pb-1">
+              Add E-Wallet
             </h2>
 
             {error && (
-              <div className="p-2.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs">
+              <div className="p-3 bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs font-semibold">
                 {error}
               </div>
             )}
 
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-black block mb-1">Wallet name</label>
+            <div className="space-y-1.5 pt-3">
+              <label className="text-xs font-semibold text-slate-500 block">Wallet name</label>
               <input
                 type="text"
                 value={walletName}
                 onChange={(e) => setWalletName(e.target.value)}
-                placeholder="Please enter the wallet name (e.g. Binance / OKX)"
-                className="w-full px-3 py-2.5 text-sm font-semibold text-black bg-white placeholder:text-black/75 border-2 border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-red-600 focus:border-red-600"
+                placeholder="Enter wallet name"
+                className="w-full px-3 py-2.5 text-sm font-bold text-[#000000] placeholder:text-slate-400 bg-white border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#d97706] focus:border-[#d97706]"
               />
             </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-black block mb-1">Virtual Currency Protocol</label>
-              <input
-                type="text"
-                value="TRON (TRC-20)"
-                disabled
-                className="w-full px-3 py-2.5 text-sm font-bold text-black bg-slate-100 border-2 border-slate-300 rounded-lg cursor-not-allowed"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-black block mb-1">Wallet address</label>
-              <input
-                type="text"
-                value={walletAddress}
-                onChange={(e) => setWalletAddress(e.target.value)}
-                placeholder="Please enter the e-wallet address (starts with T...)"
-                className="w-full px-3 py-2.5 text-sm font-mono font-semibold text-black bg-white placeholder:text-black/75 border-2 border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-red-600 focus:border-red-600"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-black block mb-1">Account holder name</label>
+            <div className="space-y-1.5 pt-3">
+              <label className="text-xs font-semibold text-slate-500 block">Names</label>
               <input
                 type="text"
                 value={accountName}
                 onChange={(e) => setAccountName(e.target.value)}
-                placeholder="Names"
-                className="w-full px-3 py-2.5 text-sm font-semibold text-black bg-white placeholder:text-black/75 border-2 border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-red-600 focus:border-red-600"
+                placeholder="Enter your name"
+                className="w-full px-3 py-2.5 text-sm font-bold text-[#000000] placeholder:text-slate-400 bg-white border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#d97706] focus:border-[#d97706]"
               />
             </div>
 
-            <div className="pt-2 space-y-2">
+            <div className="space-y-1.5 pt-3">
+              <label className="text-xs font-semibold text-slate-500 block">Wallet address</label>
+              <input
+                type="text"
+                value={walletAddress}
+                onChange={(e) => setWalletAddress(e.target.value)}
+                placeholder="Enter wallet address"
+                className="w-full px-3 py-2.5 text-sm font-mono font-bold text-[#000000] placeholder:text-slate-400 bg-white border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#d97706] focus:border-[#d97706]"
+              />
+            </div>
+
+            <div className="space-y-2 pt-3">
+              <label className="text-xs font-semibold text-slate-500 block">
+                Virtual Currency Protocol
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  className="py-2 text-xs font-bold rounded-xl border border-[#d97706] bg-amber-50/70 text-[#d97706] shadow-2xs"
+                >
+                  TRC-20
+                </button>
+                <button
+                  type="button"
+                  className="py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                >
+                  ERC-20
+                </button>
+                <button
+                  type="button"
+                  className="py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                >
+                  BEP-20
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-3 space-y-2">
               <button
                 type="submit"
-                className="w-full py-2.5 bg-amber-400 hover:bg-amber-500 text-slate-900 font-semibold text-sm rounded-lg transition-colors shadow-xs"
+                className="w-full py-3.5 bg-[#d97706] hover:bg-[#b45309] text-white font-black text-sm rounded-xl transition-all shadow-md active:scale-[0.99] cursor-pointer"
               >
                 OK
               </button>
               <button
                 type="button"
                 onClick={() => setIsEditing(false)}
-                className="w-full py-2 text-slate-600 border border-slate-200 hover:bg-slate-50 font-medium text-sm rounded-lg transition-colors"
+                className="w-full py-2 text-slate-500 hover:text-black font-semibold text-xs transition-colors cursor-pointer text-center"
               >
                 Cancel
               </button>

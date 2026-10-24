@@ -144,30 +144,40 @@ export const RecordTab: React.FC = () => {
                 )}
 
                 {/* Transaction Specs */}
-                <div className="bg-slate-50 p-3 rounded-xl space-y-1.5 text-xs font-semibold text-black border border-slate-100">
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Transaction time:</span>
-                    <span className="text-black font-mono font-bold">{order.createdAt}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Order amount:</span>
-                    <span className="font-bold text-black font-mono">
-                      {order.orderAmount.toFixed(2)} USDT
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Commissions:</span>
-                    <span className="font-bold text-black font-mono">
-                      +{order.commission.toFixed(4)} USDT
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center pt-1 border-t border-slate-200">
-                    <span className="font-black text-black">Expected income:</span>
-                    <span className="text-sm font-black text-[#c48b26] font-mono">
-                      {order.expectedIncome.toFixed(4)} USDT
-                    </span>
-                  </div>
-                </div>
+                {(() => {
+                  const orderComm =
+                    order.isComboOrder && order.comboCommissionPercent
+                      ? Number(((order.orderAmount * order.comboCommissionPercent) / 100).toFixed(4))
+                      : order.commission;
+                  const orderExpected = Number((order.orderAmount + orderComm).toFixed(4));
+
+                  return (
+                    <div className="bg-slate-50 p-3 rounded-xl space-y-1.5 text-xs font-semibold text-black border border-slate-100">
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Transaction time:</span>
+                        <span className="text-black font-mono font-bold">{order.createdAt}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Order amount:</span>
+                        <span className="font-bold text-black font-mono">
+                          {order.orderAmount.toFixed(2)} USDT
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Commissions:</span>
+                        <span className="font-bold text-emerald-600 font-mono">
+                          +{orderComm.toFixed(4)} USDT
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center pt-1 border-t border-slate-200">
+                        <span className="font-black text-black">Expected income:</span>
+                        <span className="text-sm font-black text-[#c48b26] font-mono">
+                          {orderExpected.toFixed(4)} USDT
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Submit button for incomplete orders matching grab_order_80330fb5.jpg design */}
                 {order.status === 'incomplete' ? (
