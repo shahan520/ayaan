@@ -406,8 +406,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // USER AUTHENTICATION & PROFILE METHODS
   // --------------------------------------------------------------------------
 
-  const loginUser = (username: string, _password?: string) => {
+  const loginUser = (username: string, password?: string) => {
     const trimmed = username.trim();
+    if (!trimmed) {
+      return { success: false, message: 'Please enter your username.' };
+    }
+    if (!password) {
+      return { success: false, message: 'Please enter your password.' };
+    }
+
     const user = users.find(
       (u) =>
         u.username.toLowerCase() === trimmed.toLowerCase() ||
@@ -421,8 +428,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Your account is frozen. Please contact customer service.' };
     }
 
+    // STRICT PASSWORD VERIFICATION ON LOGIN:
+    // Strictly validate the entered password against the stored user password
+    const storedPassword = user.password || 'password123';
+    if (password !== storedPassword) {
+      return {
+        success: false,
+        message: 'Incorrect password. Please verify your password and try again.',
+      };
+    }
+
     setCurrentUserId(user.id);
-    return { success: true };
+    return { success: true, message: 'Login successful!' };
   };
 
   const registerUser = (username: string, password: string, inviteCodeInput: string) => {

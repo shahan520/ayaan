@@ -291,7 +291,8 @@ export const AuthModal: React.FC<Props> = ({
                       type="button"
                       onClick={() => {
                         setLoginIdentifier(u.username);
-                        setLoginPassword('123456');
+                        setLoginPassword(u.password || 'password123');
+                        setError('');
                       }}
                       className="p-1.5 bg-slate-50 hover:bg-amber-50/60 border border-slate-200 hover:border-amber-300 rounded-lg text-[11px] text-center text-slate-700 font-medium transition-colors cursor-pointer"
                     >
