@@ -32,6 +32,8 @@ export const ServiceTab: React.FC = () => {
       const lower = userMsg.toLowerCase();
       if (lower.includes('deposit') || lower.includes('recharge')) {
         reply = `For deposits: please send USDT via TRON TRC-20 only to our official address: ${systemConfig.trc20DepositAddress}. Once sent, submit your TXID for instant credit!`;
+      } else if (lower.includes('wallet') || lower.includes('address') || lower.includes('reset')) {
+        reply = "For security and anti-tamper protection, receiving TRC-20 wallet addresses are locked after initial setup. Our Administrators can manually reset or update your bound address in the Admin Panel if an error was made.";
       } else if (lower.includes('withdraw') || lower.includes('password')) {
         reply = "For withdrawals: ensure your electronic wallet is bound and you have set your withdrawal password. Processing time is usually 10-30 minutes.";
       } else if (lower.includes('code') || lower.includes('invite')) {
@@ -52,6 +54,10 @@ export const ServiceTab: React.FC = () => {
   };
 
   const faqItems = [
+    {
+      q: 'Can I change my bound TRC-20 withdrawal address?',
+      a: 'To safeguard user funds from unauthorized redirection, receiving TRC-20 addresses are locked after initial setup. If you made a typo or require an address change, contact Customer Service so an Administrator can unlock and reset your address.',
+    },
     {
       q: 'How do I complete a TRC-20 USDT deposit?',
       a: 'Go to the "Mine" tab and click "Deposit". Choose TRC-20, enter the amount, and copy our one-time TRC-20 address or scan the QR code. Once transferred from your crypto exchange (Binance, OKX, TrustWallet), enter your TXID and submit proof.',

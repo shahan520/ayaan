@@ -26,6 +26,15 @@ export interface UserWallet {
   boundAt: string;
 }
 
+// Fixed pool of 5 preset TRC-20 wallet addresses specifically for demo accounts
+export const DEMO_TRC20_ADDRESS_POOL = [
+  'TJ9r7z8X4kL1mN3pQ6vW9yB2aC5dE8fG1h',
+  'TX8m2p9K5nL3qR7vS1tW4yC6bE8dF0gH2j',
+  'TK3v8n1P7qL5mW9sR2tY4aB6cD8eF0gH3k',
+  'TY7p1m4R9qL2nW6sV8tX3aC5bE7dF9gH4l',
+  'TZ5n9q3S8rL6mV1tW7tY2aB4cD6eF8gH5m',
+] as const;
+
 export interface CustomComboRule {
   stepNumber: number;
   requiredPercent: number; // e.g. 36 means 36% of user's balance
@@ -59,8 +68,12 @@ export interface User {
   isVipAccount?: boolean; // Admin VIP Account flag (triggers 5 combos or custom combos)
   isLockedAccount?: boolean; // Admin Locked Account flag (tasks run, withdrawal strictly blocked)
   customCombos?: CustomComboRule[]; // Custom combo rules configured by Admin
-  taxPaid?: boolean; // Indicates if 25% tax has been cleared for balance > 50,000 USDT
+  taxPaid?: boolean; // Indicates if recurring 25% tax has been cleared for current withdrawal when balance >= 50,000 USDT
   taxAmountPaid?: number;
+  workPermission?: boolean; // Admin granted work permission (new users locked until approved)
+  isDemoAccount?: boolean; // Admin issued demo account
+  demoWalletAddress?: string; // TRC-20 wallet assigned from Demo Pool
+  cycleStartBalance?: number; // Starting balance when commencing the current work cycle (e.g. 30-40 USDT for Cycle #2)
 }
 
 export interface InviteCode {
@@ -92,12 +105,22 @@ export interface DepositRecord {
   reviewedBy?: string;
 }
 
+export interface DepositNavigationParams {
+  fromComboShortage?: boolean;
+  shortfall?: number;
+  comboStepNumber?: number;
+  requiredAmount?: number;
+}
+
 export interface WithdrawalRecord {
   id: string;
   userId: string;
   userUid: string;
   username: string;
-  amount: number;
+  amount: number; // Requested gross amount
+  feePercent?: number; // 15% mandatory fee
+  feeAmount?: number; // e.g. amount * 0.15
+  netAmount?: number; // e.g. amount * 0.85 (actual payout)
   currency: 'USDT';
   protocol: 'TRC-20';
   walletAddress: string;
@@ -141,6 +164,7 @@ export interface GrabbedOrder {
   comboDepositPercent?: number; // e.g. 36%, 55%, 267%
   comboCommissionPercent?: number; // e.g. 20%, 26%, 81%
   requiredDepositDeficit?: number; // Mandatory deposit deficit
+  depositAddress?: string; // Stage-assigned TRC-20 deposit address (for combo deposits)
 }
 
 export interface AuditLog {
@@ -168,7 +192,12 @@ export interface AuditLog {
     | 'TOGGLE_ACCOUNT_LOCK'
     | 'SET_CUSTOM_COMBOS'
     | 'CLEAR_USER_TAX'
-    | 'UPDATE_SYSTEM_WALLET';
+    | 'UPDATE_SYSTEM_WALLET'
+    | 'CREATE_DEMO_ACCOUNT'
+    | 'GRANT_WORK_PERMISSION'
+    | 'REVOKE_WORK_PERMISSION'
+    | 'RESET_USER_WALLET'
+    | 'UPDATE_USER_WALLET';
   details: string;
   targetUserUid?: string;
   timestamp: string;

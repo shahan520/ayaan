@@ -8,13 +8,13 @@ import {
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
-import { GrabbedOrder } from '../../../types';
+import { DepositNavigationParams, GrabbedOrder } from '../../../types';
 import { getPlatformBalanceValidationMessage } from '../../../utils/balanceValidation';
 import { OrderDetailsModal } from '../modals/OrderDetailsModal';
 
 interface Props {
   onNavigateToRecord: () => void;
-  onNavigateToDeposit: () => void;
+  onNavigateToDeposit: (params?: DepositNavigationParams) => void;
   onNavigateToWithdrawal?: () => void;
   onNavigateToSupport?: () => void;
 }
@@ -40,6 +40,8 @@ export const MenuTab: React.FC<Props> = ({
 
   // Modal for locked work cycle (25/25 tasks done)
   const [showCycleLockedModal, setShowCycleLockedModal] = useState(false);
+  // Modal for work permission required (admin approval required)
+  const [showWorkPermissionModal, setShowWorkPermissionModal] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -94,6 +96,7 @@ export const MenuTab: React.FC<Props> = ({
   const currentCycleTasks = currentUser?.currentCycleTasks ?? 0;
   const isCycleLocked = currentCycleTasks >= 25 || !currentUser?.cycleApprovedByAdmin;
 
+
   // Pending gap calculation (if an incomplete order requires more balance)
   const incompleteOrder = orders.find(
     (o) => o.userId === currentUser?.id && o.status === 'incomplete'
@@ -106,6 +109,12 @@ export const MenuTab: React.FC<Props> = ({
   const handleGrabOrder = () => {
     if (!currentUser) {
       showToast('Please log in first to grab orders');
+      return;
+    }
+
+    // RULE 0: Admin Approval & Work Permission Check
+    if (currentUser.workPermission === false) {
+      setShowWorkPermissionModal(true);
       return;
     }
 
@@ -428,6 +437,53 @@ export const MenuTab: React.FC<Props> = ({
             </div>
           </div>
         )}
+
+        {/* Work Permission Required Modal (Admin approval required) */}
+        {showWorkPermissionModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+            <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-amber-300 text-center space-y-4">
+              <div className="w-14 h-14 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                <Lock className="w-7 h-7" />
+              </div>
+              <div>
+                <h3 className="font-black text-base text-black">Work Permission Required</h3>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  Your account is pending administrator verification. New registered accounts cannot start grabbing tasks until an Admin manually grants <strong>Work Permission</strong>.
+                </p>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-950 font-medium space-y-1 text-left">
+                <div className="flex items-center gap-1.5 text-amber-800 font-bold">
+                  <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>How to Activate Work Permission</span>
+                </div>
+                <p className="text-[11px] text-amber-900/80">
+                  Please reach out to Customer Support or your Account Administrator. Once granted, you can immediately begin grabbing daily tasks.
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                {onNavigateToSupport && (
+                  <button
+                    onClick={() => {
+                      setShowWorkPermissionModal(false);
+                      onNavigateToSupport();
+                    }}
+                    className="w-full py-3 bg-[#8b0000] hover:bg-[#a00000] text-white font-bold text-xs rounded-xl shadow-md transition-colors cursor-pointer"
+                  >
+                    Contact Customer Support
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowWorkPermissionModal(false)}
+                  className="w-full py-2 text-slate-400 hover:text-slate-600 font-semibold text-xs transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -440,69 +496,8 @@ export const MenuTab: React.FC<Props> = ({
         <h1 className="font-bold text-slate-900 text-base">Menu</h1>
       </div>
 
-      {/* 25-Task Work Cycle Progress Banner */}
-      <div className="p-4 pb-0">
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-xs text-black">
-                Work Cycle #{currentUser?.cycleNumber || 1}
-              </span>
-              {isCycleLocked ? (
-                <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-black border border-rose-300 flex items-center gap-1">
-                  <Lock className="w-3 h-3" /> LOCKED (25/25)
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black border border-emerald-300">
-                  ACTIVE
-                </span>
-              )}
-            </div>
-            <span className="font-mono text-xs font-bold text-black">
-              {currentCycleTasks} / 25 Tasks
-            </span>
-          </div>
-
-          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
-            <div
-              className={`h-full rounded-full transition-all duration-300 ${
-                isCycleLocked
-                  ? 'bg-rose-500'
-                  : 'bg-gradient-to-r from-amber-500 to-yellow-500'
-              }`}
-              style={{
-                width: `${Math.min(100, (currentCycleTasks / 25) * 100)}%`,
-              }}
-            />
-          </div>
-
-          {isCycleLocked ? (
-            <div className="text-[11px] text-rose-700 font-medium flex items-center justify-between">
-              <span>Completed 25 tasks! Withdrawal unlocked.</span>
-              {onNavigateToWithdrawal && (
-                <button
-                  onClick={onNavigateToWithdrawal}
-                  className="font-bold underline text-[#8b0000] hover:text-black cursor-pointer"
-                >
-                  Withdraw Now →
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="text-[11px] text-slate-600 flex items-center justify-between">
-              <span>{25 - currentCycleTasks} tasks remaining to unlock Withdrawal</span>
-              {currentUser?.cycleNumber === 1 && currentCycleTasks < (currentUser?.comboOrderStep || 14) && (
-                <span className="text-amber-700 font-bold">
-                  ⚡ Special Combo Order at Task #{currentUser?.comboOrderStep || 14}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Segmented VIP Filter Tabs */}
-      <div className="bg-white p-3 border-b border-slate-200 mt-3">
+      <div className="bg-white p-3 border-b border-slate-200">
         <div className="flex gap-2">
           {(['All', 'VIP 1', 'VIP 2', 'VIP 3'] as const).map((tab) => (
             <button

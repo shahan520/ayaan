@@ -1,10 +1,14 @@
 import { CheckCircle2, Clock } from 'lucide-react';
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
-import { GrabbedOrder } from '../../../types';
+import { DepositNavigationParams, GrabbedOrder } from '../../../types';
 import { OrderDetailsModal } from '../modals/OrderDetailsModal';
 
-export const RecordTab: React.FC = () => {
+interface Props {
+  onNavigateToDeposit?: (params?: DepositNavigationParams) => void;
+}
+
+export const RecordTab: React.FC<Props> = ({ onNavigateToDeposit }) => {
   const { currentUser, orders, submitOrder } = useApp();
   const [activeTab, setActiveTab] = useState<'incomplete' | 'complete'>('incomplete');
   const [submittingId, setSubmittingId] = useState<string | null>(null);
@@ -212,6 +216,7 @@ export const RecordTab: React.FC = () => {
         order={inspectOrder}
         isOpen={!!inspectOrder}
         onClose={() => setInspectOrder(null)}
+        onNavigateToDeposit={onNavigateToDeposit}
         onOrderSubmitted={() => {
           setInspectOrder(null);
           setFeedback('Order submitted successfully! Earned commission credited.');

@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, CheckCircle2, Copy, Wallet } from 'lucide-react';
+import { ArrowLeft, Check, CheckCircle2, Copy, Lock, Wallet } from 'lucide-react';
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 
@@ -125,17 +125,21 @@ export const WalletManagementPage: React.FC<Props> = ({ onBack }) => {
               <span>Bound: {currentUser.wallet.boundAt.substring(0, 10)}</span>
             </div>
 
-            <button
-              onClick={() => {
-                setWalletName(currentUser.wallet!.walletName);
-                setWalletAddress(currentUser.wallet!.walletAddress);
-                setAccountName(currentUser.wallet!.accountName);
-                setIsEditing(true);
-              }}
-              className="w-full mt-2 py-2 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
-            >
-              Update Wallet Address
-            </button>
+            {/* ADMIN-ONLY TRC-20 ADDRESS RESET: Direct client change removed */}
+            <div className="mt-3 p-3.5 bg-amber-50/90 rounded-xl border border-amber-200/90 text-left space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-amber-950 font-bold text-xs">
+                  <Lock className="w-3.5 h-3.5 text-amber-700" />
+                  <span>TRC-20 Address Locked</span>
+                </div>
+                <span className="text-[10px] bg-amber-200/80 text-amber-900 font-bold px-2 py-0.5 rounded-full">
+                  Admin-Only Reset
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                For asset protection and anti-tamper security, your receiving TRC-20 withdrawal address is locked after initial setup. If you made an error during setup, please contact Customer Service or an Administrator to request an address reset.
+              </p>
+            </div>
           </div>
         ) : null}
 

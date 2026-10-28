@@ -5,14 +5,14 @@ import {
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
-import { GrabbedOrder } from '../../../types';
+import { DepositNavigationParams, GrabbedOrder } from '../../../types';
 
 interface Props {
   order: GrabbedOrder | null;
   isOpen: boolean;
   onClose: () => void;
   onOrderSubmitted?: () => void;
-  onNavigateToDeposit?: () => void;
+  onNavigateToDeposit?: (params?: DepositNavigationParams) => void;
 }
 
 export const OrderDetailsModal: React.FC<Props> = ({
@@ -63,10 +63,11 @@ export const OrderDetailsModal: React.FC<Props> = ({
   };
   const formattedShortfall = formatShortfall(balanceShortfall);
 
-  // FORMULA: Commission = Total Order Amount * Commission Percentage
-  // Example: 134.97 * 0.81 = 109.3257 USDT (~109.32 USDT)
+  // FORMULA: Commission = Total Order Amount * Commission Percentage or explicit commission
   const effectiveCommission =
-    isComboOrder && order.comboCommissionPercent
+    order.commission > 0
+      ? order.commission
+      : isComboOrder && order.comboCommissionPercent
       ? Number(((order.orderAmount * order.comboCommissionPercent) / 100).toFixed(4))
       : order.commission;
   const effectiveExpectedIncome = Number((order.orderAmount + effectiveCommission).toFixed(4));
@@ -74,7 +75,16 @@ export const OrderDetailsModal: React.FC<Props> = ({
   const handleOverlayClick = () => {
     if (onNavigateToDeposit) {
       onClose();
-      onNavigateToDeposit();
+      if (isComboOrder && userBalance < requiredBalance) {
+        onNavigateToDeposit({
+          fromComboShortage: true,
+          shortfall: balanceShortfall,
+          comboStepNumber: order.comboStepNumber,
+          requiredAmount: requiredBalance,
+        });
+      } else {
+        onNavigateToDeposit();
+      }
     }
   };
 
@@ -83,7 +93,12 @@ export const OrderDetailsModal: React.FC<Props> = ({
     if (isComboOrder && userBalance < requiredBalance) {
       if (onNavigateToDeposit) {
         onClose();
-        onNavigateToDeposit();
+        onNavigateToDeposit({
+          fromComboShortage: true,
+          shortfall: balanceShortfall,
+          comboStepNumber: order.comboStepNumber,
+          requiredAmount: requiredBalance,
+        });
       }
       return;
     }

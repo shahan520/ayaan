@@ -128,12 +128,18 @@ export const RecordsPage: React.FC<Props> = ({ initialType = 'deposit', onBack }
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="text-base font-bold text-slate-900">
+                    <span className="text-base font-bold text-slate-900 block">
                       -{item.amount.toFixed(2)} USDT
                     </span>
                     <span className="text-[11px] text-slate-500 block">
                       Protocol: {item.protocol}
                     </span>
+                    <div className="text-[10px] text-slate-600 mt-0.5 space-y-0.5">
+                      <span>Fee (15%): -{(item.feeAmount || Number((item.amount * 0.15).toFixed(2))).toFixed(2)} USDT</span>
+                      <span className="block font-bold text-emerald-700">
+                        Net Payout (85%): +{(item.netAmount || Number((item.amount * 0.85).toFixed(2))).toFixed(2)} USDT
+                      </span>
+                    </div>
                   </div>
 
                   <div>

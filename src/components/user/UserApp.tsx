@@ -1,6 +1,7 @@
 import { Calendar, Headphones, Home, ShoppingBag, User as UserIcon } from 'lucide-react';
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { DepositNavigationParams } from '../../types';
 import { AuthModal } from './auth/AuthModal';
 import { DepositPage } from './subpages/DepositPage';
 import { InvitePage } from './subpages/InvitePage';
@@ -18,16 +19,27 @@ export const UserApp: React.FC = () => {
   const { currentUser, t } = useApp();
   const [currentTab, setCurrentTab] = useState<'home' | 'service' | 'menu' | 'record' | 'mine'>('home');
   const [activeSubpage, setActiveSubpage] = useState<string | null>(null);
+  const [depositNavParams, setDepositNavParams] = useState<DepositNavigationParams | null>(null);
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [menuKey, setMenuKey] = useState<number>(0);
+
+  // Navigation parameter handler for deposit page
+  const handleNavigateToDeposit = (params?: DepositNavigationParams) => {
+    setDepositNavParams(params || null);
+    setActiveSubpage('deposit');
+  };
 
   // Router for subpages
   const renderContent = () => {
     if (activeSubpage === 'deposit') {
       return (
         <DepositPage
-          onBack={() => setActiveSubpage(null)}
+          onBack={() => {
+            setDepositNavParams(null);
+            setActiveSubpage(null);
+          }}
           onNavigateToRecords={() => setActiveSubpage('deposit-records')}
+          navigationParams={depositNavParams}
         />
       );
     }
@@ -37,7 +49,7 @@ export const UserApp: React.FC = () => {
           onBack={() => setActiveSubpage(null)}
           onNavigateToWallet={() => setActiveSubpage('wallet')}
           onNavigateToRecords={() => setActiveSubpage('withdrawal-records')}
-          onNavigateToDeposit={() => setActiveSubpage('deposit')}
+          onNavigateToDeposit={() => handleNavigateToDeposit()}
           onNavigateToService={() => {
             setActiveSubpage(null);
             setCurrentTab('service');
@@ -86,6 +98,8 @@ export const UserApp: React.FC = () => {
                   setMenuKey((prev) => prev + 1);
                 }
                 setCurrentTab(page);
+              } else if (page === 'deposit') {
+                handleNavigateToDeposit();
               } else {
                 setActiveSubpage(page);
               }
@@ -99,13 +113,13 @@ export const UserApp: React.FC = () => {
           <MenuTab
             key={`menu-${menuKey}`}
             onNavigateToRecord={() => setCurrentTab('record')}
-            onNavigateToDeposit={() => setActiveSubpage('deposit')}
+            onNavigateToDeposit={handleNavigateToDeposit}
             onNavigateToWithdrawal={() => setActiveSubpage('withdrawal')}
             onNavigateToSupport={() => setCurrentTab('service')}
           />
         );
       case 'record':
-        return <RecordTab />;
+        return <RecordTab onNavigateToDeposit={handleNavigateToDeposit} />;
       case 'mine':
       default:
         return (
@@ -116,6 +130,8 @@ export const UserApp: React.FC = () => {
                   setMenuKey((prev) => prev + 1);
                 }
                 setCurrentTab(page);
+              } else if (page === 'deposit') {
+                handleNavigateToDeposit();
               } else {
                 setActiveSubpage(page);
               }

@@ -1,31 +1,144 @@
-import { ArrowLeft, Check, CheckCircle2, Clock, Copy, ShieldCheck } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Check, CheckCircle2, Clock, Copy, RefreshCw, ShieldCheck } from 'lucide-react';
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
+import { DEMO_TRC20_ADDRESS_POOL, DepositNavigationParams } from '../../../types';
 import { QRCodeSVG } from '../../common/QRCodeSVG';
 
 interface Props {
   onBack: () => void;
   onNavigateToRecords: () => void;
+  navigationParams?: DepositNavigationParams | null;
 }
 
-export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords }) => {
-  const { systemConfig, submitDeposit } = useApp();
+export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords, navigationParams }) => {
+  const { systemConfig, submitDeposit, currentUser, orders, deposits } = useApp();
   const [step, setStep] = useState<1 | 2>(1);
-  const [amount, setAmount] = useState<string>('100');
+  const [manualCycleOffset, setManualCycleOffset] = useState<number>(0);
+
+  // MANUAL DEPOSIT AMOUNT INPUT:
+  // When redirected from combo shortage, do not auto-fill or lock the deposit amount field.
+  // Leave the deposit amount input field blank and editable so the customer manually types their desired deposit amount.
+  const [amount, setAmount] = useState<string>('');
   const [txid, setTxid] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
 
-  // Randomly select one TRC-20 address from the configured pool upon opening Deposit page
-  const [activeDepositAddress] = useState<string>(() => {
+  // Optional combo shortage information banner (informational only; does not lock or pre-fill input)
+  const comboShortageNotice = React.useMemo(() => {
+    if (navigationParams?.fromComboShortage && navigationParams.shortfall) {
+      return {
+        shortfall: navigationParams.shortfall,
+        stepNumber: navigationParams.comboStepNumber,
+      };
+    }
+    const incomplete = orders.find(
+      (o) => o.userId === currentUser?.id && o.status === 'incomplete' && o.isComboOrder
+    );
+    if (!incomplete || !incomplete.requiredBalance || !currentUser) return null;
+    const diff = Number(Math.max(0, incomplete.requiredBalance - currentUser.balance).toFixed(2));
+    if (diff > 0) {
+      return {
+        shortfall: diff,
+        stepNumber: incomplete.comboStepNumber,
+      };
+    }
+    return null;
+  }, [navigationParams, orders, currentUser]);
+
+  // DYNAMIC TRC-20 DEPOSIT ADDRESS ROTATION:
+  // 1. For demo accounts: sequentially cycle through 4 distinct addresses for the 4 consecutive combo stages (Tasks #9, #14, #19, #24)
+  // 2. For real accounts: sequentially cycle through the admin-managed TRC-20 address pool across consecutive transactions.
+  //    If user has an active incomplete combo order, retain and display its assigned depositAddress.
+  const { activeDepositAddress, activeStageNumber, realRotationInfo } = React.useMemo(() => {
+    if (currentUser?.isDemoAccount) {
+      // 1. If an incomplete combo order exists, use its stage-assigned address
+      const incomplete = orders.find(
+        (o) => o.userId === currentUser.id && o.status === 'incomplete' && o.isComboOrder
+      );
+      if (incomplete?.depositAddress) {
+        let stage = 1;
+        if (incomplete.comboStepNumber === 9) stage = 1;
+        else if (incomplete.comboStepNumber === 14) stage = 2;
+        else if (incomplete.comboStepNumber === 19) stage = 3;
+        else if (incomplete.comboStepNumber === 24) stage = 4;
+        return {
+          activeDepositAddress: incomplete.depositAddress,
+          activeStageNumber: stage,
+          realRotationInfo: null,
+        };
+      }
+      if (incomplete?.comboStepNumber) {
+        if (incomplete.comboStepNumber === 9)
+          return { activeDepositAddress: DEMO_TRC20_ADDRESS_POOL[0], activeStageNumber: 1, realRotationInfo: null };
+        if (incomplete.comboStepNumber === 14)
+          return { activeDepositAddress: DEMO_TRC20_ADDRESS_POOL[1], activeStageNumber: 2, realRotationInfo: null };
+        if (incomplete.comboStepNumber === 19)
+          return { activeDepositAddress: DEMO_TRC20_ADDRESS_POOL[2], activeStageNumber: 3, realRotationInfo: null };
+        if (incomplete.comboStepNumber === 24)
+          return { activeDepositAddress: DEMO_TRC20_ADDRESS_POOL[3], activeStageNumber: 4, realRotationInfo: null };
+      }
+
+      // 2. Otherwise determine stage from current cycle progress
+      const tasks = currentUser.currentCycleTasks ?? 0;
+      let stageIndex = 0;
+      if (tasks >= 20) stageIndex = 3;
+      else if (tasks >= 15) stageIndex = 2;
+      else if (tasks >= 10) stageIndex = 1;
+      else stageIndex = 0;
+
+      return {
+        activeDepositAddress: DEMO_TRC20_ADDRESS_POOL[stageIndex],
+        activeStageNumber: stageIndex + 1,
+        realRotationInfo: null,
+      };
+    }
+
+    // REAL USER ACCOUNTS: Sequential rotation across consecutive transactions
     const pool =
       systemConfig.trc20AddressPool && systemConfig.trc20AddressPool.length > 0
         ? systemConfig.trc20AddressPool
         : [systemConfig.trc20DepositAddress];
-    const randomIndex = Math.floor(Math.random() * pool.length);
-    return pool[randomIndex] || systemConfig.trc20DepositAddress;
-  });
+
+    // Check if user has an incomplete combo order with assigned depositAddress
+    const incompleteCombo = orders.find(
+      (o) => o.userId === currentUser?.id && o.status === 'incomplete' && o.isComboOrder
+    );
+    if (incompleteCombo?.depositAddress) {
+      const assignedAddr = incompleteCombo.depositAddress;
+      const poolIdx = pool.indexOf(assignedAddr);
+      return {
+        activeDepositAddress: assignedAddr,
+        activeStageNumber: null,
+        realRotationInfo: {
+          poolIndex: poolIdx >= 0 ? poolIdx + 1 : 1,
+          totalPool: pool.length,
+          txNumber: (deposits.filter((d) => d.userId === currentUser?.id).length || 0) + 1,
+          isCombo: true,
+          comboStep: incompleteCombo.comboStepNumber,
+        },
+      };
+    }
+
+    // Sequential transaction rotation: Tx #1 -> Pool[0], Tx #2 -> Pool[1], Tx #3 -> Pool[2], etc.
+    const userDepositsCount = currentUser
+      ? deposits.filter((d) => d.userId === currentUser.id).length
+      : 0;
+    const sequentialIndex = (userDepositsCount + manualCycleOffset) % pool.length;
+    const selectedAddress = pool[sequentialIndex] || systemConfig.trc20DepositAddress;
+
+    return {
+      activeDepositAddress: selectedAddress,
+      activeStageNumber: null,
+      realRotationInfo: {
+        poolIndex: sequentialIndex + 1,
+        totalPool: pool.length,
+        txNumber: userDepositsCount + 1,
+        isCombo: false,
+        comboStep: undefined,
+      },
+    };
+  }, [currentUser, orders, systemConfig, deposits, manualCycleOffset]);
 
   const quickAmounts = [20, 50, 100, 300, 500, 1000];
 
@@ -130,6 +243,22 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords }) =>
             </div>
           </div>
 
+          {/* Combo Shortfall Notice (Informational only, keeps amount field blank & fully editable) */}
+          {comboShortageNotice && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <span className="text-xs font-bold text-amber-900 block">
+                  Combo Order #{comboShortageNotice.stepNumber || ''} Shortfall Notice
+                </span>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Required deficit to complete combo order: <strong className="font-bold text-red-600">{comboShortageNotice.shortfall.toFixed(2)} USDT</strong>.
+                  Please manually enter your desired deposit amount below.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Deposit Amount */}
           <div className="space-y-2">
             <h2 className="text-xs font-black text-black uppercase tracking-wide">Deposit amount</h2>
@@ -142,6 +271,7 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords }) =>
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="Deposit amount must be greater than 0.1USDT"
                 className="w-full text-sm font-bold text-black placeholder:text-black/70 bg-white focus:outline-hidden"
+                autoFocus
               />
             </div>
 
@@ -234,7 +364,22 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords }) =>
                 <div className="h-full bg-red-500 w-3/4 animate-pulse rounded-full" />
               </div>
 
-              <div className="text-xs font-semibold text-orange-600">One Time Address:</div>
+              <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                <span className="text-xs font-semibold text-orange-600">One Time Address:</span>
+                {currentUser?.isDemoAccount && activeStageNumber && (
+                  <span className="px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 text-[10px] font-bold border border-cyan-300">
+                    Combo Stage {activeStageNumber}/4 (Unique TRC-20)
+                  </span>
+                )}
+                {!currentUser?.isDemoAccount && realRotationInfo && (
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-300 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                    {realRotationInfo.isCombo
+                      ? `Combo Order #${realRotationInfo.comboStep} Payment • Address ${realRotationInfo.poolIndex}/${realRotationInfo.totalPool}`
+                      : `Tx #${realRotationInfo.txNumber} • Address ${realRotationInfo.poolIndex} of ${realRotationInfo.totalPool} (Auto-Rotated)`}
+                  </span>
+                )}
+              </div>
 
               {/* Dynamic QR Code matching active selected TRC-20 address */}
               <div className="flex justify-center py-1">
@@ -259,6 +404,20 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords }) =>
                   {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                 </button>
               </div>
+
+              {/* Optional sequential cycle switch for real user accounts if pool has multiple addresses */}
+              {!currentUser?.isDemoAccount && (systemConfig.trc20AddressPool?.length || 1) > 1 && !realRotationInfo?.isCombo && (
+                <div className="flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setManualCycleOffset((c) => c + 1)}
+                    className="text-[11px] text-red-600 hover:text-red-700 font-semibold underline flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Cycle to next pool address (Pool of {realRotationInfo?.totalPool || 1})</span>
+                  </button>
+                </div>
+              )}
 
               <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500 font-medium">
                 <Clock className="w-3.5 h-3.5 text-red-600 animate-spin" />
