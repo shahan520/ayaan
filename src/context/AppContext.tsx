@@ -146,11 +146,20 @@ interface AppContextType {
   createSubAdmin: (
     username: string,
     name: string,
-    permissions: AdminPermission[]
+    permissions: AdminPermission[],
+    password?: string
   ) => { success: boolean; message?: string };
   updateSubAdminPermissions: (
     adminId: string,
     permissions: AdminPermission[]
+  ) => { success: boolean; message?: string };
+  updateSubAdminPassword: (
+    adminId: string,
+    newPass: string
+  ) => { success: boolean; message?: string };
+  updateSuperAdminSecurity: (
+    newPassword?: string,
+    newSecurityPin?: string
   ) => { success: boolean; message?: string };
   createDemoAccount: (data: {
     username: string;
@@ -2074,7 +2083,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createSubAdmin = (
     username: string,
     name: string,
-    permissions: AdminPermission[]
+    permissions: AdminPermission[],
+    password?: string
   ) => {
     if (currentAdmin.role !== 'super_admin') {
       return { success: false, message: 'Only Super Admin can create sub-admins.' };
@@ -2088,6 +2098,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newSub: AdminUser = {
       id: 'admin_' + Date.now(),
       username: clean,
+      password: password?.trim() || 'sub123456',
       name: name.trim() || 'Sub Admin',
       role: 'sub_admin',
       permissions,
@@ -2098,7 +2109,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAdmins((prev) => [...prev, newSub]);
     logAuditAction(
       'CREATE_SUBADMIN',
-      `Created sub-admin "${clean}" with ${permissions.length} permissions`
+      `Created sub-admin "${clean}" with assigned credentials and ${permissions.length} permissions`
     );
 
     return { success: true, message: `Sub-admin "${clean}" created successfully!` };
@@ -2123,6 +2134,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     return { success: true, message: 'Permissions updated successfully.' };
+  };
+
+  const updateSubAdminPassword = (adminId: string, newPass: string) => {
+    if (currentAdmin.role !== 'super_admin') {
+      return {
+        success: false,
+        message: 'Permission Denied: Sub-admins cannot modify credentials. Only Super Admin can manage sub-admin passwords.',
+      };
+    }
+    const clean = newPass.trim();
+    if (!clean || clean.length < 4) {
+      return { success: false, message: 'Password must be at least 4 characters long.' };
+    }
+
+    const target = admins.find((a) => a.id === adminId);
+    if (!target) return { success: false, message: 'Sub-admin account not found.' };
+
+    setAdmins((prev) =>
+      prev.map((a) => (a.id === adminId ? { ...a, password: clean } : a))
+    );
+
+    logAuditAction(
+      'UPDATE_SUBADMIN',
+      `Super Admin updated login password for sub-admin "${target.username}"`
+    );
+
+    return {
+      success: true,
+      message: `Password for sub-admin "${target.username}" updated successfully!`,
+    };
+  };
+
+  const updateSuperAdminSecurity = (newPassword?: string, newSecurityPin?: string) => {
+    if (currentAdmin.role !== 'super_admin') {
+      return {
+        success: false,
+        message: 'Permission Denied: Only Super Admin can modify system security credentials.',
+      };
+    }
+
+    const updates: { password?: string; securityPin?: string } = {};
+
+    if (newPassword && newPassword.trim()) {
+      if (newPassword.trim().length < 4) {
+        return { success: false, message: 'New password must be at least 4 characters.' };
+      }
+      updates.password = newPassword.trim();
+    }
+
+    if (newSecurityPin && newSecurityPin.trim()) {
+      if (newSecurityPin.trim().length < 4 || newSecurityPin.trim().length > 6) {
+        return { success: false, message: 'Master Security PIN must be between 4 and 6 digits.' };
+      }
+      updates.securityPin = newSecurityPin.trim();
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return { success: false, message: 'Please enter a new password or Master Security PIN to update.' };
+    }
+
+    setAdmins((prev) =>
+      prev.map((a) => (a.id === currentAdmin.id ? { ...a, ...updates } : a))
+    );
+
+    logAuditAction(
+      'UPDATE_SUBADMIN',
+      `Super Admin successfully changed their security credentials (${Object.keys(updates).join(', ')})`
+    );
+
+    return {
+      success: true,
+      message: 'Super Admin credentials & Master Security PIN updated successfully!',
+    };
   };
 
   const updateSystemConfig = (newConfig: Partial<SystemConfig>) => {
@@ -2336,6 +2420,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleInviteCodeStatus,
         createSubAdmin,
         updateSubAdminPermissions,
+        updateSubAdminPassword,
+        updateSuperAdminSecurity,
         createDemoAccount,
         toggleUserWorkPermission,
         resetUserWallet,

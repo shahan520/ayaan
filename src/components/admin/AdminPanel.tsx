@@ -91,6 +91,8 @@ export const AdminPanel: React.FC = () => {
     switchUser,
     setActiveView,
     adminLogout,
+    updateSubAdminPassword,
+    updateSuperAdminSecurity,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<
@@ -148,10 +150,22 @@ export const AdminPanel: React.FC = () => {
   const [showAddSubAdminModal, setShowAddSubAdminModal] = useState(false);
   const [newSubUsername, setNewSubUsername] = useState('');
   const [newSubName, setNewSubName] = useState('');
+  const [newSubPassword, setNewSubPassword] = useState('sub123456');
   const [newSubPermissions, setNewSubPermissions] = useState<AdminPermission[]>([
     'can_manage_users',
     'can_view_logs',
   ]);
+
+  // Super Admin Credentials & Master PIN Management Modal State
+  const [showSuperSecurityModal, setShowSuperSecurityModal] = useState(false);
+  const [superNewPassword, setSuperNewPassword] = useState('');
+  const [superConfirmPassword, setSuperConfirmPassword] = useState('');
+  const [superNewPin, setSuperNewPin] = useState('');
+  const [superConfirmPin, setSuperConfirmPin] = useState('');
+
+  // Sub-Admin Password Change Modal State (Super Admin exclusive authority)
+  const [subAdminToEditPassword, setSubAdminToEditPassword] = useState<AdminUser | null>(null);
+  const [subAdminNewPass, setSubAdminNewPass] = useState('');
 
   // Wallet address & rotating pool edit state
   const [editWalletAddress, setEditWalletAddress] = useState(systemConfig.trc20DepositAddress);
@@ -251,6 +265,24 @@ export const AdminPanel: React.FC = () => {
               </option>
             ))}
           </select>
+
+          {/* Super Admin Security Settings Button (Only visible for Super Admin) */}
+          {currentAdmin.role === 'super_admin' && (
+            <button
+              onClick={() => {
+                setSuperNewPassword('');
+                setSuperConfirmPassword('');
+                setSuperNewPin('');
+                setSuperConfirmPin('');
+                setShowSuperSecurityModal(true);
+              }}
+              title="Super Admin Password & Master PIN Security Settings"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-xs text-amber-300 font-semibold transition-colors cursor-pointer"
+            >
+              <Key className="w-3.5 h-3.5 text-amber-400" />
+              <span>Security Settings</span>
+            </button>
+          )}
 
           {/* Secure Exit Admin Button */}
           <button
@@ -1441,6 +1473,16 @@ export const AdminPanel: React.FC = () => {
               )}
             </div>
 
+            {/* Sub-Admin Role Restrictions Notice */}
+            {currentAdmin.role === 'sub_admin' && (
+              <div className="p-3.5 bg-blue-950/40 border border-blue-800/80 rounded-xl text-xs text-blue-300 flex items-center gap-2.5">
+                <ShieldAlert className="w-4 h-4 text-blue-400 shrink-0" />
+                <span>
+                  <strong>Role Restricted:</strong> Sub-admins cannot alter their own passwords or roles. All credentials, passwords, and permissions are managed exclusively by the Super Admin.
+                </span>
+              </div>
+            )}
+
             {/* Sub-Admins Cards Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {admins.map((adm) => {
@@ -1521,6 +1563,27 @@ export const AdminPanel: React.FC = () => {
                         })}
                       </div>
                     </div>
+
+                    {/* Super Admin Exclusive Authority: Change Sub-Admin Password */}
+                    {!isSuper && currentAdmin.role === 'super_admin' && (
+                      <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between">
+                        <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                          <Lock className="w-3.5 h-3.5 text-slate-500" />
+                          <span>Credentials: <span className="font-mono text-slate-300 font-bold">Protected</span></span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSubAdminToEditPassword(adm);
+                            setSubAdminNewPass('');
+                          }}
+                          className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-amber-200 border border-amber-500/30 hover:border-amber-500/50 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Key className="w-3 h-3 text-amber-400" />
+                          <span>Change Password</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2124,6 +2187,20 @@ export const AdminPanel: React.FC = () => {
                 />
               </div>
 
+              <div>
+                <label className="font-bold text-slate-300 block mb-1">Assigned Login Password</label>
+                <input
+                  type="text"
+                  value={newSubPassword}
+                  onChange={(e) => setNewSubPassword(e.target.value)}
+                  placeholder="Min 4 characters (e.g. sub123456)"
+                  className="w-full bg-white border-2 border-slate-300 rounded-lg px-3 py-2 text-black font-mono font-bold placeholder:text-black/60 focus:outline-hidden focus:ring-2 focus:ring-red-500"
+                />
+                <span className="text-[10px] text-slate-400 mt-1 block">
+                  Super Admin assigns credentials. Sub-admins cannot change their own passwords.
+                </span>
+              </div>
+
               <div className="pt-1">
                 <label className="font-bold text-slate-300 block mb-2">
                   Select Granular Role Permissions:
@@ -2179,12 +2256,22 @@ export const AdminPanel: React.FC = () => {
                       notify({ success: false, message: 'Please enter a username.' });
                       return;
                     }
-                    const res = createSubAdmin(newSubUsername, newSubName, newSubPermissions);
+                    if (!newSubPassword.trim() || newSubPassword.trim().length < 4) {
+                      notify({ success: false, message: 'Password must be at least 4 characters.' });
+                      return;
+                    }
+                    const res = createSubAdmin(
+                      newSubUsername,
+                      newSubName,
+                      newSubPermissions,
+                      newSubPassword
+                    );
                     notify(res);
                     if (res.success) {
                       setShowAddSubAdminModal(false);
                       setNewSubUsername('');
                       setNewSubName('');
+                      setNewSubPassword('sub123456');
                     }
                   }}
                   className="flex-1 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg font-bold"
@@ -2964,6 +3051,214 @@ export const AdminPanel: React.FC = () => {
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>Save & Lock Corrected Address</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 6: Super Admin Security Credentials & Master PIN Modal */}
+      {/* ------------------------------------------------------------- */}
+      {showSuperSecurityModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-amber-500" />
+                <div>
+                  <h3 className="font-bold text-white text-sm">
+                    Super Admin Security Credentials
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Change Super Admin login password & Master Security PIN
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSuperSecurityModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              {/* Super Admin Login Password Section */}
+              <div className="p-3.5 bg-slate-900 border border-slate-800 rounded-xl space-y-2.5">
+                <span className="font-bold text-slate-200 block text-xs uppercase tracking-wider flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-amber-400" />
+                  <span>1. Change Super Admin Login Password:</span>
+                </span>
+                <div>
+                  <label className="text-slate-400 block mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={superNewPassword}
+                    onChange={(e) => setSuperNewPassword(e.target.value)}
+                    placeholder="Leave blank to keep current password"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    value={superConfirmPassword}
+                    onChange={(e) => setSuperConfirmPassword(e.target.value)}
+                    placeholder="Re-enter new password"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* Master Security PIN Section */}
+              <div className="p-3.5 bg-slate-900 border border-slate-800 rounded-xl space-y-2.5">
+                <span className="font-bold text-slate-200 block text-xs uppercase tracking-wider flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-red-400" />
+                  <span>2. Change Master Security PIN:</span>
+                </span>
+                <div>
+                  <label className="text-slate-400 block mb-1">New Master PIN (4-6 digits)</label>
+                  <input
+                    type="password"
+                    maxLength={6}
+                    value={superNewPin}
+                    onChange={(e) => setSuperNewPin(e.target.value)}
+                    placeholder="Leave blank to keep current PIN"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono tracking-widest focus:outline-hidden focus:ring-1 focus:ring-red-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Confirm Master PIN</label>
+                  <input
+                    type="password"
+                    maxLength={6}
+                    value={superConfirmPin}
+                    onChange={(e) => setSuperConfirmPin(e.target.value)}
+                    placeholder="Re-enter new PIN"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono tracking-widest focus:outline-hidden focus:ring-1 focus:ring-red-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSuperSecurityModal(false)}
+                  className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-lg font-semibold hover:bg-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (superNewPassword && superNewPassword !== superConfirmPassword) {
+                      notify({ success: false, message: 'New password and confirmation do not match.' });
+                      return;
+                    }
+                    if (superNewPin && superNewPin !== superConfirmPin) {
+                      notify({ success: false, message: 'New Master PIN and confirmation do not match.' });
+                      return;
+                    }
+                    if (!superNewPassword && !superNewPin) {
+                      notify({ success: false, message: 'Please provide a new password or a new Master PIN to update.' });
+                      return;
+                    }
+                    const res = updateSuperAdminSecurity(
+                      superNewPassword || undefined,
+                      superNewPin || undefined
+                    );
+                    notify(res);
+                    if (res.success) {
+                      setShowSuperSecurityModal(false);
+                      setSuperNewPassword('');
+                      setSuperConfirmPassword('');
+                      setSuperNewPin('');
+                      setSuperConfirmPin('');
+                    }
+                  }}
+                  className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 rounded-lg font-bold"
+                >
+                  Save Credentials
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 7: Sub-Admin Password Change Modal (Super Admin Authority) */}
+      {/* ------------------------------------------------------------- */}
+      {subAdminToEditPassword && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="font-bold text-white text-sm">
+                    Change Sub-Admin Password
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Target: <span className="font-bold text-white">{subAdminToEditPassword.name}</span> (@{subAdminToEditPassword.username})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSubAdminToEditPassword(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-amber-950/30 border border-amber-800/60 rounded-xl text-amber-200 text-[11px] leading-relaxed">
+                Super Admin holds exclusive authority over all sub-admin accounts. Sub-admins cannot change their own credentials.
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-300 block mb-1">
+                  New Password for @{subAdminToEditPassword.username}
+                </label>
+                <input
+                  type="text"
+                  value={subAdminNewPass}
+                  onChange={(e) => setSubAdminNewPass(e.target.value)}
+                  placeholder="Enter new password (min 4 characters)"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white font-mono text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                  autoFocus
+                />
+              </div>
+
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSubAdminToEditPassword(null)}
+                  className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-lg font-semibold hover:bg-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!subAdminNewPass.trim() || subAdminNewPass.trim().length < 4) {
+                      notify({ success: false, message: 'Password must be at least 4 characters long.' });
+                      return;
+                    }
+                    const res = updateSubAdminPassword(subAdminToEditPassword.id, subAdminNewPass);
+                    notify(res);
+                    if (res.success) {
+                      setSubAdminToEditPassword(null);
+                      setSubAdminNewPass('');
+                    }
+                  }}
+                  className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 rounded-lg font-bold"
+                >
+                  Update Sub-Admin Password
+                </button>
+              </div>
             </div>
           </div>
         </div>

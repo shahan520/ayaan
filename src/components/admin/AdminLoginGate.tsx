@@ -149,7 +149,6 @@ export const AdminLoginGate: React.FC<AdminLoginGateProps> = ({ onSuccess, onCan
               <label className="text-xs font-semibold text-slate-300">
                 Master Security PIN
               </label>
-              <span className="text-[10px] text-slate-500 font-mono">Default: 9988</span>
             </div>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
@@ -160,7 +159,7 @@ export const AdminLoginGate: React.FC<AdminLoginGateProps> = ({ onSuccess, onCan
                 maxLength={6}
                 value={securityPin}
                 onChange={(e) => setSecurityPin(e.target.value)}
-                placeholder="4-digit Master Security PIN (9988)"
+                placeholder="Enter Master Security PIN"
                 className="w-full pl-10 pr-3.5 py-3 text-sm text-white placeholder:text-slate-500 bg-slate-950 border border-slate-800 rounded-xl focus:outline-hidden focus:border-red-500 focus:ring-1 focus:ring-red-500 font-mono tracking-widest transition-colors"
               />
             </div>
