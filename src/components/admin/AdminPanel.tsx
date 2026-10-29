@@ -13,6 +13,7 @@ import {
   Key,
   Layers,
   Lock,
+  LogOut,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -89,6 +90,7 @@ export const AdminPanel: React.FC = () => {
     adminUpdateUserWallet,
     switchUser,
     setActiveView,
+    adminLogout,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<
@@ -249,6 +251,20 @@ export const AdminPanel: React.FC = () => {
               </option>
             ))}
           </select>
+
+          {/* Secure Exit Admin Button */}
+          <button
+            onClick={() => {
+              if (window.confirm('Log out of Administrator Console and return to public website?')) {
+                adminLogout();
+              }
+            }}
+            title="Log out of Admin Console"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-800 text-xs text-red-200 font-semibold transition-colors cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5 text-red-400" />
+            <span>Exit Admin</span>
+          </button>
         </div>
       </header>
 

@@ -11,6 +11,8 @@ export type AdminPermission =
 export interface AdminUser {
   id: string;
   username: string;
+  password?: string;
+  securityPin?: string;
   name: string;
   role: 'super_admin' | 'sub_admin';
   permissions: AdminPermission[];
@@ -197,7 +199,9 @@ export interface AuditLog {
     | 'GRANT_WORK_PERMISSION'
     | 'REVOKE_WORK_PERMISSION'
     | 'RESET_USER_WALLET'
-    | 'UPDATE_USER_WALLET';
+    | 'UPDATE_USER_WALLET'
+    | 'ADMIN_LOGIN_SUCCESS'
+    | 'ADMIN_LOGOUT';
   details: string;
   targetUserUid?: string;
   timestamp: string;

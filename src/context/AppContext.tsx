@@ -94,7 +94,16 @@ interface AppContextType {
     isCycleNowFinished?: boolean;
   };
 
-  // Admin methods
+  // Admin methods & Route Protection
+  isAdminAuthenticated: boolean;
+  adminLogin: (
+    username: string,
+    password: string,
+    securityPin?: string
+  ) => { success: boolean; message?: string; admin?: AdminUser };
+  adminLogout: () => void;
+  navigateToAdmin: () => void;
+  navigateToUser: () => void;
   switchAdmin: (adminId: string) => void;
   hasPermission: (permission: AdminPermission) => boolean;
   resetUserTaskCycle: (
@@ -263,6 +272,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [activeView, setActiveView] = useState<'user' | 'admin'>('user');
   const [deviceFrame, setDeviceFrame] = useState<boolean>(true);
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
+    return sessionStorage.getItem('admin_session_auth') === 'true';
+  });
+
+  // Dedicated Route Protection & URL Synchronization for /admin
+  useEffect(() => {
+    const handleRouteSync = () => {
+      const path = window.location.pathname;
+      const hash = window.location.hash;
+      const search = window.location.search;
+      if (path.startsWith('/admin') || hash === '#admin' || search.includes('view=admin')) {
+        setActiveView('admin');
+      } else {
+        setActiveView('user');
+      }
+    };
+
+    handleRouteSync();
+    window.addEventListener('popstate', handleRouteSync);
+    window.addEventListener('hashchange', handleRouteSync);
+    return () => {
+      window.removeEventListener('popstate', handleRouteSync);
+      window.removeEventListener('hashchange', handleRouteSync);
+    };
+  }, []);
 
   // Language & i18n
   const [language, setLanguageState] = useState<LanguageCode>(() => {
@@ -1369,6 +1403,78 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ADMIN PANEL METHODS & ROLE-BASED ACCESS CONTROL
   // --------------------------------------------------------------------------
 
+  const navigateToAdmin = () => {
+    setActiveView('admin');
+    try {
+      if (window.location.pathname !== '/admin') {
+        window.history.pushState({}, '', '/admin');
+      }
+    } catch {
+      window.location.hash = '#admin';
+    }
+  };
+
+  const navigateToUser = () => {
+    setActiveView('user');
+    try {
+      if (window.location.pathname !== '/') {
+        window.history.pushState({}, '', '/');
+      }
+    } catch {
+      window.location.hash = '';
+    }
+  };
+
+  const adminLogin = (
+    username: string,
+    password: string,
+    securityPin?: string
+  ): { success: boolean; message?: string; admin?: AdminUser } => {
+    const cleanUser = username.trim().toLowerCase();
+    const cleanPass = password.trim();
+    const cleanPin = securityPin ? securityPin.trim() : '';
+
+    const matchingAdmin = admins.find(
+      (a) => a.username.toLowerCase() === cleanUser && a.status === 'active'
+    );
+
+    if (!matchingAdmin) {
+      return { success: false, message: 'Access Denied: Administrator account not found.' };
+    }
+
+    const expectedPass = matchingAdmin.password || 'admin123';
+    if (cleanPass !== expectedPass) {
+      return { success: false, message: 'Access Denied: Incorrect administrator password.' };
+    }
+
+    const expectedPin = matchingAdmin.securityPin || '9988';
+    if (cleanPin && cleanPin !== expectedPin) {
+      return { success: false, message: 'Access Denied: Invalid Master Security PIN.' };
+    }
+
+    setCurrentAdminId(matchingAdmin.id);
+    setIsAdminAuthenticated(true);
+    sessionStorage.setItem('admin_session_auth', 'true');
+
+    logAuditAction(
+      'ADMIN_LOGIN_SUCCESS',
+      `Administrator "${matchingAdmin.name}" (${matchingAdmin.username}) authenticated into Admin Console via secure route.`
+    );
+
+    return { success: true, admin: matchingAdmin };
+  };
+
+  const adminLogout = () => {
+    setIsAdminAuthenticated(false);
+    sessionStorage.removeItem('admin_session_auth');
+    setActiveView('user');
+    try {
+      window.history.pushState({}, '', '/');
+    } catch {
+      window.location.hash = '';
+    }
+  };
+
   const switchAdmin = (adminId: string) => {
     setCurrentAdminId(adminId);
   };
@@ -2196,6 +2302,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         grabOrder,
         submitOrder,
         switchAdmin,
+        isAdminAuthenticated,
+        adminLogin,
+        adminLogout,
+        navigateToAdmin,
+        navigateToUser,
         hasPermission,
         resetUserTaskCycle,
         resetUserToFreshCycle,

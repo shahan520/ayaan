@@ -28,6 +28,8 @@ export const INITIAL_ADMINS: AdminUser[] = [
   {
     id: 'admin_super',
     username: 'admin',
+    password: 'admin123',
+    securityPin: '9988',
     name: 'Super Admin',
     role: 'super_admin',
     permissions: [
@@ -46,6 +48,8 @@ export const INITIAL_ADMINS: AdminUser[] = [
   {
     id: 'admin_finance',
     username: 'sub_finance',
+    password: 'finance123',
+    securityPin: '9988',
     name: 'Finance Manager (Sub-Admin)',
     role: 'sub_admin',
     permissions: [
@@ -59,6 +63,8 @@ export const INITIAL_ADMINS: AdminUser[] = [
   {
     id: 'admin_ops',
     username: 'sub_moderator',
+    password: 'ops123',
+    securityPin: '9988',
     name: 'Operations & Users (Sub-Admin)',
     role: 'sub_admin',
     permissions: [

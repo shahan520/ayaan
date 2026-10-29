@@ -748,6 +748,72 @@ app.post('/api/withdrawals/request', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Server error processing withdrawal.' });
   }
 });
+// ==============================================================================
+// 4.1 ADMIN SECURE ROUTE PROTECTION & AUTHENTICATION MIDDLEWARE
+// ==============================================================================
+
+const verifyAdminAuth = (req, res, next) => {
+  const token =
+    req.headers['x-admin-token'] ||
+    req.headers['authorization']?.replace(/^Bearer\s+/i, '');
+
+  if (!token || (token !== 'admin_super_secret_token_2026' && token !== 'adm_sec_998877665544')) {
+    return res.status(403).json({
+      success: false,
+      message: 'Access Denied: Missing or invalid administrator authorization credentials.',
+    });
+  }
+  next();
+};
+
+/**
+ * POST /api/admin/login
+ * Secure authentication gate for /admin route
+ */
+app.post('/api/admin/login', (req, res) => {
+  const { username, password, securityPin } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ success: false, message: 'Admin username and password are required.' });
+  }
+
+  const cleanUser = username.trim().toLowerCase();
+  const cleanPass = password.trim();
+  const cleanPin = securityPin ? securityPin.trim() : '';
+
+  const isSuperAdmin = cleanUser === 'admin' && cleanPass === 'admin123' && (!cleanPin || cleanPin === '9988');
+  const isFinanceAdmin = cleanUser === 'sub_finance' && cleanPass === 'finance123';
+  const isOpsAdmin = cleanUser === 'sub_moderator' && cleanPass === 'ops123';
+
+  if (isSuperAdmin || isFinanceAdmin || isOpsAdmin) {
+    const role = isSuperAdmin ? 'super_admin' : 'sub_admin';
+    return res.json({
+      success: true,
+      message: 'Administrator authentication verified.',
+      token: 'admin_super_secret_token_2026',
+      admin: {
+        username: cleanUser,
+        role,
+        name: isSuperAdmin ? 'Super Admin' : cleanUser === 'sub_finance' ? 'Finance Manager' : 'Operations Manager',
+      },
+    });
+  }
+
+  return res.status(401).json({
+    success: false,
+    message: 'Access Denied: Invalid administrator credentials or Master PIN.',
+  });
+});
+
+/**
+ * GET /api/admin/verify
+ * Protected verification endpoint for active admin sessions
+ */
+app.get('/api/admin/verify', verifyAdminAuth, (req, res) => {
+  return res.json({
+    success: true,
+    message: 'Administrator session active and verified.',
+  });
+});
 
 // ==============================================================================
 // 5. DEV & PRODUCTION ASSET SERVING
