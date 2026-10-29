@@ -263,7 +263,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
-    return localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID) || 'user_1';
+    return localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID) || null;
   });
 
   const [currentAdminId, setCurrentAdminId] = useState<string>(() => {
@@ -2254,7 +2254,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOrders(INITIAL_ORDERS);
     setAuditLogs(INITIAL_AUDIT_LOGS);
     setSystemConfig(INITIAL_SYSTEM_CONFIG);
-    setCurrentUserId('user_1');
+    setCurrentUserId(null);
     setCurrentAdminId('admin_super');
     localStorage.clear();
   };

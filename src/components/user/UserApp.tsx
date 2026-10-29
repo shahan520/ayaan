@@ -29,6 +29,21 @@ export const UserApp: React.FC = () => {
     setActiveSubpage('deposit');
   };
 
+  // FRESH VISIT / UNAUTHENTICATED REDIRECT GUARD:
+  // If no user is authenticated, immediately display the Login/Registration portal.
+  // Dashboard, account balance, orders, VIP level, and bottom navigation remain completely unrendered.
+  if (!currentUser) {
+    return (
+      <div className="relative flex-1 h-full w-full bg-gradient-to-b from-[#4a121e] via-[#380b16] to-[#25050e] select-none overflow-hidden font-sans">
+        <AuthModal
+          isOpen={true}
+          onClose={() => {}}
+          defaultMode="login"
+        />
+      </div>
+    );
+  }
+
   // Router for subpages
   const renderContent = () => {
     if (activeSubpage === 'deposit') {
