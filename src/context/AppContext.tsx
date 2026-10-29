@@ -270,7 +270,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return localStorage.getItem(STORAGE_KEYS.CURRENT_ADMIN_ID) || 'admin_super';
   });
 
-  const [activeView, setActiveView] = useState<'user' | 'admin'>('user');
+  const [activeView, setActiveView] = useState<'user' | 'admin'>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      const hash = window.location.hash;
+      const search = window.location.search;
+      if (path.startsWith('/admin') || hash === '#admin' || search.includes('view=admin')) {
+        return 'admin';
+      }
+    }
+    return 'user';
+  });
   const [deviceFrame, setDeviceFrame] = useState<boolean>(true);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
     return sessionStorage.getItem('admin_session_auth') === 'true';
