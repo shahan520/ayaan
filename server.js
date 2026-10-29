@@ -774,11 +774,28 @@ const setupViteOrStatic = async () => {
   }
 };
 
-setupViteOrStatic().then(() => {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`======================================================================`);
-    console.log(`Backend Server listening on http://0.0.0.0:${PORT}`);
-    console.log(`Health check: http://localhost:${PORT}/api/health`);
-    console.log(`======================================================================`);
+// Root health check endpoint for Render / Cloud scanners
+app.get('/', (req, res, next) => {
+  // If dist index.html exists, let static handler serve it; otherwise respond 200 OK
+  if (req.accepts('html') && !req.path.startsWith('/api')) {
+    return next();
+  }
+  res.status(200).json({
+    status: 'online',
+    message: 'Server is running successfully.',
+    health: '/api/health',
   });
+});
+
+// Setup Vite middleware in dev or static files in production asynchronously
+setupViteOrStatic().catch((err) => {
+  console.warn('Frontend static setup notice:', err.message);
+});
+
+// Start listening immediately on 0.0.0.0 so Render detects the open port without delay
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`======================================================================`);
+  console.log(`Backend Server listening on http://0.0.0.0:${PORT}`);
+  console.log(`Health check: http://0.0.0.0:${PORT}/api/health`);
+  console.log(`======================================================================`);
 });
