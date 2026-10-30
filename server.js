@@ -43,6 +43,7 @@ const connectMongoDB = async () => {
     console.log('MongoDB Connected Successfully');
     console.log(`Database Host: ${conn.connection.host}`);
     console.log(`Database Name: ${conn.connection.name}`);
+    await seedInitialMembers();
   } catch (error) {
     console.error('MongoDB Connection Error:', error.message);
     console.log('----------------------------------------------------------------------');
@@ -172,6 +173,34 @@ const userSchema = new mongoose.Schema(
 );
 
 export const User = mongoose.models.User || mongoose.model('User', userSchema);
+
+// Initial active member pool for immediate referral verification and Atlas seeding
+const SEEDED_MEMBERS = [
+  { uid: '925886', username: 'Hanif8989', password: 'password123', inviteCode: '925886', referredBy: 'SYS888', balance: 479.31, vipLevel: 1, status: 'active' },
+  { uid: '418290', username: 'Elena_Crypto', password: 'password123', inviteCode: '418290', referredBy: '925886', balance: 950.0, vipLevel: 3, status: 'active' },
+  { uid: '637184', username: 'Marcus_T', password: 'password123', inviteCode: '637184', referredBy: '925886', balance: 320.0, vipLevel: 1, status: 'active' },
+  { uid: '529104', username: 'Lucas_Defi', password: 'password123', inviteCode: '529104', referredBy: '418290', balance: 640.0, vipLevel: 2, status: 'active' },
+  { uid: '738192', username: 'Amina_K', password: 'password123', inviteCode: '738192', referredBy: '637184', balance: 180.0, vipLevel: 1, status: 'active' },
+  { uid: '849201', username: 'David_Pro', password: 'password123', inviteCode: '849201', referredBy: '529104', balance: 250.0, vipLevel: 1, status: 'active' },
+  { uid: '819203', username: 'VIP_Trader25', password: 'password123', inviteCode: '819203', referredBy: 'SYS888', balance: 550.0, vipLevel: 2, status: 'active' },
+  { uid: '772109', username: 'Newbie_VIP0', password: 'password123', inviteCode: '772109', referredBy: 'SYS100', balance: 0.0, vipLevel: 0, status: 'active' },
+  { uid: '381942', username: 'Cycle2_Trader', password: 'password123', inviteCode: '381942', referredBy: 'SYS888', balance: 35.0, vipLevel: 1, status: 'active' },
+  { uid: '888001', username: 'Demo_Trader', password: 'password123', inviteCode: '888001', referredBy: 'ADMIN_DEMO', balance: 300.0, vipLevel: 1, status: 'active' },
+  { uid: '998811', username: 'Whale_Investor50k', password: 'password123', inviteCode: '998811', referredBy: 'SYS888', balance: 58500.0, vipLevel: 3, status: 'active' },
+];
+
+const seedInitialMembers = async () => {
+  try {
+    for (const member of SEEDED_MEMBERS) {
+      const exists = await User.findOne({ $or: [{ uid: member.uid }, { username: member.username }] });
+      if (!exists) {
+        await User.create(member);
+      }
+    }
+  } catch (err) {
+    console.warn('Initial member seed note:', err.message);
+  }
+};
 
 /**
  * 2) Task Simulation Model: Orders, commission calculation, combo steps
@@ -394,18 +423,34 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     // Validate Invitation Code: Match any system code OR any existing member's invite code, UID, or username
-    const SYSTEM_CODES = ['SYS888', 'SYS100', 'TRADEVIP', 'ALPHA99', 'VELORA888', '925886', '418290', '637184', '529104'];
-    let matchingMember = null;
+    const SYSTEM_CODES = ['SYS888', 'SYS100', 'TRADEVIP', 'ALPHA99', 'VELORA888'];
     const isSystemCode = SYSTEM_CODES.includes(cleanCode);
+    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+    let matchingMember = null;
     if (!isSystemCode) {
-      matchingMember = await User.findOne({
-        $or: [
-          { inviteCode: { $regex: new RegExp(`^${cleanCode}$`, 'i') } },
-          { uid: cleanCode },
-          { username: { $regex: new RegExp(`^${cleanCode}$`, 'i') } },
-        ],
-      });
+      try {
+        matchingMember = await User.findOne({
+          $or: [
+            { inviteCode: { $regex: new RegExp(`^${escapeRegex(cleanCode)}$`, 'i') } },
+            { uid: cleanCode },
+            { username: { $regex: new RegExp(`^${escapeRegex(cleanCode)}$`, 'i') } },
+          ],
+          status: { $ne: 'frozen' },
+        });
+      } catch (dbErr) {
+        console.warn('Database member search notice:', dbErr.message);
+      }
+
+      // In-memory fallback if MongoDB Atlas is still syncing or newly created
+      if (!matchingMember) {
+        matchingMember = SEEDED_MEMBERS.find(
+          (m) =>
+            (m.inviteCode && m.inviteCode.toUpperCase() === cleanCode) ||
+            (m.uid && m.uid.toUpperCase() === cleanCode) ||
+            (m.username && m.username.toUpperCase() === cleanCode)
+        ) || null;
+      }
     }
 
     if (!isSystemCode && !matchingMember) {
@@ -456,6 +501,64 @@ app.post('/api/auth/register', async (req, res) => {
   } catch (error) {
     console.error('Registration Error:', error);
     return res.status(500).json({ success: false, message: 'Server error during registration.' });
+  }
+});
+
+/**
+ * GET /api/invites/validate/:code
+ * Verify that an invitation code matches an active system code or member in MongoDB
+ */
+app.get('/api/invites/validate/:code', async (req, res) => {
+  try {
+    const rawCode = (req.params.code || '').trim().toUpperCase();
+    if (!rawCode) {
+      return res.status(400).json({ valid: false, message: 'Invite code is required.' });
+    }
+
+    const SYSTEM_CODES = ['SYS888', 'SYS100', 'TRADEVIP', 'ALPHA99', 'VELORA888'];
+    if (SYSTEM_CODES.includes(rawCode)) {
+      return res.json({ valid: true, type: 'system', code: rawCode });
+    }
+
+    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let member = null;
+    try {
+      member = await User.findOne({
+        $or: [
+          { inviteCode: { $regex: new RegExp(`^${escapeRegex(rawCode)}$`, 'i') } },
+          { uid: rawCode },
+          { username: { $regex: new RegExp(`^${escapeRegex(rawCode)}$`, 'i') } },
+        ],
+        status: { $ne: 'frozen' },
+      });
+    } catch {}
+
+    if (!member) {
+      member = SEEDED_MEMBERS.find((m) =>
+        (m.inviteCode && m.inviteCode.toUpperCase() === rawCode) ||
+        (m.uid && m.uid.toUpperCase() === rawCode) ||
+        (m.username && m.username.toUpperCase() === rawCode)
+      );
+    }
+
+    if (member) {
+      return res.json({
+        valid: true,
+        type: 'member',
+        inviter: {
+          username: member.username,
+          uid: member.uid,
+          inviteCode: member.inviteCode,
+        },
+      });
+    }
+
+    return res.status(404).json({
+      valid: false,
+      message: 'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
+    });
+  } catch (error) {
+    return res.status(500).json({ valid: false, message: 'Server error checking invite code.' });
   }
 });
 

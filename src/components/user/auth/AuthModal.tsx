@@ -1,6 +1,5 @@
 import {
   AlertCircle,
-  Bell,
   CheckCircle2,
   ChevronLeft,
   Eye,
@@ -25,8 +24,36 @@ export const AuthModal: React.FC<Props> = ({
   onClose,
   defaultMode = 'login',
 }) => {
-  const { loginUser, registerUser, inviteCodes, users, currentUser } = useApp();
-  const [mode, setMode] = useState<'login' | 'register'>(defaultMode);
+  const { loginUser, registerUser, users, currentUser } = useApp();
+
+  // Helper to extract invite code from URL parameters (?code=... or ?inviteCode=... or ?ref=...) or URL hash
+  const getInviteCodeFromUrl = (): string => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const codeFromSearch =
+        searchParams.get('code') ||
+        searchParams.get('inviteCode') ||
+        searchParams.get('ref');
+      if (codeFromSearch) return codeFromSearch.trim().toUpperCase();
+
+      if (window.location.hash && window.location.hash.includes('?')) {
+        const hashQuery = window.location.hash.substring(window.location.hash.indexOf('?') + 1);
+        const hashParams = new URLSearchParams(hashQuery);
+        const codeFromHash =
+          hashParams.get('code') ||
+          hashParams.get('inviteCode') ||
+          hashParams.get('ref');
+        if (codeFromHash) return codeFromHash.trim().toUpperCase();
+      }
+    } catch {}
+    return '';
+  };
+
+  const initialInviteCode = getInviteCodeFromUrl();
+  const [mode, setMode] = useState<'login' | 'register'>(
+    initialInviteCode ? 'register' : defaultMode
+  );
 
   // Login form state
   const [loginIdentifier, setLoginIdentifier] = useState('');
@@ -39,10 +66,19 @@ export const AuthModal: React.FC<Props> = ({
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
-  const [regInviteCode, setRegInviteCode] = useState('');
+  const [regInviteCode, setRegInviteCode] = useState(initialInviteCode);
 
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Auto-sync when URL changes or on initial mount
+  React.useEffect(() => {
+    const code = getInviteCodeFromUrl();
+    if (code) {
+      setRegInviteCode(code);
+      setMode('register');
+    }
+  }, []);
 
   if (!isOpen) return null;
 
@@ -110,19 +146,6 @@ export const AuthModal: React.FC<Props> = ({
     } else {
       setError(res.message || 'Registration failed.');
     }
-  };
-
-  // Helper function to simulate joining via invite link
-  const handleSimulateInviteLink = () => {
-    const activeCode =
-      currentUser?.inviteCode ||
-      currentUser?.uid ||
-      inviteCodes.find((c) => c.status === 'active')?.code ||
-      '925886';
-    setRegInviteCode(activeCode);
-    setError('');
-    setSuccessMsg(`Simulated invite link accepted! Applied: ${activeCode}`);
-    setTimeout(() => setSuccessMsg(''), 2200);
   };
 
   return (
@@ -399,16 +422,6 @@ export const AuthModal: React.FC<Props> = ({
                   />
                 </div>
               </div>
-
-              {/* Dashed Outline Helper Button: Simulate: Join via Invite Link */}
-              <button
-                type="button"
-                onClick={handleSimulateInviteLink}
-                className="w-full py-2.5 px-3 border border-dashed border-amber-400 bg-amber-50/50 hover:bg-amber-100/60 active:scale-[0.99] text-amber-600 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-              >
-                <Bell className="w-3.5 h-3.5 text-amber-500" />
-                <span>Simulate: Join via Invite Link</span>
-              </button>
 
               {/* Primary Action Button: Confirm */}
               <button

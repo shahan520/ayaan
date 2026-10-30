@@ -13,7 +13,14 @@ export const InvitePage: React.FC<Props> = ({ onBack }) => {
   const [copiedLink, setCopiedLink] = useState(false);
 
   const code = currentUser?.inviteCode || currentUser?.uid || '925886';
-  const shareUrl = `https://qudaizi.com/#/register?code=${code}`;
+
+  // Requirement 2: Dynamically use current live window origin/domain (e.g., tradewebv.vercel.app)
+  const currentOrigin =
+    typeof window !== 'undefined' && window.location && window.location.origin
+      ? window.location.origin
+      : 'https://tradewebv.vercel.app';
+
+  const shareUrl = `${currentOrigin}/?code=${code}`;
 
   const copyToClipboard = (text: string, type: 'code' | 'link') => {
     navigator.clipboard.writeText(text);

@@ -31,14 +31,25 @@ export const UserApp: React.FC = () => {
 
   // FRESH VISIT / UNAUTHENTICATED REDIRECT GUARD:
   // If no user is authenticated, immediately display the Login/Registration portal.
-  // Dashboard, account balance, orders, VIP level, and bottom navigation remain completely unrendered.
+  // When arriving via an invitation share link containing ?code=..., automatically activate Register mode.
+  const isRegisterRequested =
+    typeof window !== 'undefined' &&
+    Boolean(
+      new URLSearchParams(window.location.search).get('code') ||
+      new URLSearchParams(window.location.search).get('inviteCode') ||
+      new URLSearchParams(window.location.search).get('ref') ||
+      window.location.hash.includes('code=') ||
+      window.location.hash.includes('register') ||
+      window.location.pathname.includes('register')
+    );
+
   if (!currentUser) {
     return (
       <div className="relative flex-1 h-full w-full bg-gradient-to-b from-[#4a121e] via-[#380b16] to-[#25050e] select-none overflow-hidden font-sans">
         <AuthModal
           isOpen={true}
           onClose={() => {}}
-          defaultMode="login"
+          defaultMode={isRegisterRequested ? 'register' : 'login'}
         />
       </div>
     );

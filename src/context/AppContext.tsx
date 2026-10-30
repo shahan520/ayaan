@@ -675,6 +675,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUsers((prev) => [newUser, ...prev]);
     setCurrentUserId(newUser.id);
 
+    // Non-blocking background sync with backend MongoDB Atlas
+    try {
+      fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: cleanUser,
+          password,
+          inviteCode: canonicalReferredBy || cleanCode,
+        }),
+      }).catch(() => {});
+    } catch {}
+
     return {
       success: true,
       user: newUser,
