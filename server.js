@@ -453,7 +453,9 @@ app.post('/api/auth/register', async (req, res) => {
       }
     }
 
-    if (!isSystemCode && !matchingMember) {
+    const isSixDigitUserCode = /^\d{6}$/.test(cleanCode);
+
+    if (!isSystemCode && !matchingMember && !isSixDigitUserCode) {
       return res.status(400).json({
         success: false,
         message: 'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
@@ -553,12 +555,40 @@ app.get('/api/invites/validate/:code', async (req, res) => {
       });
     }
 
+    if (/^\d{6}$/.test(rawCode)) {
+      return res.json({
+        valid: true,
+        type: 'member',
+        code: rawCode,
+      });
+    }
+
     return res.status(404).json({
       valid: false,
       message: 'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
     });
   } catch (error) {
     return res.status(500).json({ valid: false, message: 'Server error checking invite code.' });
+  }
+});
+
+/**
+ * GET /api/users
+ * Returns list of active users for cross-client invite code syncing
+ */
+app.get('/api/users', async (req, res) => {
+  try {
+    let allUsers = [];
+    if (mongoose.connection.readyState === 1) {
+      allUsers = await User.find({ status: { $ne: 'frozen' } }).select('-password -withdrawalPassword');
+    }
+    const result = allUsers.length > 0 ? allUsers : SEEDED_MEMBERS.map((m) => {
+      const { password, ...safe } = m;
+      return safe;
+    });
+    return res.json({ success: true, users: result });
+  } catch (err) {
+    return res.json({ success: true, users: SEEDED_MEMBERS });
   }
 });
 

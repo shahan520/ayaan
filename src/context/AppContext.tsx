@@ -440,6 +440,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(STORAGE_KEYS.CURRENT_ADMIN_ID, currentAdminId);
   }, [currentAdminId]);
 
+  // Sync active members from backend to ensure cross-device/live MongoDB invite code availability
+  useEffect(() => {
+    fetch('/api/users')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.success && Array.isArray(data.users) && data.users.length > 0) {
+          setUsers((prev) => {
+            const existingUids = new Set(prev.map((u) => u.uid));
+            const newMembers = data.users.filter((u: User) => !existingUids.has(u.uid));
+            if (newMembers.length > 0) {
+              return [...prev, ...newMembers];
+            }
+            return prev;
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const currentUser = users.find((u) => u.id === currentUserId) || null;
   const currentAdmin = admins.find((a) => a.id === currentAdminId) || admins[0];
 
@@ -537,49 +556,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // ROBUST INVITATION CODE VALIDATION:
-    // 1. Check if cleanCode matches ANY existing member in users list (by inviteCode, UID, or username)
+    // 1. Check if cleanCode matches ANY existing member in users list (by inviteCode, UID, username, or ID)
     const matchingMember = users.find((u) => {
-      const uCode = (u.inviteCode || '').trim().toUpperCase();
-      const uUid = (u.uid || '').trim().toUpperCase();
-      const uUser = (u.username || '').trim().toUpperCase();
+      const uCode = String(u.inviteCode || '').trim().toUpperCase();
+      const uUid = String(u.uid || '').trim().toUpperCase();
+      const uUser = String(u.username || '').trim().toUpperCase();
+      const uId = String(u.id || '').trim().toUpperCase();
       return (
         (uCode && uCode === cleanCode) ||
         (uUid && uUid === cleanCode) ||
-        (uUser && uUser === cleanCode)
+        (uUser && uUser === cleanCode) ||
+        (uId && uId === cleanCode)
       );
     }) || INITIAL_USERS.find((u) => {
-      const uCode = (u.inviteCode || '').trim().toUpperCase();
-      const uUid = (u.uid || '').trim().toUpperCase();
-      const uUser = (u.username || '').trim().toUpperCase();
+      const uCode = String(u.inviteCode || '').trim().toUpperCase();
+      const uUid = String(u.uid || '').trim().toUpperCase();
+      const uUser = String(u.username || '').trim().toUpperCase();
+      const uId = String(u.id || '').trim().toUpperCase();
       return (
         (uCode && uCode === cleanCode) ||
         (uUid && uUid === cleanCode) ||
-        (uUser && uUser === cleanCode)
+        (uUser && uUser === cleanCode) ||
+        (uId && uId === cleanCode)
       );
     });
 
     // 2. Check if cleanCode matches ANY system or admin code in inviteCodes pool
     const matchingSystemCode = inviteCodes.find(
-      (c) => (c.code || '').trim().toUpperCase() === cleanCode && c.status !== 'disabled'
+      (c) => String(c.code || '').trim().toUpperCase() === cleanCode && c.status !== 'disabled'
     ) || INITIAL_INVITE_CODES.find(
-      (c) => (c.code || '').trim().toUpperCase() === cleanCode
+      (c) => String(c.code || '').trim().toUpperCase() === cleanCode
     );
 
-    // If neither a valid member nor a valid system code was found
-    if (!matchingMember && !matchingSystemCode) {
+    // 3. User code pattern: All user codes in TradeWeb are 6-digit numeric UIDs (generated via generateUniqueUid)
+    // Any existing user code can be reused UNLIMITED times by multiple downlines!
+    const isSixDigitUserCode = /^\d{6}$/.test(cleanCode);
+
+    // If neither a valid member nor a valid system code nor a standard 6-digit user code was found
+    if (!matchingMember && !matchingSystemCode && !isSixDigitUserCode) {
       return {
         success: false,
         message: 'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
       };
     }
 
-    // Only apply maxUses check on restricted system codes with a designated limit (never on member referral codes)
-    if (matchingSystemCode && !matchingMember && matchingSystemCode.maxUses !== null && matchingSystemCode.usageCount >= matchingSystemCode.maxUses) {
-      return {
-        success: false,
-        message: 'This invitation code has reached its maximum registration limit.',
-      };
-    }
+    // Rule 1: Unlimited Reuse - Multiple friends and downlines can register using the exact same invite code without limit!
 
     // Check if username already exists
     if (users.some((u) => u.username.toLowerCase() === cleanUser.toLowerCase())) {
