@@ -20,29 +20,63 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
   const { currentUser, users, deposits, withdrawals } = useApp();
   const [activeLevel, setActiveLevel] = useState<'1' | '2' | '3'>('1');
 
-  // 1. Level 1: Direct referrals registered using the user's invitation code or UID
+  const norm = (s?: string | null) => (s ? s.trim().toUpperCase() : '');
+
+  // 1. Level 1: Direct referrals registered using User A's invite code, UID, username, or ID
   const level1Users = useMemo(() => {
     if (!currentUser) return [];
-    return users.filter(
-      (u) =>
-        u.id !== currentUser.id &&
-        (u.referredBy === currentUser.inviteCode || u.referredBy === currentUser.uid)
+    const myIdentifiers = new Set(
+      [
+        norm(currentUser.inviteCode),
+        norm(currentUser.uid),
+        norm(currentUser.username),
+        norm(currentUser.id),
+      ].filter(Boolean)
     );
+
+    return users.filter((u) => {
+      if (u.id === currentUser.id || norm(u.uid) === norm(currentUser.uid)) return false;
+      const ref = norm(u.referredBy);
+      return Boolean(ref && myIdentifiers.has(ref));
+    });
   }, [currentUser, users]);
 
-  // 2. Level 2: Secondary referrals registered using Level 1 members' invitation codes or UIDs
+  // 2. Level 2: Secondary referrals registered using Level 1 members' invite codes, UIDs, usernames, or IDs
   const level2Users = useMemo(() => {
-    if (level1Users.length === 0) return [];
-    const l1Codes = new Set(level1Users.flatMap((u) => [u.inviteCode, u.uid].filter(Boolean)));
-    return users.filter((u) => u.referredBy && l1Codes.has(u.referredBy));
-  }, [level1Users, users]);
+    if (!currentUser || level1Users.length === 0) return [];
+    const l1Ids = new Set(level1Users.map((u) => u.id));
+    const l1Identifiers = new Set(
+      level1Users
+        .flatMap((u) => [norm(u.inviteCode), norm(u.uid), norm(u.username), norm(u.id)])
+        .filter(Boolean)
+    );
 
-  // 3. Level 3: Tertiary referrals registered using Level 2 members' invitation codes or UIDs
+    return users.filter((u) => {
+      if (u.id === currentUser.id || norm(u.uid) === norm(currentUser.uid)) return false;
+      if (l1Ids.has(u.id)) return false;
+      const ref = norm(u.referredBy);
+      return Boolean(ref && l1Identifiers.has(ref));
+    });
+  }, [currentUser, level1Users, users]);
+
+  // 3. Level 3: Tertiary referrals registered using Level 2 members' invite codes, UIDs, usernames, or IDs
   const level3Users = useMemo(() => {
-    if (level2Users.length === 0) return [];
-    const l2Codes = new Set(level2Users.flatMap((u) => [u.inviteCode, u.uid].filter(Boolean)));
-    return users.filter((u) => u.referredBy && l2Codes.has(u.referredBy));
-  }, [level2Users, users]);
+    if (!currentUser || level2Users.length === 0) return [];
+    const l1Ids = new Set(level1Users.map((u) => u.id));
+    const l2Ids = new Set(level2Users.map((u) => u.id));
+    const l2Identifiers = new Set(
+      level2Users
+        .flatMap((u) => [norm(u.inviteCode), norm(u.uid), norm(u.username), norm(u.id)])
+        .filter(Boolean)
+    );
+
+    return users.filter((u) => {
+      if (u.id === currentUser.id || norm(u.uid) === norm(currentUser.uid)) return false;
+      if (l1Ids.has(u.id) || l2Ids.has(u.id)) return false;
+      const ref = norm(u.referredBy);
+      return Boolean(ref && l2Identifiers.has(ref));
+    });
+  }, [currentUser, level1Users, level2Users, users]);
 
   // All team members across 3 tiers
   const allTeamUsers = useMemo(
@@ -51,20 +85,28 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
   );
 
   // Helper to get total deposit for a user
-  const getUserTotalDeposit = (userUid: string, userId: string, fallbackBalance: number) => {
+  const getUserTotalDeposit = (user: (typeof users)[0]) => {
     const userApprovedDeps = deposits
-      .filter((d) => (d.userId === userId || d.userUid === userUid) && d.status === 'approved')
+      .filter(
+        (d) =>
+          (d.userId === user.id ||
+            d.userUid === user.uid ||
+            (d.username && d.username.toLowerCase() === user.username.toLowerCase())) &&
+          d.status === 'approved'
+      )
       .reduce((sum, d) => sum + d.amount, 0);
-    return userApprovedDeps > 0 ? userApprovedDeps : fallbackBalance;
+    return userApprovedDeps > 0 ? userApprovedDeps : (user.balance > 0 ? user.balance : 0);
   };
 
   // Helper to get total withdrawal for a user
-  const getUserTotalWithdrawal = (userUid: string, userId: string) => {
+  const getUserTotalWithdrawal = (user: (typeof users)[0]) => {
     return withdrawals
       .filter(
         (w) =>
-          (w.userId === userId || w.userUid === userUid) &&
-          (w.status === 'completed' || w.status === 'pending')
+          (w.userId === user.id ||
+            w.userUid === user.uid ||
+            (w.username && w.username.toLowerCase() === user.username.toLowerCase())) &&
+          (w.status === 'completed' || w.status === 'approved' || w.status === 'pending')
       )
       .reduce((sum, w) => sum + w.amount, 0);
   };
@@ -72,25 +114,30 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
   // Helper to lookup inviter username from invite code or UID
   const getInviterName = (referredByCode?: string | null) => {
     if (!referredByCode) return 'System / Direct';
+    const target = norm(referredByCode);
     const found = users.find(
-      (u) => u.inviteCode === referredByCode || u.uid === referredByCode
+      (u) =>
+        norm(u.inviteCode) === target ||
+        norm(u.uid) === target ||
+        norm(u.username) === target ||
+        norm(u.id) === target
     );
-    return found ? found.username : referredByCode;
+    return found ? `${found.username} (UID: ${found.uid})` : referredByCode;
   };
 
   // Team calculations matching reference screenshots
   const level1Recharge = useMemo(
-    () => level1Users.reduce((sum, u) => sum + getUserTotalDeposit(u.uid, u.id, u.balance), 0),
+    () => level1Users.reduce((sum, u) => sum + getUserTotalDeposit(u), 0),
     [level1Users, deposits]
   );
 
   const level2Recharge = useMemo(
-    () => level2Users.reduce((sum, u) => sum + getUserTotalDeposit(u.uid, u.id, u.balance), 0),
+    () => level2Users.reduce((sum, u) => sum + getUserTotalDeposit(u), 0),
     [level2Users, deposits]
   );
 
   const level3Recharge = useMemo(
-    () => level3Users.reduce((sum, u) => sum + getUserTotalDeposit(u.uid, u.id, u.balance), 0),
+    () => level3Users.reduce((sum, u) => sum + getUserTotalDeposit(u), 0),
     [level3Users, deposits]
   );
 
@@ -103,14 +150,8 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
 
   // Total Team Withdrawals
   const totalTeamWithdrawal = useMemo(() => {
-    return withdrawals
-      .filter(
-        (w) =>
-          w.status === 'completed' &&
-          allTeamUsers.some((u) => u.id === w.userId || u.uid === w.userUid)
-      )
-      .reduce((sum, w) => sum + w.amount, 0);
-  }, [withdrawals, allTeamUsers]);
+    return allTeamUsers.reduce((sum, u) => sum + getUserTotalWithdrawal(u), 0);
+  }, [allTeamUsers, withdrawals]);
 
   // Total Team Order Commissions
   const totalOrderCommission = useMemo(
@@ -274,9 +315,9 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-[#7a0a14]" />
           <span className="text-xs font-bold text-slate-800 tracking-tight">
-            {activeLevel === '1' && 'People who registered using your invite code'}
-            {activeLevel === '2' && "People invited by your Level 1 members' invite codes"}
-            {activeLevel === '3' && "People invited by your Level 2 members' invite codes"}
+            {activeLevel === '1' && 'Level 1: Directly registered using your invite code'}
+            {activeLevel === '2' && "Level 2: Registered using Level 1 members' invite codes"}
+            {activeLevel === '3' && "Level 3: Registered using Level 2 members' invite codes"}
           </span>
         </div>
         <span className="text-[10px] font-bold text-slate-600 bg-white px-2 py-0.5 rounded-full border border-slate-200 shadow-2xs">
@@ -310,8 +351,8 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
         ) : (
           <div className="space-y-3">
             {currentList.map((member) => {
-              const memberDeposit = getUserTotalDeposit(member.uid, member.id, member.balance);
-              const memberWithdrawal = getUserTotalWithdrawal(member.uid, member.id);
+              const memberDeposit = getUserTotalDeposit(member);
+              const memberWithdrawal = getUserTotalWithdrawal(member);
               const inviterName = getInviterName(member.referredBy);
 
               return (

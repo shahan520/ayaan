@@ -393,6 +393,30 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'This username is already taken.' });
     }
 
+    // Validate Invitation Code: Match any system code OR any existing member's invite code, UID, or username
+    const SYSTEM_CODES = ['SYS888', 'SYS100', 'TRADEVIP', 'ALPHA99', 'VELORA888', '925886', '418290', '637184', '529104'];
+    let matchingMember = null;
+    const isSystemCode = SYSTEM_CODES.includes(cleanCode);
+
+    if (!isSystemCode) {
+      matchingMember = await User.findOne({
+        $or: [
+          { inviteCode: { $regex: new RegExp(`^${cleanCode}$`, 'i') } },
+          { uid: cleanCode },
+          { username: { $regex: new RegExp(`^${cleanCode}$`, 'i') } },
+        ],
+      });
+    }
+
+    if (!isSystemCode && !matchingMember) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
+      });
+    }
+
+    const canonicalReferredBy = matchingMember ? (matchingMember.inviteCode || matchingMember.uid) : cleanCode;
+
     // Generate unique 6-digit UID
     let uidCandidate = Math.floor(100000 + Math.random() * 900000).toString();
     while (await User.findOne({ uid: uidCandidate })) {
@@ -404,7 +428,7 @@ app.post('/api/auth/register', async (req, res) => {
       username: cleanUser,
       password,
       inviteCode: uidCandidate,
-      referredBy: cleanCode,
+      referredBy: canonicalReferredBy,
       balance: 0.0,
       vipLevel: 0,
       avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',

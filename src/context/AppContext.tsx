@@ -243,17 +243,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [inviteCodes, setInviteCodes] = useState<InviteCode[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.INVITES);
-    return saved ? JSON.parse(saved) : INITIAL_INVITE_CODES;
+    if (!saved) return INITIAL_INVITE_CODES;
+    try {
+      const parsed = JSON.parse(saved) as InviteCode[];
+      const existingCodes = new Set(parsed.map((c) => c.code.toUpperCase()));
+      const missingInitial = INITIAL_INVITE_CODES.filter((c) => !existingCodes.has(c.code.toUpperCase()));
+      return [...parsed, ...missingInitial];
+    } catch {
+      return INITIAL_INVITE_CODES;
+    }
   });
 
   const [deposits, setDeposits] = useState<DepositRecord[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.DEPOSITS);
-    return saved ? JSON.parse(saved) : INITIAL_DEPOSITS;
+    if (!saved) return INITIAL_DEPOSITS;
+    try {
+      const parsed = JSON.parse(saved) as DepositRecord[];
+      const existingIds = new Set(parsed.map((d) => d.id));
+      const missingInitial = INITIAL_DEPOSITS.filter((d) => !existingIds.has(d.id));
+      return [...parsed, ...missingInitial];
+    } catch {
+      return INITIAL_DEPOSITS;
+    }
   });
 
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.WITHDRAWALS);
-    return saved ? JSON.parse(saved) : INITIAL_WITHDRAWALS;
+    if (!saved) return INITIAL_WITHDRAWALS;
+    try {
+      const parsed = JSON.parse(saved) as WithdrawalRecord[];
+      const existingIds = new Set(parsed.map((w) => w.id));
+      const missingInitial = INITIAL_WITHDRAWALS.filter((w) => !existingIds.has(w.id));
+      return [...parsed, ...missingInitial];
+    } catch {
+      return INITIAL_WITHDRAWALS;
+    }
   });
 
   const [orders, setOrders] = useState<GrabbedOrder[]>(() => {
@@ -512,26 +536,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // STRICT INVITATION CODE VALIDATION:
-    // Code must match an active invite code (either system or user generated)
-    const matchingCode = inviteCodes.find(
-      (c) => c.code.toUpperCase() === cleanCode && c.status === 'active'
+    // ROBUST INVITATION CODE VALIDATION:
+    // 1. Check if cleanCode matches ANY existing member in users list (by inviteCode, UID, or username)
+    const matchingMember = users.find((u) => {
+      const uCode = (u.inviteCode || '').trim().toUpperCase();
+      const uUid = (u.uid || '').trim().toUpperCase();
+      const uUser = (u.username || '').trim().toUpperCase();
+      return (
+        (uCode && uCode === cleanCode) ||
+        (uUid && uUid === cleanCode) ||
+        (uUser && uUser === cleanCode)
+      );
+    }) || INITIAL_USERS.find((u) => {
+      const uCode = (u.inviteCode || '').trim().toUpperCase();
+      const uUid = (u.uid || '').trim().toUpperCase();
+      const uUser = (u.username || '').trim().toUpperCase();
+      return (
+        (uCode && uCode === cleanCode) ||
+        (uUid && uUid === cleanCode) ||
+        (uUser && uUser === cleanCode)
+      );
+    });
+
+    // 2. Check if cleanCode matches ANY system or admin code in inviteCodes pool
+    const matchingSystemCode = inviteCodes.find(
+      (c) => (c.code || '').trim().toUpperCase() === cleanCode && c.status !== 'disabled'
+    ) || INITIAL_INVITE_CODES.find(
+      (c) => (c.code || '').trim().toUpperCase() === cleanCode
     );
 
-    // Also check if any existing user has this inviteCode
-    const matchingUser = users.find(
-      (u) => u.inviteCode.toUpperCase() === cleanCode && u.status === 'active'
-    );
-
-    if (!matchingCode && !matchingUser) {
+    // If neither a valid member nor a valid system code was found
+    if (!matchingMember && !matchingSystemCode) {
       return {
         success: false,
         message: 'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
       };
     }
 
-    // Check usage limits if system code with maxUses
-    if (matchingCode && matchingCode.maxUses !== null && matchingCode.usageCount >= matchingCode.maxUses) {
+    // Only apply maxUses check on restricted system codes with a designated limit (never on member referral codes)
+    if (matchingSystemCode && !matchingMember && matchingSystemCode.maxUses !== null && matchingSystemCode.usageCount >= matchingSystemCode.maxUses) {
       return {
         success: false,
         message: 'This invitation code has reached its maximum registration limit.',
@@ -545,12 +588,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Generate unique 6-digit UID
     const newUid = generateUniqueUid();
-    // User's own invitation code is set to their unique UID (or uppercase string)
+    // User's own invitation code is set to their unique UID
     const newUserInviteCode = newUid;
 
     // STATE RESET FOR NEW ACCOUNTS:
     // Ensure newly created account starts strictly at Cycle 1 / Progress 0 with only 1 combo planned for Task #14 or #15
     const plannedCycle1Combo = Math.random() < 0.5 ? 14 : 15;
+
+    // Deterministic canonical referredBy code ensuring exact 3-level team hierarchy linking
+    const canonicalReferredBy = matchingMember
+      ? (matchingMember.inviteCode || matchingMember.uid)
+      : (matchingSystemCode ? matchingSystemCode.code : cleanCode);
 
     const newUser: User = {
       id: 'user_' + Date.now(),
@@ -559,7 +607,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       password,
       withdrawalPassword: null, // initially null for security prompt flow
       inviteCode: newUserInviteCode,
-      referredBy: cleanCode,
+      referredBy: canonicalReferredBy,
       balance: 0.0,
       frozenBalance: 0,
       vipLevel: 0,
@@ -596,12 +644,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Increment usage on referrer code
     setInviteCodes((prev) => {
+      const targetCode = (canonicalReferredBy || cleanCode).toUpperCase();
+      let found = false;
       const updated = prev.map((c) => {
-        if (c.code.toUpperCase() === cleanCode) {
+        if (c.code.toUpperCase() === targetCode || c.code.toUpperCase() === cleanCode) {
+          found = true;
           return { ...c, usageCount: c.usageCount + 1 };
         }
         return c;
       });
+
+      // If the referrer was an existing member whose code wasn't explicitly in inviteCodes yet, add it
+      if (!found && matchingMember) {
+        updated.push({
+          id: 'inv_user_' + matchingMember.uid,
+          code: matchingMember.inviteCode || matchingMember.uid,
+          type: 'user',
+          createdBy: `${matchingMember.uid} (${matchingMember.username})`,
+          creatorRole: 'user',
+          usageCount: 1,
+          maxUses: null,
+          status: 'active',
+          createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        });
+      }
+
       return [newCodeObj, ...updated];
     });
 

@@ -114,7 +114,11 @@ export const AuthModal: React.FC<Props> = ({
 
   // Helper function to simulate joining via invite link
   const handleSimulateInviteLink = () => {
-    const activeCode = inviteCodes.find((c) => c.status === 'active')?.code || 'VELORA888';
+    const activeCode =
+      currentUser?.inviteCode ||
+      currentUser?.uid ||
+      inviteCodes.find((c) => c.status === 'active')?.code ||
+      '925886';
     setRegInviteCode(activeCode);
     setError('');
     setSuccessMsg(`Simulated invite link accepted! Applied: ${activeCode}`);
