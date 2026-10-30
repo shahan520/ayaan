@@ -693,7 +693,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [newCodeObj, ...updated];
     });
 
-    setUsers((prev) => [newUser, ...prev]);
+    const updatedUsers = [newUser, ...users.filter((u) => u.id !== newUser.id)];
+    setUsers(updatedUsers);
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    } catch {}
     setCurrentUserId(newUser.id);
 
     // Non-blocking background sync with backend MongoDB Atlas
@@ -702,6 +706,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          uid: newUid,
           username: cleanUser,
           password,
           inviteCode: canonicalReferredBy || cleanCode,

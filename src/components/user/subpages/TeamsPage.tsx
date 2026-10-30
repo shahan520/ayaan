@@ -1,12 +1,9 @@
 import {
   ArrowLeft,
-  ChevronRight,
   Share2,
   TrendingDown,
   TrendingUp,
   User,
-  UserCheck,
-  Users,
 } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
@@ -17,10 +14,10 @@ interface Props {
 }
 
 export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
-  const { currentUser, users, deposits, withdrawals } = useApp();
+  const { currentUser, users, inviteCodes, deposits, withdrawals } = useApp();
   const [activeLevel, setActiveLevel] = useState<'1' | '2' | '3'>('1');
 
-  const norm = (s?: string | null) => (s ? s.trim().toUpperCase() : '');
+  const norm = (s?: string | null) => (s ? String(s).trim().toUpperCase() : '');
 
   // 1. Level 1: Direct referrals registered using User A's invite code, UID, username, or ID
   const level1Users = useMemo(() => {
@@ -34,49 +31,101 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
       ].filter(Boolean)
     );
 
+    // Also include any user invite codes registered in inviteCodes system for this user
+    inviteCodes?.forEach((c) => {
+      const creator = norm(c.createdBy);
+      if (
+        creator.includes(norm(currentUser.username)) ||
+        creator.includes(norm(currentUser.uid)) ||
+        norm(c.code) === norm(currentUser.inviteCode) ||
+        norm(c.code) === norm(currentUser.uid)
+      ) {
+        myIdentifiers.add(norm(c.code));
+      }
+    });
+
     return users.filter((u) => {
       if (u.id === currentUser.id || norm(u.uid) === norm(currentUser.uid)) return false;
       const ref = norm(u.referredBy);
       return Boolean(ref && myIdentifiers.has(ref));
     });
-  }, [currentUser, users]);
+  }, [currentUser, users, inviteCodes]);
 
   // 2. Level 2: Secondary referrals registered using Level 1 members' invite codes, UIDs, usernames, or IDs
   const level2Users = useMemo(() => {
     if (!currentUser || level1Users.length === 0) return [];
     const l1Ids = new Set(level1Users.map((u) => u.id));
+    const l1Uids = new Set(level1Users.map((u) => norm(u.uid)));
     const l1Identifiers = new Set(
       level1Users
         .flatMap((u) => [norm(u.inviteCode), norm(u.uid), norm(u.username), norm(u.id)])
         .filter(Boolean)
     );
 
+    inviteCodes?.forEach((c) => {
+      const creator = norm(c.createdBy);
+      if (
+        level1Users.some(
+          (l1) =>
+            creator.includes(norm(l1.username)) ||
+            creator.includes(norm(l1.uid)) ||
+            norm(c.code) === norm(l1.inviteCode) ||
+            norm(c.code) === norm(l1.uid)
+        )
+      ) {
+        l1Identifiers.add(norm(c.code));
+      }
+    });
+
     return users.filter((u) => {
       if (u.id === currentUser.id || norm(u.uid) === norm(currentUser.uid)) return false;
-      if (l1Ids.has(u.id)) return false;
+      if (l1Ids.has(u.id) || l1Uids.has(norm(u.uid))) return false;
       const ref = norm(u.referredBy);
       return Boolean(ref && l1Identifiers.has(ref));
     });
-  }, [currentUser, level1Users, users]);
+  }, [currentUser, level1Users, users, inviteCodes]);
 
   // 3. Level 3: Tertiary referrals registered using Level 2 members' invite codes, UIDs, usernames, or IDs
   const level3Users = useMemo(() => {
     if (!currentUser || level2Users.length === 0) return [];
     const l1Ids = new Set(level1Users.map((u) => u.id));
+    const l1Uids = new Set(level1Users.map((u) => norm(u.uid)));
     const l2Ids = new Set(level2Users.map((u) => u.id));
+    const l2Uids = new Set(level2Users.map((u) => norm(u.uid)));
     const l2Identifiers = new Set(
       level2Users
         .flatMap((u) => [norm(u.inviteCode), norm(u.uid), norm(u.username), norm(u.id)])
         .filter(Boolean)
     );
 
+    inviteCodes?.forEach((c) => {
+      const creator = norm(c.createdBy);
+      if (
+        level2Users.some(
+          (l2) =>
+            creator.includes(norm(l2.username)) ||
+            creator.includes(norm(l2.uid)) ||
+            norm(c.code) === norm(l2.inviteCode) ||
+            norm(c.code) === norm(l2.uid)
+        )
+      ) {
+        l2Identifiers.add(norm(c.code));
+      }
+    });
+
     return users.filter((u) => {
       if (u.id === currentUser.id || norm(u.uid) === norm(currentUser.uid)) return false;
-      if (l1Ids.has(u.id) || l2Ids.has(u.id)) return false;
+      if (
+        l1Ids.has(u.id) ||
+        l1Uids.has(norm(u.uid)) ||
+        l2Ids.has(u.id) ||
+        l2Uids.has(norm(u.uid))
+      )
+        return false;
       const ref = norm(u.referredBy);
       return Boolean(ref && l2Identifiers.has(ref));
     });
-  }, [currentUser, level1Users, level2Users, users]);
+  }, [currentUser, level1Users, level2Users, users, inviteCodes]);
 
   // All team members across 3 tiers
   const allTeamUsers = useMemo(
@@ -327,28 +376,7 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
 
       {/* 2. MEMBER CARDS LIST */}
       <div className="p-4 flex-1">
-        {currentList.length === 0 ? (
-          <div className="py-14 text-center text-slate-500 text-xs space-y-3 bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-            <div className="w-12 h-12 mx-auto rounded-full bg-red-50 text-red-700 flex items-center justify-center">
-              <Users className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="font-bold text-slate-800 text-sm">No members in Level {activeLevel}</p>
-              <p className="text-[11px] text-slate-500 mt-1">
-                {activeLevel === '1'
-                  ? 'Share your personal invitation code to invite new direct team members.'
-                  : `Level ${activeLevel} members will automatically appear when your team invites friends.`}
-              </p>
-            </div>
-            <button
-              onClick={onNavigateToInvite}
-              className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 bg-[#7a0a14] hover:bg-[#5e070e] text-white font-bold rounded-xl text-xs transition-colors shadow-xs cursor-pointer"
-            >
-              <Share2 className="w-3.5 h-3.5" />
-              <span>Invite Friends to Earn Commission</span>
-            </button>
-          </div>
-        ) : (
+        {currentList.length > 0 && (
           <div className="space-y-3">
             {currentList.map((member) => {
               const memberDeposit = getUserTotalDeposit(member);
@@ -377,7 +405,7 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
                       </div>
 
                       <span className="text-[11px] text-slate-500 font-medium mt-0.5">
-                        Joined {member.createdAt.substring(0, 10)}
+                        Joined {member.createdAt ? member.createdAt.substring(0, 10) : 'Recent'}
                       </span>
 
                       {/* For Level 2 & Level 3 cards: Orange label showing who invited them */}
@@ -426,26 +454,6 @@ export const TeamsPage: React.FC<Props> = ({ onBack, onNavigateToInvite }) => {
             })}
           </div>
         )}
-
-        {/* Invitation Promotion Card at Bottom */}
-        <div className="mt-5 p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-1.5">
-              <UserCheck className="w-4 h-4 text-[#7a0a14]" />
-              <h4 className="font-black text-xs text-[#000000]">Your Referral Code</h4>
-            </div>
-            <p className="text-[11px] text-slate-600 font-mono font-bold tracking-wider">
-              {currentUser?.inviteCode || currentUser?.uid}
-            </p>
-          </div>
-          <button
-            onClick={onNavigateToInvite}
-            className="px-3 py-1.5 bg-[#7a0a14] hover:bg-[#5e070e] text-white text-xs font-bold rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
-          >
-            <span>Share Link</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
       </div>
     </div>
   );

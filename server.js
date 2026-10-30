@@ -464,13 +464,16 @@ app.post('/api/auth/register', async (req, res) => {
 
     const canonicalReferredBy = matchingMember ? (matchingMember.inviteCode || matchingMember.uid) : cleanCode;
 
-    // Generate unique 6-digit UID
-    let uidCandidate = Math.floor(100000 + Math.random() * 900000).toString();
-    while (await User.findOne({ uid: uidCandidate })) {
-      uidCandidate = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate unique 6-digit UID or accept frontend generated uid
+    let uidCandidate = req.body.uid ? String(req.body.uid).trim() : Math.floor(100000 + Math.random() * 900000).toString();
+    if (!req.body.uid && mongoose.connection.readyState === 1) {
+      while (await User.findOne({ uid: uidCandidate })) {
+        uidCandidate = Math.floor(100000 + Math.random() * 900000).toString();
+      }
     }
 
-    const newUser = new User({
+    const memoryUser = {
+      id: 'user_' + Date.now(),
       uid: uidCandidate,
       username: cleanUser,
       password,
@@ -479,25 +482,53 @@ app.post('/api/auth/register', async (req, res) => {
       balance: 0.0,
       vipLevel: 0,
       avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
+      status: 'active',
       cycleNumber: 1,
       currentCycleTasks: 0,
       completedTasksCount: 0,
       comboOrderStep: 14,
-    });
+    };
 
-    await newUser.save();
+    if (!SEEDED_MEMBERS.some((m) => m.uid === uidCandidate || m.username.toLowerCase() === cleanUser.toLowerCase())) {
+      SEEDED_MEMBERS.unshift(memoryUser);
+    }
+
+    let savedUser = null;
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const newUser = new User({
+          uid: uidCandidate,
+          username: cleanUser,
+          password,
+          inviteCode: uidCandidate,
+          referredBy: canonicalReferredBy,
+          balance: 0.0,
+          vipLevel: 0,
+          avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
+          cycleNumber: 1,
+          currentCycleTasks: 0,
+          completedTasksCount: 0,
+          comboOrderStep: 14,
+        });
+        savedUser = await newUser.save();
+      } catch (dbSaveErr) {
+        console.warn('MongoDB save fallback to in-memory store:', dbSaveErr.message);
+      }
+    }
 
     return res.status(201).json({
       success: true,
-      message: `Registration successful! Your UID is ${newUser.uid}`,
+      message: `Registration successful! Your UID is ${uidCandidate}`,
       user: {
-        id: newUser._id,
-        uid: newUser.uid,
-        username: newUser.username,
-        balance: newUser.balance,
-        vipLevel: newUser.vipLevel,
-        avatarUrl: newUser.avatarUrl,
-        cycleNumber: newUser.cycleNumber,
+        id: savedUser ? savedUser._id : memoryUser.id,
+        uid: uidCandidate,
+        username: cleanUser,
+        inviteCode: uidCandidate,
+        referredBy: canonicalReferredBy,
+        balance: 0.0,
+        vipLevel: 0,
+        avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
+        cycleNumber: 1,
       },
     });
   } catch (error) {
@@ -582,11 +613,12 @@ app.get('/api/users', async (req, res) => {
     if (mongoose.connection.readyState === 1) {
       allUsers = await User.find({ status: { $ne: 'frozen' } }).select('-password -withdrawalPassword');
     }
-    const result = allUsers.length > 0 ? allUsers : SEEDED_MEMBERS.map((m) => {
+    const dbUids = new Set(allUsers.map((u) => u.uid));
+    const memoryMembers = SEEDED_MEMBERS.filter((m) => !dbUids.has(m.uid)).map((m) => {
       const { password, ...safe } = m;
       return safe;
     });
-    return res.json({ success: true, users: result });
+    return res.json({ success: true, users: [...allUsers, ...memoryMembers] });
   } catch (err) {
     return res.json({ success: true, users: SEEDED_MEMBERS });
   }
