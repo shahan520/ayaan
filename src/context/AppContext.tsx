@@ -213,7 +213,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const legacyIds = new Set(['user_2', 'user_3', 'user_l2_1', 'user_l2_2', 'user_l3_1']);
       const filteredParsed = parsed.filter((u) => !legacyIds.has(u.id));
       const existingIds = new Set(filteredParsed.map((u) => u.id));
-      const missingInitial = INITIAL_USERS.filter((u) => !existingIds.has(u.id));
+      const existingUids = new Set(filteredParsed.map((u) => String(u.uid)));
+      const missingInitial = INITIAL_USERS.filter((u) => !existingIds.has(u.id) && !existingUids.has(String(u.uid)));
       const combined = [...filteredParsed, ...missingInitial];
       return combined.map((u) => {
         const isNewDay = u.lastActiveDate && u.lastActiveDate !== today;
@@ -442,23 +443,77 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(STORAGE_KEYS.CURRENT_ADMIN_ID, currentAdminId);
   }, [currentAdminId]);
 
-  // Sync active members from backend to ensure cross-device/live MongoDB invite code availability
+  // Real-time synchronization of active members across browser tabs and backend persistent store
   useEffect(() => {
-    fetch('/api/users')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.success && Array.isArray(data.users) && data.users.length > 0) {
-          setUsers((prev) => {
-            const existingUids = new Set(prev.map((u) => u.uid));
-            const newMembers = data.users.filter((u: User) => !existingUids.has(u.uid));
-            if (newMembers.length > 0) {
-              return [...prev, ...newMembers];
-            }
-            return prev;
-          });
-        }
-      })
-      .catch(() => {});
+    const fetchRemoteUsers = () => {
+      fetch('/api/users')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && data.success && Array.isArray(data.users) && data.users.length > 0) {
+            setUsers((prev) => {
+              const prevMap = new Map(prev.map((u) => [String(u.uid), u]));
+              let hasChanges = false;
+              data.users.forEach((remoteUser: User) => {
+                const existing = prevMap.get(String(remoteUser.uid));
+                if (!existing) {
+                  prevMap.set(String(remoteUser.uid), {
+                    ...remoteUser,
+                    id: remoteUser.id || ('user_' + remoteUser.uid),
+                  });
+                  hasChanges = true;
+                } else if (!existing.referredBy && remoteUser.referredBy) {
+                  prevMap.set(String(remoteUser.uid), {
+                    ...existing,
+                    referredBy: remoteUser.referredBy,
+                  });
+                  hasChanges = true;
+                }
+              });
+              if (hasChanges) {
+                const merged = Array.from(prevMap.values());
+                try {
+                  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
+                } catch {}
+                return merged;
+              }
+              return prev;
+            });
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchRemoteUsers();
+    const interval = setInterval(fetchRemoteUsers, 2500); // 2.5s real-time poll
+
+    // Cross-tab instant synchronization via storage event
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEYS.USERS && e.newValue) {
+        try {
+          const remoteUsers = JSON.parse(e.newValue);
+          if (Array.isArray(remoteUsers) && remoteUsers.length > 0) {
+            setUsers(remoteUsers);
+          }
+        } catch {}
+      }
+    };
+
+    // In-tab instant custom event
+    const handleTabSync = (e: Event) => {
+      const customEvt = e as CustomEvent<User[]>;
+      if (customEvt.detail && Array.isArray(customEvt.detail)) {
+        setUsers(customEvt.detail);
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('tradeweb_users_updated', handleTabSync);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('tradeweb_users_updated', handleTabSync);
+    };
   }, []);
 
   const currentUser = users.find((u) => u.id === currentUserId) || null;
@@ -699,21 +754,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUsers(updatedUsers);
     try {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+      // Dispatch in-tab event for immediate UI updates
+      window.dispatchEvent(new CustomEvent('tradeweb_users_updated', { detail: updatedUsers }));
     } catch {}
     setCurrentUserId(newUser.id);
 
-    // Non-blocking background sync with backend MongoDB Atlas
+    // Immediate persistence sync with backend server & persistent disk database
     try {
       fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: newUser.id,
           uid: newUid,
           username: cleanUser,
           password,
           inviteCode: canonicalReferredBy || cleanCode,
         }),
-      }).catch(() => {});
+      })
+        .then(() => {
+          fetch('/api/users/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: newUser }),
+          }).catch(() => {});
+        })
+        .catch(() => {});
     } catch {}
 
     return {

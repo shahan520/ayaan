@@ -12,6 +12,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 // 1. Load environment variables from .env file
@@ -21,7 +22,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 const MONGODB_URI =
   process.env.MONGODB_URI ||
   'mongodb+srv://shahanislam935_db_user:ciKbafwUqfbSmt7G@cluster0.pwkfalj.mongodb.net/myFirstDatabase?retryWrites=true&w=majority';
@@ -176,6 +177,22 @@ export const User = mongoose.models.User || mongoose.model('User', userSchema);
 
 // Initial active member pool for immediate referral verification and Atlas seeding
 const SEEDED_MEMBERS = [
+  // Jackal (Code 232602)
+  {
+    id: 'user_jackal_232602',
+    uid: '232602',
+    username: 'Jackal',
+    password: 'password123',
+    withdrawalPassword: '654321',
+    inviteCode: '232602',
+    referredBy: 'SYS888',
+    balance: 500.0,
+    totalDeposit: 500.0,
+    totalWithdrawal: 0.0,
+    createdAt: '2026-05-01 10:00:00',
+    vipLevel: 1,
+    status: 'active',
+  },
   { uid: '925886', username: 'Hanif8989', password: 'password123', inviteCode: '925886', referredBy: 'SYS888', balance: 479.31, vipLevel: 1, status: 'active' },
   // Level 1: Directly referred by Hanif8989 (925886)
   { uid: '771101', username: 'Karim_88', password: 'password123', inviteCode: '771101', referredBy: '925886', balance: 150.0, totalDeposit: 250.0, totalWithdrawal: 100.0, createdAt: '2026-05-12 10:00:00', vipLevel: 0, status: 'active' },
@@ -196,9 +213,51 @@ const SEEDED_MEMBERS = [
   { uid: '998811', username: 'Whale_Investor50k', password: 'password123', inviteCode: '998811', referredBy: 'SYS888', balance: 58500.0, vipLevel: 3, status: 'active' },
 ];
 
+// Persistent Global User Database on Disk (survives process reboots and operates reliably across all sessions)
+const DATA_DIR = path.resolve(__dirname, 'data');
+const PERSISTENT_USERS_FILE = path.join(DATA_DIR, 'persistent_users.json');
+
+const ensureDataDir = () => {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+};
+
+const loadPersistentUsers = () => {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(PERSISTENT_USERS_FILE)) {
+      const raw = fs.readFileSync(PERSISTENT_USERS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const existingUids = new Set(parsed.map((u) => String(u.uid)));
+        const missingSeeds = SEEDED_MEMBERS.filter((s) => !existingUids.has(String(s.uid)));
+        return [...parsed, ...missingSeeds];
+      }
+    }
+  } catch (err) {
+    console.warn('Persistent users load note:', err.message);
+  }
+  return [...SEEDED_MEMBERS];
+};
+
+let ACTIVE_USERS = loadPersistentUsers();
+
+const savePersistentUsers = () => {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(PERSISTENT_USERS_FILE, JSON.stringify(ACTIVE_USERS, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving persistent users to disk:', err.message);
+  }
+};
+// Establish disk file immediately
+savePersistentUsers();
+
 const seedInitialMembers = async () => {
   try {
-    for (const member of SEEDED_MEMBERS) {
+    if (mongoose.connection.readyState !== 1) return;
+    for (const member of ACTIVE_USERS) {
       const exists = await User.findOne({ $or: [{ uid: member.uid }, { username: member.username }] });
       if (!exists) {
         await User.create(member);
@@ -404,7 +463,7 @@ app.get('/api/health', (req, res) => {
 
 /**
  * POST /api/auth/register
- * Register a new user with strict invite code validation and 6-digit numeric UID
+ * Register a new user with strict invite code validation, 6-digit numeric UID, and persistent disk storage
  */
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -423,9 +482,21 @@ app.post('/api/auth/register', async (req, res) => {
     const cleanUser = username.trim();
     const cleanCode = inviteCode.trim().toUpperCase();
 
-    // Check if user already exists
-    const existing = await User.findOne({ username: { $regex: new RegExp(`^${cleanUser}$`, 'i') } });
-    if (existing) {
+    // Check if user already exists in ACTIVE_USERS memory/disk
+    let existingUser = ACTIVE_USERS.find(
+      (u) => u.username && u.username.toLowerCase() === cleanUser.toLowerCase()
+    );
+
+    // Also check MongoDB if connected
+    if (!existingUser && mongoose.connection.readyState === 1) {
+      try {
+        existingUser = await User.findOne({ username: { $regex: new RegExp(`^${cleanUser}$`, 'i') } });
+      } catch (dbErr) {
+        console.warn('Database username lookup notice:', dbErr.message);
+      }
+    }
+
+    if (existingUser) {
       return res.status(400).json({ success: false, message: 'This username is already taken.' });
     }
 
@@ -436,27 +507,29 @@ app.post('/api/auth/register', async (req, res) => {
 
     let matchingMember = null;
     if (!isSystemCode) {
-      try {
-        matchingMember = await User.findOne({
-          $or: [
-            { inviteCode: { $regex: new RegExp(`^${escapeRegex(cleanCode)}$`, 'i') } },
-            { uid: cleanCode },
-            { username: { $regex: new RegExp(`^${escapeRegex(cleanCode)}$`, 'i') } },
-          ],
-          status: { $ne: 'frozen' },
-        });
-      } catch (dbErr) {
-        console.warn('Database member search notice:', dbErr.message);
-      }
-
-      // In-memory fallback if MongoDB Atlas is still syncing or newly created
-      if (!matchingMember) {
-        matchingMember = SEEDED_MEMBERS.find(
+      // 1. Check in persistent ACTIVE_USERS pool (e.g., Jackal 232602, Hanif8989 925886, etc.)
+      matchingMember =
+        ACTIVE_USERS.find(
           (m) =>
-            (m.inviteCode && m.inviteCode.toUpperCase() === cleanCode) ||
-            (m.uid && m.uid.toUpperCase() === cleanCode) ||
+            (m.inviteCode && String(m.inviteCode).toUpperCase() === cleanCode) ||
+            (m.uid && String(m.uid).toUpperCase() === cleanCode) ||
             (m.username && m.username.toUpperCase() === cleanCode)
         ) || null;
+
+      // 2. Fallback to MongoDB if connected
+      if (!matchingMember && mongoose.connection.readyState === 1) {
+        try {
+          matchingMember = await User.findOne({
+            $or: [
+              { inviteCode: { $regex: new RegExp(`^${escapeRegex(cleanCode)}$`, 'i') } },
+              { uid: cleanCode },
+              { username: { $regex: new RegExp(`^${escapeRegex(cleanCode)}$`, 'i') } },
+            ],
+            status: { $ne: 'frozen' },
+          });
+        } catch (dbErr) {
+          console.warn('Database member search notice:', dbErr.message);
+        }
       }
     }
 
@@ -473,37 +546,54 @@ app.post('/api/auth/register', async (req, res) => {
 
     // Generate unique 6-digit UID or accept frontend generated uid
     let uidCandidate = req.body.uid ? String(req.body.uid).trim() : Math.floor(100000 + Math.random() * 900000).toString();
-    if (!req.body.uid && mongoose.connection.readyState === 1) {
-      while (await User.findOne({ uid: uidCandidate })) {
-        uidCandidate = Math.floor(100000 + Math.random() * 900000).toString();
-      }
+    const existingUids = new Set(ACTIVE_USERS.map((u) => String(u.uid)));
+    while (existingUids.has(uidCandidate)) {
+      uidCandidate = Math.floor(100000 + Math.random() * 900000).toString();
     }
 
-    const memoryUser = {
-      id: 'user_' + Date.now(),
+    const newCreatedUser = {
+      id: req.body.id || ('user_' + Date.now()),
       uid: uidCandidate,
       username: cleanUser,
       password,
+      withdrawalPassword: null,
       inviteCode: uidCandidate,
       referredBy: canonicalReferredBy,
       balance: 0.0,
+      frozenBalance: 0,
       vipLevel: 0,
-      avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
       status: 'active',
-      cycleNumber: 1,
-      currentCycleTasks: 0,
+      avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
+      wallet: null,
+      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      todayOrdersCount: 0,
+      todayCommission: 0,
       completedTasksCount: 0,
+      currentCycleTasks: 0,
+      cycleNumber: 1,
+      cycleApprovedByAdmin: false,
       comboOrderStep: 14,
+      isVipAccount: false,
+      isLockedAccount: false,
+      customCombos: [],
+      workPermission: false,
+      isDemoAccount: false,
     };
 
-    if (!SEEDED_MEMBERS.some((m) => m.uid === uidCandidate || m.username.toLowerCase() === cleanUser.toLowerCase())) {
-      SEEDED_MEMBERS.unshift(memoryUser);
+    // Save to ACTIVE_USERS and write to disk immediately
+    const existingIdx = ACTIVE_USERS.findIndex((u) => u.uid === uidCandidate || u.username.toLowerCase() === cleanUser.toLowerCase());
+    if (existingIdx >= 0) {
+      ACTIVE_USERS[existingIdx] = newCreatedUser;
+    } else {
+      ACTIVE_USERS.unshift(newCreatedUser);
     }
+    savePersistentUsers();
 
-    let savedUser = null;
+    // Persist to MongoDB Atlas if connected
+    let savedMongoUser = null;
     if (mongoose.connection.readyState === 1) {
       try {
-        const newUser = new User({
+        const newUserModel = new User({
           uid: uidCandidate,
           username: cleanUser,
           password,
@@ -517,9 +607,9 @@ app.post('/api/auth/register', async (req, res) => {
           completedTasksCount: 0,
           comboOrderStep: 14,
         });
-        savedUser = await newUser.save();
+        savedMongoUser = await newUserModel.save();
       } catch (dbSaveErr) {
-        console.warn('MongoDB save fallback to in-memory store:', dbSaveErr.message);
+        console.warn('MongoDB save fallback to persistent store:', dbSaveErr.message);
       }
     }
 
@@ -527,15 +617,8 @@ app.post('/api/auth/register', async (req, res) => {
       success: true,
       message: `Registration successful! Your UID is ${uidCandidate}`,
       user: {
-        id: savedUser ? savedUser._id : memoryUser.id,
-        uid: uidCandidate,
-        username: cleanUser,
-        inviteCode: uidCandidate,
-        referredBy: canonicalReferredBy,
-        balance: 0.0,
-        vipLevel: 0,
-        avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
-        cycleNumber: 1,
+        ...newCreatedUser,
+        id: savedMongoUser ? savedMongoUser._id.toString() : newCreatedUser.id,
       },
     });
   } catch (error) {
@@ -546,7 +629,7 @@ app.post('/api/auth/register', async (req, res) => {
 
 /**
  * GET /api/invites/validate/:code
- * Verify that an invitation code matches an active system code or member in MongoDB
+ * Verify that an invitation code matches an active system code or member in MongoDB/Disk
  */
 app.get('/api/invites/validate/:code', async (req, res) => {
   try {
@@ -560,25 +643,28 @@ app.get('/api/invites/validate/:code', async (req, res) => {
       return res.json({ valid: true, type: 'system', code: rawCode });
     }
 
-    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    let member = null;
-    try {
-      member = await User.findOne({
-        $or: [
-          { inviteCode: { $regex: new RegExp(`^${escapeRegex(rawCode)}$`, 'i') } },
-          { uid: rawCode },
-          { username: { $regex: new RegExp(`^${escapeRegex(rawCode)}$`, 'i') } },
-        ],
-        status: { $ne: 'frozen' },
-      });
-    } catch {}
+    // 1. Check in persistent ACTIVE_USERS pool first (instant response)
+    let member =
+      ACTIVE_USERS.find(
+        (m) =>
+          (m.inviteCode && String(m.inviteCode).toUpperCase() === rawCode) ||
+          (m.uid && String(m.uid).toUpperCase() === rawCode) ||
+          (m.username && m.username.toUpperCase() === rawCode)
+      ) || null;
 
-    if (!member) {
-      member = SEEDED_MEMBERS.find((m) =>
-        (m.inviteCode && m.inviteCode.toUpperCase() === rawCode) ||
-        (m.uid && m.uid.toUpperCase() === rawCode) ||
-        (m.username && m.username.toUpperCase() === rawCode)
-      );
+    // 2. Check MongoDB if connected
+    if (!member && mongoose.connection.readyState === 1) {
+      try {
+        const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        member = await User.findOne({
+          $or: [
+            { inviteCode: { $regex: new RegExp(`^${escapeRegex(rawCode)}$`, 'i') } },
+            { uid: rawCode },
+            { username: { $regex: new RegExp(`^${escapeRegex(rawCode)}$`, 'i') } },
+          ],
+          status: { $ne: 'frozen' },
+        });
+      } catch {}
     }
 
     if (member) {
@@ -612,28 +698,97 @@ app.get('/api/invites/validate/:code', async (req, res) => {
 
 /**
  * GET /api/users
- * Returns list of active users for cross-client invite code syncing
+ * Returns list of active users from persistent disk store & MongoDB
  */
 app.get('/api/users', async (req, res) => {
   try {
-    let allUsers = [];
+    let mongoUsers = [];
     if (mongoose.connection.readyState === 1) {
-      allUsers = await User.find({ status: { $ne: 'frozen' } }).select('-password -withdrawalPassword');
+      try {
+        mongoUsers = await User.find({ status: { $ne: 'frozen' } }).select('-password -withdrawalPassword');
+      } catch (err) {
+        console.warn('Mongo fetch users note:', err.message);
+      }
     }
-    const dbUids = new Set(allUsers.map((u) => u.uid));
-    const memoryMembers = SEEDED_MEMBERS.filter((m) => !dbUids.has(m.uid)).map((m) => {
-      const { password, ...safe } = m;
-      return safe;
+
+    const activeMap = new Map(ACTIVE_USERS.map((u) => [String(u.uid), u]));
+    mongoUsers.forEach((mu) => {
+      if (!activeMap.has(String(mu.uid))) {
+        activeMap.set(String(mu.uid), {
+          id: mu._id?.toString() || ('user_' + mu.uid),
+          ...mu.toObject(),
+        });
+      }
     });
-    return res.json({ success: true, users: [...allUsers, ...memoryMembers] });
+
+    const safeUsers = Array.from(activeMap.values()).map((u) => {
+      const { password, withdrawalPassword, ...safe } = u;
+      return {
+        ...safe,
+        id: safe.id || ('user_' + safe.uid),
+      };
+    });
+
+    return res.json({ success: true, users: safeUsers });
   } catch (err) {
-    return res.json({ success: true, users: SEEDED_MEMBERS });
+    return res.json({ success: true, users: ACTIVE_USERS });
+  }
+});
+
+/**
+ * POST /api/users/sync
+ * Sync users created on client into the persistent server database
+ */
+app.post('/api/users/sync', (req, res) => {
+  try {
+    const { users: clientUsers, user: clientUser } = req.body;
+    let modified = false;
+
+    if (clientUser && clientUser.uid) {
+      const existingIdx = ACTIVE_USERS.findIndex((u) => String(u.uid) === String(clientUser.uid));
+      if (existingIdx >= 0) {
+        ACTIVE_USERS[existingIdx] = { ...ACTIVE_USERS[existingIdx], ...clientUser };
+      } else {
+        ACTIVE_USERS.unshift(clientUser);
+      }
+      modified = true;
+    }
+
+    if (Array.isArray(clientUsers)) {
+      clientUsers.forEach((cu) => {
+        if (!cu || !cu.uid) return;
+        const idx = ACTIVE_USERS.findIndex((u) => String(u.uid) === String(cu.uid));
+        if (idx >= 0) {
+          ACTIVE_USERS[idx] = { ...ACTIVE_USERS[idx], ...cu };
+        } else {
+          ACTIVE_USERS.push(cu);
+          modified = true;
+        }
+      });
+    }
+
+    if (modified) {
+      savePersistentUsers();
+    }
+
+    const safeUsers = ACTIVE_USERS.map((u) => {
+      const { password, withdrawalPassword, ...safe } = u;
+      return {
+        ...safe,
+        id: safe.id || ('user_' + safe.uid),
+      };
+    });
+
+    return res.json({ success: true, users: safeUsers });
+  } catch (err) {
+    console.error('User sync error:', err.message);
+    return res.status(500).json({ success: false, message: 'Sync failed' });
   }
 });
 
 /**
  * POST /api/auth/login
- * Strict password verification on login against stored user credentials
+ * Strict password verification on login against persistent user credentials
  */
 app.post('/api/auth/login', async (req, res) => {
   try {
@@ -648,13 +803,27 @@ app.post('/api/auth/login', async (req, res) => {
 
     const cleanUser = username.trim();
 
-    // Match by username or UID
-    const user = await User.findOne({
-      $or: [
-        { username: { $regex: new RegExp(`^${cleanUser}$`, 'i') } },
-        { uid: cleanUser },
-      ],
-    });
+    // 1. Check in persistent ACTIVE_USERS memory/disk store first
+    let user = ACTIVE_USERS.find(
+      (u) =>
+        (u.username && u.username.toLowerCase() === cleanUser.toLowerCase()) ||
+        (u.uid && String(u.uid) === cleanUser)
+    ) || null;
+
+    // 2. If not found in ACTIVE_USERS, check MongoDB if connected
+    if (!user && mongoose.connection.readyState === 1) {
+      try {
+        const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        user = await User.findOne({
+          $or: [
+            { username: { $regex: new RegExp(`^${escapeRegex(cleanUser)}$`, 'i') } },
+            { uid: cleanUser },
+          ],
+        });
+      } catch (dbErr) {
+        console.warn('MongoDB login search error:', dbErr.message);
+      }
+    }
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'User account not found. Please register first.' });
@@ -676,19 +845,21 @@ app.post('/api/auth/login', async (req, res) => {
       success: true,
       message: 'Login successful!',
       user: {
-        id: user._id,
+        id: user._id ? user._id.toString() : user.id,
         uid: user.uid,
         username: user.username,
+        inviteCode: user.inviteCode || user.uid,
+        referredBy: user.referredBy,
         balance: user.balance,
         frozenBalance: user.frozenBalance,
         vipLevel: user.vipLevel,
         avatarUrl: user.avatarUrl,
         wallet: user.wallet,
-        cycleNumber: user.cycleNumber,
-        currentCycleTasks: user.currentCycleTasks,
-        completedTasksCount: user.completedTasksCount,
-        isLockedAccount: user.isLockedAccount,
-        workPermission: user.workPermission,
+        cycleNumber: user.cycleNumber || 1,
+        currentCycleTasks: user.currentCycleTasks || 0,
+        completedTasksCount: user.completedTasksCount || 0,
+        isLockedAccount: user.isLockedAccount || false,
+        workPermission: user.workPermission !== false,
       },
     });
   } catch (error) {
@@ -1049,15 +1220,17 @@ app.get('/', (req, res, next) => {
   });
 });
 
-// Setup Vite middleware in dev or static files in production asynchronously
-setupViteOrStatic().catch((err) => {
-  console.warn('Frontend static setup notice:', err.message);
-});
+// Setup Vite middleware in dev or static files in production
+const startServer = async () => {
+  await setupViteOrStatic();
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`======================================================================`);
+    console.log(`Backend Server listening on http://0.0.0.0:${PORT}`);
+    console.log(`Health check: http://0.0.0.0:${PORT}/api/health`);
+    console.log(`======================================================================`);
+  });
+};
 
-// Start listening immediately on 0.0.0.0 so Render detects the open port without delay
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`======================================================================`);
-  console.log(`Backend Server listening on http://0.0.0.0:${PORT}`);
-  console.log(`Health check: http://0.0.0.0:${PORT}/api/health`);
-  console.log(`======================================================================`);
+startServer().catch((err) => {
+  console.error('Server startup error:', err);
 });

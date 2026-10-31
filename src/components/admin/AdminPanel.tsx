@@ -849,7 +849,14 @@ export const AdminPanel: React.FC = () => {
                       const q = userSearch.toLowerCase();
                       return u.uid.includes(q) || u.username.toLowerCase().includes(q);
                     })
-                    .map((user) => (
+                    .map((user) => {
+                      const referrerUser = users.find(
+                        (u) =>
+                          u.inviteCode === user.referredBy ||
+                          u.uid === user.referredBy ||
+                          (user.referredBy && u.username.toLowerCase() === user.referredBy.toLowerCase())
+                      );
+                      return (
                       <tr key={user.id} className="hover:bg-slate-900/40 transition-colors">
                         <td className="py-3 px-3 font-mono font-bold text-amber-400">{user.uid}</td>
                         <td className="py-3 px-3">
@@ -949,12 +956,28 @@ export const AdminPanel: React.FC = () => {
                           )}
                         </td>
                         <td className="py-3 px-3">
-                          <span className="font-mono text-emerald-400 font-semibold block">
-                            Code: {user.inviteCode}
-                          </span>
-                          <span className="text-[10px] text-slate-400">
-                            By: {user.referredBy || 'None'}
-                          </span>
+                          <div className="space-y-1">
+                            <span className="font-mono text-emerald-400 font-bold block text-xs">
+                              Code: {user.inviteCode || user.uid}
+                            </span>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                                REFERRED BY:
+                              </span>
+                              {user.referredBy ? (
+                                <span className="font-mono text-xs text-slate-200 font-semibold">
+                                  {user.referredBy}
+                                  {referrerUser && (
+                                    <span className="text-emerald-400 ml-1 font-sans font-medium text-[11px]">
+                                      ({referrerUser.username})
+                                    </span>
+                                  )}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500 text-[10px] italic">Direct / None</span>
+                              )}
+                            </div>
+                          </div>
                         </td>
                         {/* Work Permission Column */}
                         <td className="py-3 px-3">
@@ -1032,20 +1055,22 @@ export const AdminPanel: React.FC = () => {
                         </td>
                         <td className="py-3 px-3 text-right">
                           <div className="flex flex-wrap items-center justify-end gap-1.5 max-w-[440px]">
-                            {/* Quick Login / Test Demo Account */}
-                            {user.isDemoAccount && (
-                              <button
-                                onClick={() => {
-                                  switchUser(user.id);
-                                  setActiveView('user');
-                                }}
-                                title="Switch to this Demo Account and open User app view"
-                                className="px-2 py-1 bg-cyan-900/80 hover:bg-cyan-800 text-cyan-200 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-cyan-500/40 cursor-pointer shadow-xs"
-                              >
-                                <ExternalLink className="w-3 h-3 text-cyan-300" />
-                                <span>Login Demo</span>
-                              </button>
-                            )}
+                            {/* Quick Login / Switch to User Account */}
+                            <button
+                              onClick={() => {
+                                switchUser(user.id);
+                                setActiveView('user');
+                              }}
+                              title={`Switch to ${user.username}'s account and open user app / teams`}
+                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer shadow-xs border ${
+                                user.isDemoAccount
+                                  ? 'bg-cyan-900/80 hover:bg-cyan-800 text-cyan-200 border-cyan-500/40'
+                                  : 'bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 border-indigo-500/40'
+                              }`}
+                            >
+                              <ExternalLink className="w-3 h-3 text-indigo-300" />
+                              <span>{user.isDemoAccount ? 'Login Demo' : 'Login User'}</span>
+                            </button>
 
                             {/* Work Permission Toggle */}
                             <button
@@ -1223,7 +1248,8 @@ export const AdminPanel: React.FC = () => {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
