@@ -52,12 +52,15 @@ interface AppContextType {
   systemConfig: SystemConfig;
 
   // Auth & User methods
-  loginUser: (username: string, password?: string) => { success: boolean; message?: string };
+  loginUser: (
+    username: string,
+    password?: string
+  ) => Promise<{ success: boolean; message?: string }> | { success: boolean; message?: string };
   registerUser: (
     username: string,
     password: string,
     inviteCode: string
-  ) => { success: boolean; message?: string; user?: User };
+  ) => Promise<{ success: boolean; message?: string; user?: User }>;
   logoutUser: () => void;
   switchUser: (userId: string) => void;
   updateUserAvatar: (avatarUrl: string) => void;
@@ -443,48 +446,117 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(STORAGE_KEYS.CURRENT_ADMIN_ID, currentAdminId);
   }, [currentAdminId]);
 
-  // Real-time synchronization of active members across browser tabs and backend persistent store
+  // Helper to persist state modifications immediately to the centralized backend database
+  const syncUserUpdateToBackend = (userUid: string, updates: Partial<User>) => {
+    try {
+      fetch('/api/users/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: userUid, updates }),
+      }).catch(() => {});
+    } catch {}
+  };
+
+  // Real-time synchronization of users & invite codes across devices, tabs, and backend persistent store
   useEffect(() => {
-    const fetchRemoteUsers = () => {
-      fetch('/api/users')
-        .then((res) => res.json())
-        .then((data) => {
-          if (data && data.success && Array.isArray(data.users) && data.users.length > 0) {
-            setUsers((prev) => {
-              const prevMap = new Map(prev.map((u) => [String(u.uid), u]));
-              let hasChanges = false;
-              data.users.forEach((remoteUser: User) => {
-                const existing = prevMap.get(String(remoteUser.uid));
-                if (!existing) {
-                  prevMap.set(String(remoteUser.uid), {
-                    ...remoteUser,
-                    id: remoteUser.id || ('user_' + remoteUser.uid),
-                  });
-                  hasChanges = true;
-                } else if (!existing.referredBy && remoteUser.referredBy) {
-                  prevMap.set(String(remoteUser.uid), {
+    const fetchRemoteData = async () => {
+      try {
+        const [usersRes, invitesRes] = await Promise.all([
+          fetch('/api/users').then((r) => r.json()).catch(() => null),
+          fetch('/api/invites').then((r) => r.json()).catch(() => null),
+        ]);
+
+        if (usersRes && usersRes.success && Array.isArray(usersRes.users) && usersRes.users.length > 0) {
+          setUsers((prev) => {
+            const prevMap = new Map(prev.map((u) => [String(u.uid), u]));
+            let hasChanges = false;
+            const newUsersToPrepend: User[] = [];
+
+            usersRes.users.forEach((remoteUser: User) => {
+              const remoteUid = String(remoteUser.uid);
+              const existing = prevMap.get(remoteUid);
+
+              if (!existing) {
+                // New user registered from another device
+                const brandNewUser: User = {
+                  ...remoteUser,
+                  id: remoteUser.id || ('user_' + remoteUser.uid),
+                  totalDeposit: typeof remoteUser.totalDeposit === 'number' ? remoteUser.totalDeposit : (remoteUser.balance > 0 ? remoteUser.balance : 0),
+                  totalWithdrawal: typeof remoteUser.totalWithdrawal === 'number' ? remoteUser.totalWithdrawal : 0,
+                };
+                prevMap.set(remoteUid, brandNewUser);
+                newUsersToPrepend.push(brandNewUser);
+                hasChanges = true;
+              } else {
+                // Authoritative server state sync for existing users
+                const needsUpdate =
+                  existing.referredBy !== remoteUser.referredBy ||
+                  existing.balance !== remoteUser.balance ||
+                  existing.frozenBalance !== remoteUser.frozenBalance ||
+                  existing.vipLevel !== remoteUser.vipLevel ||
+                  existing.status !== remoteUser.status ||
+                  existing.workPermission !== remoteUser.workPermission ||
+                  existing.cycleApprovedByAdmin !== remoteUser.cycleApprovedByAdmin ||
+                  existing.currentCycleTasks !== remoteUser.currentCycleTasks ||
+                  existing.completedTasksCount !== remoteUser.completedTasksCount ||
+                  existing.cycleNumber !== remoteUser.cycleNumber ||
+                  existing.comboOrderStep !== remoteUser.comboOrderStep ||
+                  existing.totalDeposit !== remoteUser.totalDeposit ||
+                  existing.totalWithdrawal !== remoteUser.totalWithdrawal ||
+                  JSON.stringify(existing.wallet) !== JSON.stringify(remoteUser.wallet);
+
+                if (needsUpdate) {
+                  prevMap.set(remoteUid, {
                     ...existing,
-                    referredBy: remoteUser.referredBy,
+                    ...remoteUser,
+                    id: existing.id || remoteUser.id || ('user_' + remoteUid),
+                    password: existing.password || remoteUser.password,
+                    withdrawalPassword: existing.withdrawalPassword || remoteUser.withdrawalPassword,
                   });
                   hasChanges = true;
                 }
-              });
-              if (hasChanges) {
-                const merged = Array.from(prevMap.values());
-                try {
-                  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
-                } catch {}
-                return merged;
               }
-              return prev;
             });
-          }
-        })
-        .catch(() => {});
+
+            if (hasChanges) {
+              // Maintain ordering with new registrations at top
+              const existingIds = new Set(newUsersToPrepend.map((u) => String(u.uid)));
+              const remaining = Array.from(prevMap.values()).filter((u) => !existingIds.has(String(u.uid)));
+              const merged = [...newUsersToPrepend, ...remaining];
+              try {
+                localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
+              } catch {}
+              return merged;
+            }
+            return prev;
+          });
+        }
+
+        if (invitesRes && invitesRes.success && Array.isArray(invitesRes.invites) && invitesRes.invites.length > 0) {
+          setInviteCodes((prev) => {
+            const existingCodes = new Set(prev.map((c) => c.code.toUpperCase()));
+            const toAdd: InviteCode[] = [];
+            invitesRes.invites.forEach((rem: InviteCode) => {
+              if (rem && rem.code && !existingCodes.has(rem.code.toUpperCase())) {
+                toAdd.push(rem);
+                existingCodes.add(rem.code.toUpperCase());
+              }
+            });
+            if (toAdd.length > 0) {
+              const updated = [...prev, ...toAdd];
+              try {
+                localStorage.setItem(STORAGE_KEYS.INVITES, JSON.stringify(updated));
+              } catch {}
+              return updated;
+            }
+            return prev;
+          });
+        }
+      } catch {}
     };
 
-    fetchRemoteUsers();
-    const interval = setInterval(fetchRemoteUsers, 2500); // 2.5s real-time poll
+    fetchRemoteData();
+    const interval = setInterval(fetchRemoteData, 1800); // 1.8s real-time poll
 
     // Cross-tab instant synchronization via storage event
     const handleStorage = (e: StorageEvent) => {
@@ -559,7 +631,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // USER AUTHENTICATION & PROFILE METHODS
   // --------------------------------------------------------------------------
 
-  const loginUser = (username: string, password?: string) => {
+  const loginUser = async (username: string, password?: string) => {
     const trimmed = username.trim();
     if (!trimmed) {
       return { success: false, message: 'Please enter your username.' };
@@ -568,34 +640,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Please enter your password.' };
     }
 
-    const user = users.find(
+    // Fast path: Check local users state
+    const localUser = users.find(
       (u) =>
         u.username.toLowerCase() === trimmed.toLowerCase() ||
         u.uid === trimmed
     );
 
-    if (!user) {
+    if (localUser && localUser.password && localUser.password === password) {
+      if (localUser.status === 'frozen') {
+        return { success: false, message: 'Your account is frozen. Please contact customer service.' };
+      }
+      setCurrentUserId(localUser.id);
+      return { success: true, message: 'Login successful!' };
+    }
+
+    // Centralized server authentication fallback (supports users registered from any device)
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: trimmed, password }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success && data.user) {
+        const authedUser: User = {
+          ...data.user,
+          id: data.user.id || ('user_' + data.user.uid),
+          password,
+        };
+        setUsers((prev) => {
+          const filtered = prev.filter((u) => u.uid !== authedUser.uid && u.id !== authedUser.id);
+          const updated = [authedUser, ...filtered];
+          try {
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+        setCurrentUserId(authedUser.id);
+        return { success: true, message: 'Login successful!' };
+      } else {
+        return {
+          success: false,
+          message:
+            data.message ||
+            (localUser
+              ? 'Incorrect password. Please verify your password and try again.'
+              : 'User account not found. Please register first.'),
+        };
+      }
+    } catch {
+      if (localUser) {
+        return { success: false, message: 'Incorrect password. Please verify your password and try again.' };
+      }
       return { success: false, message: 'User account not found. Please register first.' };
     }
-    if (user.status === 'frozen') {
-      return { success: false, message: 'Your account is frozen. Please contact customer service.' };
-    }
-
-    // STRICT PASSWORD VERIFICATION ON LOGIN:
-    // Strictly validate the entered password against the stored user password
-    const storedPassword = user.password || 'password123';
-    if (password !== storedPassword) {
-      return {
-        success: false,
-        message: 'Incorrect password. Please verify your password and try again.',
-      };
-    }
-
-    setCurrentUserId(user.id);
-    return { success: true, message: 'Login successful!' };
   };
 
-  const registerUser = (username: string, password: string, inviteCodeInput: string) => {
+  const registerUser = async (username: string, password: string, inviteCodeInput: string) => {
     const cleanUser = username.trim();
     const cleanCode = inviteCodeInput.trim().toUpperCase();
 
@@ -612,181 +714,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // ROBUST INVITATION CODE VALIDATION:
-    // 1. Check if cleanCode matches ANY existing member in users list (by inviteCode, UID, username, or ID)
-    const matchingMember = users.find((u) => {
-      const uCode = String(u.inviteCode || '').trim().toUpperCase();
-      const uUid = String(u.uid || '').trim().toUpperCase();
-      const uUser = String(u.username || '').trim().toUpperCase();
-      const uId = String(u.id || '').trim().toUpperCase();
-      return (
-        (uCode && uCode === cleanCode) ||
-        (uUid && uUid === cleanCode) ||
-        (uUser && uUser === cleanCode) ||
-        (uId && uId === cleanCode)
-      );
-    }) || INITIAL_USERS.find((u) => {
-      const uCode = String(u.inviteCode || '').trim().toUpperCase();
-      const uUid = String(u.uid || '').trim().toUpperCase();
-      const uUser = String(u.username || '').trim().toUpperCase();
-      const uId = String(u.id || '').trim().toUpperCase();
-      return (
-        (uCode && uCode === cleanCode) ||
-        (uUid && uUid === cleanCode) ||
-        (uUser && uUser === cleanCode) ||
-        (uId && uId === cleanCode)
-      );
-    });
-
-    // 2. Check if cleanCode matches ANY system or admin code in inviteCodes pool
-    const matchingSystemCode = inviteCodes.find(
-      (c) => String(c.code || '').trim().toUpperCase() === cleanCode && c.status !== 'disabled'
-    ) || INITIAL_INVITE_CODES.find(
-      (c) => String(c.code || '').trim().toUpperCase() === cleanCode
-    );
-
-    // 3. User code pattern: All user codes in TradeWeb are 6-digit numeric UIDs (generated via generateUniqueUid)
-    // Any existing user code can be reused UNLIMITED times by multiple downlines!
-    const isSixDigitUserCode = /^\d{6}$/.test(cleanCode);
-
-    // If neither a valid member nor a valid system code nor a standard 6-digit user code was found
-    if (!matchingMember && !matchingSystemCode && !isSixDigitUserCode) {
-      return {
-        success: false,
-        message: 'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
-      };
-    }
-
-    // Rule 1: Unlimited Reuse - Multiple friends and downlines can register using the exact same invite code without limit!
-
-    // Check if username already exists
-    if (users.some((u) => u.username.toLowerCase() === cleanUser.toLowerCase())) {
-      return { success: false, message: 'This username is already taken. Please choose another.' };
-    }
-
-    // Generate unique 6-digit UID
-    const newUid = generateUniqueUid();
-    // User's own invitation code is set to their unique UID
-    const newUserInviteCode = newUid;
-
-    // STATE RESET FOR NEW ACCOUNTS:
-    // Ensure newly created account starts strictly at Cycle 1 / Progress 0 with only 1 combo planned for Task #14 or #15
-    const plannedCycle1Combo = Math.random() < 0.5 ? 14 : 15;
-
-    // Deterministic canonical referredBy code ensuring exact 3-level team hierarchy linking
-    const canonicalReferredBy = matchingMember
-      ? (matchingMember.inviteCode || matchingMember.uid)
-      : (matchingSystemCode ? matchingSystemCode.code : cleanCode);
-
-    const newUser: User = {
-      id: 'user_' + Date.now(),
-      uid: newUid,
-      username: cleanUser,
-      password,
-      withdrawalPassword: null, // initially null for security prompt flow
-      inviteCode: newUserInviteCode,
-      referredBy: canonicalReferredBy,
-      balance: 0.0,
-      frozenBalance: 0,
-      vipLevel: 0,
-      status: 'active',
-      wallet: null,
-      avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      todayOrdersCount: 0,
-      todayCommission: 0,
-      completedTasksCount: 0,
-      currentCycleTasks: 0, // Starts strictly at Cycle 1 / Progress 0
-      cycleNumber: 1, // Starts strictly at Cycle 1
-      cycleApprovedByAdmin: false, // Locked until Admin grants Work Permission
-      comboOrderStep: plannedCycle1Combo, // Strictly Task #14 or #15 (only 1 combo planned for Cycle 1)
-      isVipAccount: false,
-      isLockedAccount: false,
-      customCombos: [],
-      workPermission: false, // Locked/unapproved by default until Admin manually grants Work Permission
-      isDemoAccount: false,
-    };
-
-    // Add user's own invite code to inviteCodes pool
-    const newCodeObj: InviteCode = {
-      id: 'inv_user_' + Date.now(),
-      code: newUserInviteCode,
-      type: 'user',
-      createdBy: `${newUid} (${cleanUser})`,
-      creatorRole: 'user',
-      usageCount: 0,
-      maxUses: null,
-      status: 'active',
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-    };
-
-    // Increment usage on referrer code
-    setInviteCodes((prev) => {
-      const targetCode = (canonicalReferredBy || cleanCode).toUpperCase();
-      let found = false;
-      const updated = prev.map((c) => {
-        if (c.code.toUpperCase() === targetCode || c.code.toUpperCase() === cleanCode) {
-          found = true;
-          return { ...c, usageCount: c.usageCount + 1 };
-        }
-        return c;
-      });
-
-      // If the referrer was an existing member whose code wasn't explicitly in inviteCodes yet, add it
-      if (!found && matchingMember) {
-        updated.push({
-          id: 'inv_user_' + matchingMember.uid,
-          code: matchingMember.inviteCode || matchingMember.uid,
-          type: 'user',
-          createdBy: `${matchingMember.uid} (${matchingMember.username})`,
-          creatorRole: 'user',
-          usageCount: 1,
-          maxUses: null,
-          status: 'active',
-          createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-        });
-      }
-
-      return [newCodeObj, ...updated];
-    });
-
-    const updatedUsers = [newUser, ...users.filter((u) => u.id !== newUser.id)];
-    setUsers(updatedUsers);
+    // Call centralized backend registration endpoint directly
     try {
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-      // Dispatch in-tab event for immediate UI updates
-      window.dispatchEvent(new CustomEvent('tradeweb_users_updated', { detail: updatedUsers }));
-    } catch {}
-    setCurrentUserId(newUser.id);
-
-    // Immediate persistence sync with backend server & persistent disk database
-    try {
-      fetch('/api/auth/register', {
+      const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: newUser.id,
-          uid: newUid,
           username: cleanUser,
           password,
-          inviteCode: canonicalReferredBy || cleanCode,
+          inviteCode: cleanCode,
         }),
-      })
-        .then(() => {
-          fetch('/api/users/sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user: newUser }),
-          }).catch(() => {});
-        })
-        .catch(() => {});
-    } catch {}
+      });
 
-    return {
-      success: true,
-      user: newUser,
-      message: `Registration successful! Your UID is ${newUid} and your Referral Code is ${newUserInviteCode}.`,
-    };
+      const data = await response.json();
+
+      if (!response.ok || !data.success || !data.user) {
+        return {
+          success: false,
+          message:
+            data.message ||
+            'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
+        };
+      }
+
+      const newUser: User = {
+        ...data.user,
+        id: data.user.id || ('user_' + data.user.uid),
+        password,
+        todayOrdersCount: 0,
+        todayCommission: 0,
+        completedTasksCount: 0,
+        currentCycleTasks: 0,
+        cycleNumber: 1,
+        cycleApprovedByAdmin: false,
+        comboOrderStep: data.user.comboOrderStep || 14,
+        workPermission: false,
+        isDemoAccount: false,
+        totalDeposit: 0.0,
+        totalWithdrawal: 0.0,
+      };
+
+      // Add user's own referral code to inviteCodes list
+      const newUserInviteCode = newUser.inviteCode || newUser.uid;
+      const newCodeObj: InviteCode = {
+        id: 'inv_user_' + newUser.uid,
+        code: newUserInviteCode,
+        type: 'user',
+        createdBy: `${newUser.uid} (${newUser.username})`,
+        creatorRole: 'user',
+        usageCount: 0,
+        maxUses: null,
+        status: 'active',
+        createdAt: newUser.createdAt || new Date().toISOString().replace('T', ' ').substring(0, 19),
+      };
+
+      setInviteCodes((prev) => {
+        const filtered = prev.filter((c) => c.code.toUpperCase() !== newUserInviteCode.toUpperCase());
+        return [newCodeObj, ...filtered];
+      });
+
+      setUsers((prev) => {
+        const filtered = prev.filter((u) => u.uid !== newUser.uid && u.id !== newUser.id);
+        const updated = [newUser, ...filtered];
+        try {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+
+      setCurrentUserId(newUser.id);
+
+      // Trigger cross-tab sync
+      try {
+        window.dispatchEvent(new CustomEvent('tradeweb_users_updated', { detail: [newUser, ...users] }));
+      } catch {}
+
+      return {
+        success: true,
+        user: newUser,
+        message:
+          data.message ||
+          `Registration successful! Your UID is ${newUser.uid} and your Referral Code is ${newUserInviteCode}.`,
+      };
+    } catch (err: any) {
+      console.error('Registration API error:', err);
+      return {
+        success: false,
+        message: 'Network error connecting to registration server. Please try again.',
+      };
+    }
   };
 
   const logoutUser = () => {
@@ -2025,6 +2041,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             type === 'credit'
               ? Number((u.balance + amount).toFixed(4))
               : Number((u.balance - amount).toFixed(4));
+          syncUserUpdateToBackend(u.uid, { balance: newBal });
           return { ...u, balance: newBal };
         }
         return u;
@@ -2052,6 +2069,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!target) return { success: false, message: 'User not found.' };
 
     const newStatus = target.status === 'active' ? 'frozen' : 'active';
+    syncUserUpdateToBackend(target.uid, { status: newStatus });
     setUsers((prev) =>
       prev.map((u) => (u.id === userId ? { ...u, status: newStatus } : u))
     );
@@ -2477,6 +2495,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!target) return { success: false, message: 'User not found.' };
 
     const nextPermission = target.workPermission === false ? true : false;
+    syncUserUpdateToBackend(target.uid, {
+      workPermission: nextPermission,
+      cycleApprovedByAdmin: nextPermission ? true : target.cycleApprovedByAdmin,
+    });
 
     setUsers((prev) =>
       prev.map((u) =>

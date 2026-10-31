@@ -90,8 +90,11 @@ export const AuthModal: React.FC<Props> = ({
     regPassword === regConfirmPassword &&
     regInviteCode.trim().length > 0;
 
-  const handleLogin = (e: React.FormEvent) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError('');
 
     if (!loginIdentifier.trim()) {
@@ -103,16 +106,22 @@ export const AuthModal: React.FC<Props> = ({
       return;
     }
 
-    const res = loginUser(loginIdentifier.trim(), loginPassword);
-    if (res.success) {
-      onClose();
-    } else {
-      setError(res.message || 'Invalid username or password.');
+    setIsSubmitting(true);
+    try {
+      const res = await loginUser(loginIdentifier.trim(), loginPassword);
+      if (res.success) {
+        onClose();
+      } else {
+        setError(res.message || 'Invalid username or password.');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError('');
 
     if (!regUsername.trim()) {
@@ -136,15 +145,20 @@ export const AuthModal: React.FC<Props> = ({
       return;
     }
 
-    const res = registerUser(regUsername.trim(), regPassword, regInviteCode.trim());
-    if (res.success) {
-      setSuccessMsg(res.message || 'Account created successfully! Logging you in...');
-      setTimeout(() => {
-        onClose();
-        setSuccessMsg('');
-      }, 1500);
-    } else {
-      setError(res.message || 'Registration failed.');
+    setIsSubmitting(true);
+    try {
+      const res = await registerUser(regUsername.trim(), regPassword, regInviteCode.trim());
+      if (res.success) {
+        setSuccessMsg(res.message || 'Account created successfully! Logging you in...');
+        setTimeout(() => {
+          onClose();
+          setSuccessMsg('');
+        }, 1500);
+      } else {
+        setError(res.message || 'Registration failed.');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -286,9 +300,10 @@ export const AuthModal: React.FC<Props> = ({
               {/* Primary Action Button: Gold/Orange Login */}
               <button
                 type="submit"
-                className="w-full py-3.5 bg-[#e08920] hover:bg-[#cf7b19] active:scale-[0.99] text-white font-bold text-base rounded-xl shadow-lg shadow-amber-500/25 transition-all cursor-pointer"
+                disabled={isSubmitting}
+                className="w-full py-3.5 bg-[#e08920] hover:bg-[#cf7b19] disabled:opacity-60 active:scale-[0.99] text-white font-bold text-base rounded-xl shadow-lg shadow-amber-500/25 transition-all cursor-pointer"
               >
-                Login
+                {isSubmitting ? 'Logging in...' : 'Login'}
               </button>
 
               {/* Footer Link: Don't have an account? Register */}
@@ -426,13 +441,14 @@ export const AuthModal: React.FC<Props> = ({
               {/* Primary Action Button: Confirm */}
               <button
                 type="submit"
+                disabled={!isRegisterReady || isSubmitting}
                 className={`w-full py-3.5 font-bold text-sm rounded-xl transition-all cursor-pointer ${
-                  isRegisterReady
+                  isRegisterReady && !isSubmitting
                     ? 'bg-[#e08920] hover:bg-[#cf7b19] active:scale-[0.99] text-white shadow-lg shadow-amber-500/25'
-                    : 'bg-slate-200 hover:bg-slate-300 text-slate-400'
+                    : 'bg-slate-200 hover:bg-slate-300 text-slate-400 cursor-not-allowed'
                 }`}
               >
-                Confirm
+                {isSubmitting ? 'Creating Account...' : 'Confirm'}
               </button>
 
               {/* Footer Link: Already have an account? Login */}

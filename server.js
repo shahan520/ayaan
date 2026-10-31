@@ -697,15 +697,16 @@ app.get('/api/invites/validate/:code', async (req, res) => {
 });
 
 /**
+/**
  * GET /api/users
- * Returns list of active users from persistent disk store & MongoDB
+ * Returns list of active and all registered users from persistent disk store & MongoDB
  */
 app.get('/api/users', async (req, res) => {
   try {
     let mongoUsers = [];
     if (mongoose.connection.readyState === 1) {
       try {
-        mongoUsers = await User.find({ status: { $ne: 'frozen' } }).select('-password -withdrawalPassword');
+        mongoUsers = await User.find({});
       } catch (err) {
         console.warn('Mongo fetch users note:', err.message);
       }
@@ -713,19 +714,29 @@ app.get('/api/users', async (req, res) => {
 
     const activeMap = new Map(ACTIVE_USERS.map((u) => [String(u.uid), u]));
     mongoUsers.forEach((mu) => {
-      if (!activeMap.has(String(mu.uid))) {
+      const uObj = mu.toObject();
+      const existing = activeMap.get(String(mu.uid));
+      if (!existing) {
         activeMap.set(String(mu.uid), {
           id: mu._id?.toString() || ('user_' + mu.uid),
-          ...mu.toObject(),
+          ...uObj,
+        });
+      } else {
+        // Merge mongo fields if present
+        activeMap.set(String(mu.uid), {
+          ...existing,
+          ...uObj,
+          id: existing.id || mu._id?.toString() || ('user_' + mu.uid),
         });
       }
     });
 
     const safeUsers = Array.from(activeMap.values()).map((u) => {
-      const { password, withdrawalPassword, ...safe } = u;
       return {
-        ...safe,
-        id: safe.id || ('user_' + safe.uid),
+        ...u,
+        id: u.id || ('user_' + u.uid),
+        totalDeposit: typeof u.totalDeposit === 'number' ? u.totalDeposit : (u.balance > 0 ? u.balance : 0),
+        totalWithdrawal: typeof u.totalWithdrawal === 'number' ? u.totalWithdrawal : 0,
       };
     });
 
@@ -772,10 +783,9 @@ app.post('/api/users/sync', (req, res) => {
     }
 
     const safeUsers = ACTIVE_USERS.map((u) => {
-      const { password, withdrawalPassword, ...safe } = u;
       return {
-        ...safe,
-        id: safe.id || ('user_' + safe.uid),
+        ...u,
+        id: u.id || ('user_' + u.uid),
       };
     });
 
@@ -783,6 +793,80 @@ app.post('/api/users/sync', (req, res) => {
   } catch (err) {
     console.error('User sync error:', err.message);
     return res.status(500).json({ success: false, message: 'Sync failed' });
+  }
+});
+
+/**
+ * POST /api/users/update
+ * Update user fields (workPermission, balance, status, wallet, VIP) in persistent database
+ */
+app.post('/api/users/update', async (req, res) => {
+  try {
+    const { uid, id, updates } = req.body;
+    if (!uid && !id) {
+      return res.status(400).json({ success: false, message: 'UID or ID is required.' });
+    }
+
+    const targetIdx = ACTIVE_USERS.findIndex(
+      (u) => (uid && String(u.uid) === String(uid)) || (id && u.id === id)
+    );
+
+    if (targetIdx >= 0) {
+      ACTIVE_USERS[targetIdx] = {
+        ...ACTIVE_USERS[targetIdx],
+        ...updates,
+      };
+      savePersistentUsers();
+    }
+
+    // Also persist to MongoDB Atlas if connected
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const query = uid ? { uid: String(uid) } : { _id: id };
+        await User.updateOne(query, { $set: updates });
+      } catch (dbErr) {
+        console.warn('MongoDB user update notice:', dbErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      user: targetIdx >= 0 ? ACTIVE_USERS[targetIdx] : null,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to update user' });
+  }
+});
+
+/**
+ * GET /api/invites
+ * Returns all active system and user referral invite codes
+ */
+app.get('/api/invites', (req, res) => {
+  try {
+    const SYSTEM_CODES = [
+      { id: 'inv_sys_1', code: 'SYS888', type: 'system', createdBy: 'admin', creatorRole: 'super_admin', usageCount: 14, maxUses: null, status: 'active', createdAt: '2026-01-01 00:00:00' },
+      { id: 'inv_sys_2', code: 'SYS100', type: 'system', createdBy: 'admin', creatorRole: 'super_admin', usageCount: 8, maxUses: null, status: 'active', createdAt: '2026-01-01 00:00:00' },
+      { id: 'inv_sys_3', code: 'TRADEVIP', type: 'system', createdBy: 'admin', creatorRole: 'super_admin', usageCount: 5, maxUses: null, status: 'active', createdAt: '2026-01-01 00:00:00' },
+      { id: 'inv_sys_4', code: 'ALPHA99', type: 'system', createdBy: 'admin', creatorRole: 'super_admin', usageCount: 12, maxUses: null, status: 'active', createdAt: '2026-01-01 00:00:00' },
+      { id: 'inv_sys_5', code: 'VELORA888', type: 'system', createdBy: 'admin', creatorRole: 'super_admin', usageCount: 3, maxUses: null, status: 'active', createdAt: '2026-02-18 18:00:00' },
+    ];
+
+    const userCodes = ACTIVE_USERS.map((u) => ({
+      id: 'inv_user_' + u.uid,
+      code: u.inviteCode || u.uid,
+      type: 'user',
+      createdBy: `${u.uid} (${u.username})`,
+      creatorRole: 'user',
+      usageCount: ACTIVE_USERS.filter((other) => other.referredBy === (u.inviteCode || u.uid) || other.referredBy === u.uid).length,
+      maxUses: null,
+      status: 'active',
+      createdAt: u.createdAt || '2026-05-01 10:00:00',
+    }));
+
+    return res.json({ success: true, invites: [...SYSTEM_CODES, ...userCodes] });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch invites' });
   }
 });
 
