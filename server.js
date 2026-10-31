@@ -177,11 +177,18 @@ export const User = mongoose.models.User || mongoose.model('User', userSchema);
 // Initial active member pool for immediate referral verification and Atlas seeding
 const SEEDED_MEMBERS = [
   { uid: '925886', username: 'Hanif8989', password: 'password123', inviteCode: '925886', referredBy: 'SYS888', balance: 479.31, vipLevel: 1, status: 'active' },
-  { uid: '418290', username: 'Elena_Crypto', password: 'password123', inviteCode: '418290', referredBy: '925886', balance: 950.0, vipLevel: 3, status: 'active' },
-  { uid: '637184', username: 'Marcus_T', password: 'password123', inviteCode: '637184', referredBy: '925886', balance: 320.0, vipLevel: 1, status: 'active' },
-  { uid: '529104', username: 'Lucas_Defi', password: 'password123', inviteCode: '529104', referredBy: '418290', balance: 640.0, vipLevel: 2, status: 'active' },
-  { uid: '738192', username: 'Amina_K', password: 'password123', inviteCode: '738192', referredBy: '637184', balance: 180.0, vipLevel: 1, status: 'active' },
-  { uid: '849201', username: 'David_Pro', password: 'password123', inviteCode: '849201', referredBy: '529104', balance: 250.0, vipLevel: 1, status: 'active' },
+  // Level 1: Directly referred by Hanif8989 (925886)
+  { uid: '771101', username: 'Karim_88', password: 'password123', inviteCode: '771101', referredBy: '925886', balance: 150.0, totalDeposit: 250.0, totalWithdrawal: 100.0, createdAt: '2026-05-12 10:00:00', vipLevel: 0, status: 'active' },
+  { uid: '771102', username: 'Rafiq_21', password: 'password123', inviteCode: '771102', referredBy: '925886', balance: 300.0, totalDeposit: 500.0, totalWithdrawal: 200.0, createdAt: '2026-05-20 11:30:00', vipLevel: 0, status: 'active' },
+  { uid: '771105', username: 'Sumon_77', password: 'password123', inviteCode: '771105', referredBy: '925886', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, createdAt: '2026-06-02 09:15:00', vipLevel: 0, status: 'active' },
+  // Level 2: Invited by Level 1 members
+  { uid: '771103', username: 'Nasrin_09', password: 'password123', inviteCode: '771103', referredBy: '771101', balance: 80.0, totalDeposit: 120.0, totalWithdrawal: 40.0, createdAt: '2026-05-18 14:00:00', vipLevel: 0, status: 'active' },
+  { uid: '771104', username: 'Jahid_55', password: 'password123', inviteCode: '771104', referredBy: '771101', balance: 150.0, totalDeposit: 300.0, totalWithdrawal: 150.0, createdAt: '2026-05-25 16:45:00', vipLevel: 0, status: 'active' },
+  { uid: '771106', username: 'Mitu_43', password: 'password123', inviteCode: '771106', referredBy: '771102', balance: 80.0, totalDeposit: 80.0, totalWithdrawal: 0.0, createdAt: '2026-06-10 12:10:00', vipLevel: 0, status: 'active' },
+  // Level 3: Invited by Level 2 members
+  { uid: '771107', username: 'Rakib_16', password: 'password123', inviteCode: '771107', referredBy: '771103', balance: 40.0, totalDeposit: 60.0, totalWithdrawal: 20.0, createdAt: '2026-06-05 13:20:00', vipLevel: 0, status: 'active' },
+  { uid: '771108', username: 'Shanta_30', password: 'password123', inviteCode: '771108', referredBy: '771104', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, createdAt: '2026-06-15 15:30:00', vipLevel: 0, status: 'active' },
+  // Additional system users
   { uid: '819203', username: 'VIP_Trader25', password: 'password123', inviteCode: '819203', referredBy: 'SYS888', balance: 550.0, vipLevel: 2, status: 'active' },
   { uid: '772109', username: 'Newbie_VIP0', password: 'password123', inviteCode: '772109', referredBy: 'SYS100', balance: 0.0, vipLevel: 0, status: 'active' },
   { uid: '381942', username: 'Cycle2_Trader', password: 'password123', inviteCode: '381942', referredBy: 'SYS888', balance: 35.0, vipLevel: 1, status: 'active' },

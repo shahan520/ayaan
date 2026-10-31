@@ -210,9 +210,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     try {
       const parsed = JSON.parse(saved) as User[];
-      const existingIds = new Set(parsed.map((u) => u.id));
+      const legacyIds = new Set(['user_2', 'user_3', 'user_l2_1', 'user_l2_2', 'user_l3_1']);
+      const filteredParsed = parsed.filter((u) => !legacyIds.has(u.id));
+      const existingIds = new Set(filteredParsed.map((u) => u.id));
       const missingInitial = INITIAL_USERS.filter((u) => !existingIds.has(u.id));
-      const combined = [...parsed, ...missingInitial];
+      const combined = [...filteredParsed, ...missingInitial];
       return combined.map((u) => {
         const isNewDay = u.lastActiveDate && u.lastActiveDate !== today;
         return {

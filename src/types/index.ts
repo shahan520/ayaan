@@ -57,6 +57,8 @@ export interface User {
   status: 'active' | 'frozen';
   wallet: UserWallet | null;
   avatarUrl?: string;
+  totalDeposit?: number;
+  totalWithdrawal?: number;
   createdAt: string;
   todayOrdersCount: number;
   todayCommission: number;
