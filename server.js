@@ -23,97 +23,83 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
-const MONGODB_URI = process.env.MONGODB_URI || '';
+const MONGODB_URI =
+  process.env.MONGODB_URI ||
+  'mongodb+srv://shahanislam935_db_user:ciKbafwUqfbSmt7G@cluster0.pwkfalj.mongodb.net/myFirstDatabase?retryWrites=true&w=majority';
 
-// AI Studio: Disable mongoose buffering so requests fail fast when DB is offline
-mongoose.set('bufferCommands', false);
-
-// Robust CORS configuration supporting Vercel deployments, custom origins, and credentials
-const corsOptions = {
-  origin: (origin, callback) => {
-    callback(null, true);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'x-admin-token',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'Access-Control-Request-Method',
-    'Access-Control-Request-Headers',
-  ],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 86400,
-};
-
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
-
-// Explicit CORS headers safety middleware
+// Explicit CORS Middleware with Origin Reflection, Full Headers & 204 Preflight Handling
 app.use((req, res, next) => {
-  const origin = req.headers.origin || '*';
-  res.setHeader('Access-Control-Allow-Origin', origin);
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader(
+    'Access-Control-Allow-Methods',
+    'GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD'
+  );
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, x-admin-token, X-Requested-With, Accept, Origin, Access-Control-Request-Method, Access-Control-Request-Headers'
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-token, Access-Control-Request-Method, Access-Control-Request-Headers'
+  );
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    'Content-Length, Content-Range, X-Content-Range, Authorization, x-admin-token'
   );
 
+  // Return status 204 on preflight OPTIONS requests immediately
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
   next();
 });
 
+// Fallback cors package handler
+app.use(
+  cors({
+    origin: (origin, callback) => callback(null, true),
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'],
+    allowedHeaders: [
+      'Origin',
+      'X-Requested-With',
+      'Content-Type',
+      'Accept',
+      'Authorization',
+      'x-admin-token',
+      'Access-Control-Request-Method',
+      'Access-Control-Request-Headers',
+    ],
+    optionsSuccessStatus: 204,
+  })
+);
+app.options('*', (req, res) => res.status(204).end());
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Vercel serverless route normalizer: Ensure routes work with or without /api prefix
-app.use((req, res, next) => {
-  if (
-    !req.url.startsWith('/api') &&
-    (req.url.startsWith('/auth') ||
-      req.url.startsWith('/users') ||
-      req.url.startsWith('/invites') ||
-      req.url.startsWith('/tasks') ||
-      req.url.startsWith('/combos') ||
-      req.url.startsWith('/withdrawals') ||
-      req.url.startsWith('/admin') ||
-      req.url.startsWith('/user/avatar') ||
-      req.url === '/health')
-  ) {
-    req.url = '/api' + req.url;
-  }
-  next();
-});
-
-// In-memory fallback registries
-let ACTIVE_TASK_SIMULATIONS = [];
-let ACTIVE_COMBO_RULES = [];
-let ACTIVE_WITHDRAWAL_RECORDS = [];
 
 // ==============================================================================
 // 2. MONGODB ATLAS CONNECTION (MONGOOSE)
 // ==============================================================================
 const connectMongoDB = async () => {
-  if (!MONGODB_URI) {
-    console.log('Notice: No MONGODB_URI provided in environment. Operating in standalone persistent storage mode.');
-    return;
-  }
   try {
     const conn = await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 2500,
+      serverSelectionTimeoutMS: 5000, // Timeout after 5s if IP is not yet whitelisted
     });
+    // Requirement 3: Console message on successful connection
     console.log('MongoDB Connected Successfully');
     console.log(`Database Host: ${conn.connection.host}`);
     console.log(`Database Name: ${conn.connection.name}`);
     await seedInitialMembers();
   } catch (error) {
-    console.warn('MongoDB not connected — operating with persistent in-memory/disk storage:', error.message);
+    console.error('MongoDB Connection Error:', error.message);
+    console.log('----------------------------------------------------------------------');
+    console.log('NOTICE FOR MONGODB ATLAS IP WHITELIST:');
+    console.log('If you see a connection error, go to MongoDB Atlas Dashboard ->');
+    console.log('Network Access -> Add IP Address -> Select "Allow Access from Anywhere" (0.0.0.0/0).');
+    console.log('----------------------------------------------------------------------');
   }
 };
 
@@ -1026,26 +1012,18 @@ app.post('/api/user/avatar', async (req, res) => {
       return res.status(400).json({ success: false, message: 'User ID and avatar URL are required.' });
     }
 
-    const targetIdx = ACTIVE_USERS.findIndex(
-      (u) => String(u.uid) === String(userId) || u.id === String(userId)
-    );
-    if (targetIdx >= 0) {
-      ACTIVE_USERS[targetIdx].avatarUrl = avatarUrl;
-      savePersistentUsers();
+    const user = await User.findOne({ $or: [{ _id: userId }, { uid: userId }] });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await User.updateOne({ $or: [{ _id: userId }, { uid: userId }] }, { $set: { avatarUrl } });
-      } catch (dbErr) {
-        console.warn('DB avatar update note:', dbErr.message);
-      }
-    }
+    user.avatarUrl = avatarUrl;
+    await user.save();
 
     return res.json({
       success: true,
       message: 'Profile photo updated successfully!',
-      avatarUrl,
+      avatarUrl: user.avatarUrl,
     });
   } catch (error) {
     console.error('Avatar update error:', error);
@@ -1055,7 +1033,7 @@ app.post('/api/user/avatar', async (req, res) => {
 
 /**
  * POST /api/tasks/simulate
- * Simulates task completion, handles cycle progression, and saves record to disk/MongoDB
+ * Simulates task completion, handles cycle progression, and saves record to MongoDB
  * Features:
  * - Cycle 2 (starting 30-40 USDT) progression strictly targeting 320-350 USDT final balance
  * - Special combo triggers and commission multipliers
@@ -1064,15 +1042,12 @@ app.post('/api/tasks/simulate', async (req, res) => {
   try {
     const { userId, taskIndex, startBalance } = req.body;
 
-    const targetIdx = ACTIVE_USERS.findIndex(
-      (u) => String(u.uid) === String(userId) || u.id === String(userId)
-    );
-    if (targetIdx < 0) {
+    const user = await User.findOne({ $or: [{ _id: userId }, { uid: userId }] });
+    if (!user) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    const user = ACTIVE_USERS[targetIdx];
-    const currentTask = taskIndex || (user.currentCycleTasks || 0) + 1;
+    const currentTask = taskIndex || user.currentCycleTasks + 1;
     const cycle = user.cycleNumber || 1;
     const initialCycleBal = startBalance || user.cycleStartBalance || 30;
 
@@ -1103,12 +1078,11 @@ app.post('/api/tasks/simulate', async (req, res) => {
     user.balance = balanceAfter;
     user.currentCycleTasks = currentTask;
     user.completedTasksCount = (user.completedTasksCount || 0) + 1;
-    ACTIVE_USERS[targetIdx] = user;
-    savePersistentUsers();
+    await user.save();
 
-    // Save simulation record in memory and MongoDB if available
+    // Save simulation record in MongoDB
     const orderNum = 'ORD' + Date.now().toString().slice(-8) + Math.floor(100 + Math.random() * 900);
-    const simulationRecord = {
+    const simulationRecord = new TaskSimulation({
       userId: user.uid,
       username: user.username,
       orderNumber: orderNum,
@@ -1122,27 +1096,9 @@ app.post('/api/tasks/simulate', async (req, res) => {
       status: 'completed',
       userBalanceBefore: balanceBefore,
       userBalanceAfter: balanceAfter,
-      createdAt: new Date(),
-    };
-    ACTIVE_TASK_SIMULATIONS.push(simulationRecord);
+    });
 
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await User.updateOne(
-          { uid: user.uid },
-          {
-            $set: {
-              balance: balanceAfter,
-              currentCycleTasks: currentTask,
-              completedTasksCount: user.completedTasksCount,
-            },
-          }
-        );
-        await new TaskSimulation(simulationRecord).save();
-      } catch (dbErr) {
-        console.warn('DB task simulation record note:', dbErr.message);
-      }
-    }
+    await simulationRecord.save();
 
     return res.json({
       success: true,
@@ -1165,42 +1121,29 @@ app.post('/api/tasks/simulate', async (req, res) => {
  */
 app.get('/api/combos/rules', async (req, res) => {
   try {
-    if (mongoose.connection.readyState === 1) {
-      const rules = await VipComboRule.find().sort({ stepNumber: 1 });
-      if (rules && rules.length > 0) {
-        return res.json({ success: true, rules });
-      }
-    }
-    return res.json({ success: true, rules: ACTIVE_COMBO_RULES });
+    const rules = await VipComboRule.find().sort({ stepNumber: 1 });
+    return res.json({ success: true, rules });
   } catch (error) {
-    return res.json({ success: true, rules: ACTIVE_COMBO_RULES });
+    return res.status(500).json({ success: false, message: 'Error fetching combo rules.' });
   }
 });
 
 app.post('/api/combos/rules', async (req, res) => {
   try {
     const { targetUserUid, customCombos } = req.body;
+    // Save custom combo configuration
     if (targetUserUid && Array.isArray(customCombos)) {
-      ACTIVE_COMBO_RULES = ACTIVE_COMBO_RULES.filter((r) => r.targetUserUid !== targetUserUid);
-      const newRules = customCombos.map((c) => ({
+      await VipComboRule.deleteMany({ targetUserUid });
+      const docs = customCombos.map((c) => ({
         targetUserUid,
         stepNumber: c.stepNumber,
         requiredPercent: c.requiredPercent,
         commissionPercent: c.commissionPercent,
         isCustom: true,
       }));
-      ACTIVE_COMBO_RULES.push(...newRules);
-
-      if (mongoose.connection.readyState === 1) {
-        try {
-          await VipComboRule.deleteMany({ targetUserUid });
-          await VipComboRule.insertMany(newRules);
-        } catch (dbErr) {
-          console.warn('DB combo rules note:', dbErr.message);
-        }
-      }
+      await VipComboRule.insertMany(docs);
     }
-    return res.json({ success: true, message: 'Custom combo rules saved successfully.' });
+    return res.json({ success: true, message: 'Custom combo rules saved successfully in MongoDB.' });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error saving combo rules.' });
   }
@@ -1216,13 +1159,10 @@ app.post('/api/withdrawals/request', async (req, res) => {
   try {
     const { userId, amount, withdrawalPassword } = req.body;
 
-    const targetIdx = ACTIVE_USERS.findIndex(
-      (u) => String(u.uid) === String(userId) || u.id === String(userId)
-    );
-    if (targetIdx < 0) {
+    const user = await User.findOne({ $or: [{ _id: userId }, { uid: userId }] });
+    if (!user) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
-    const user = ACTIVE_USERS[targetIdx];
 
     // Check withdrawal password
     if (!user.withdrawalPassword) {
@@ -1268,13 +1208,10 @@ app.post('/api/withdrawals/request', async (req, res) => {
 
     // Deduct user balance
     user.balance = +(user.balance - withdrawAmt).toFixed(4);
-    user.totalWithdrawal = (user.totalWithdrawal || 0) + withdrawAmt;
-    ACTIVE_USERS[targetIdx] = user;
-    savePersistentUsers();
+    await user.save();
 
-    const recordId = 'tx_w_' + Date.now();
-    const record = {
-      id: recordId,
+    // Save record to MongoDB
+    const record = new WithdrawalTaxRecord({
       userId: user.uid,
       username: user.username,
       amount: withdrawAmt,
@@ -1286,18 +1223,9 @@ app.post('/api/withdrawals/request', async (req, res) => {
       walletAddress: user.wallet.walletAddress,
       protocol: user.wallet.protocol || 'TRC-20',
       status: 'pending',
-      createdAt: new Date(),
-    };
-    ACTIVE_WITHDRAWAL_RECORDS.push(record);
+    });
 
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await User.updateOne({ uid: user.uid }, { $set: { balance: user.balance, totalWithdrawal: user.totalWithdrawal } });
-        await new WithdrawalTaxRecord(record).save();
-      } catch (dbErr) {
-        console.warn('DB withdrawal record note:', dbErr.message);
-      }
-    }
+    await record.save();
 
     return res.json({
       success: true,
@@ -1305,7 +1233,7 @@ app.post('/api/withdrawals/request', async (req, res) => {
         ? 'Withdrawal submitted with mandatory 25% high-balance tax deducted.'
         : 'Withdrawal submitted successfully.',
       record: {
-        id: recordId,
+        id: record._id,
         amount: withdrawAmt,
         taxPercent,
         taxAmount,
@@ -1386,23 +1314,6 @@ app.get('/api/admin/verify', verifyAdminAuth, (req, res) => {
   });
 });
 
-// CRITICAL route-level fallback: Express error middleware
-// to handle database queries failing gracefully when MongoDB is offline:
-app.use((err, req, res, next) => {
-  if (
-    err.name === 'MongooseError' ||
-    err.name === 'MongoNetworkError' ||
-    (err.message && err.message.includes('buffering timed out'))
-  ) {
-    console.warn('[AI Studio] Database offline — returning mock empty/safe response');
-    if (req.method === 'GET') {
-      return res.json(req.path.endsWith('s') || req.path.endsWith('s/') ? [] : {});
-    }
-    return res.status(503).json({ error: 'Service temporarily unavailable (database offline)' });
-  }
-  next(err);
-});
-
 // ==============================================================================
 // 5. DEV & PRODUCTION ASSET SERVING
 // ==============================================================================
@@ -1452,12 +1363,6 @@ const startServer = async () => {
   });
 };
 
-// Start the standalone HTTP server unless running in Vercel serverless environment
-if (!process.env.VERCEL) {
-  startServer().catch((err) => {
-    console.error('Server startup error:', err);
-  });
-}
-
-export default app;
-export { app };
+startServer().catch((err) => {
+  console.error('Server startup error:', err);
+});

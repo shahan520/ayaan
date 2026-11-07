@@ -13,7 +13,7 @@ import { generateTieredMatchedProducts, generateComboOrderProducts } from '../da
 import { getPlatformBalanceValidationMessage } from '../utils/balanceValidation';
 import { generateHybridComboSchedule } from '../utils/comboGenerator';
 import { LanguageCode, translations } from '../utils/i18n';
-import { getApiUrl } from '../utils/apiConfig';
+import { getApiUrl, renderKeepAlive } from '../utils/apiConfig';
 import {
   AdminPermission,
   AdminUser,
@@ -447,6 +447,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(STORAGE_KEYS.CURRENT_ADMIN_ID, currentAdminId);
   }, [currentAdminId]);
 
+  // Start Render background warm-up / heartbeat ping
+  useEffect(() => {
+    renderKeepAlive.start();
+    return () => renderKeepAlive.stop();
+  }, []);
+
   // Helper to persist state modifications immediately to the centralized backend database
   const syncUserUpdateToBackend = (userUid: string, updates: Partial<User>) => {
     try {
@@ -463,12 +469,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const fetchRemoteData = async () => {
       try {
         const [usersRes, invitesRes] = await Promise.all([
-          fetch(getApiUrl('/api/users'))
-            .then(async (r) => (r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null))
-            .catch(() => null),
-          fetch(getApiUrl('/api/invites'))
-            .then(async (r) => (r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null))
-            .catch(() => null),
+          fetch(getApiUrl('/api/users')).then((r) => r.json()).catch(() => null),
+          fetch(getApiUrl('/api/invites')).then((r) => r.json()).catch(() => null),
         ]);
 
         if (usersRes && usersRes.success && Array.isArray(usersRes.users) && usersRes.users.length > 0) {
@@ -664,15 +666,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const resp = await fetch(getApiUrl('/api/auth/login'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: trimmed, password }),
       });
-      const contentType = resp.headers.get('content-type') || '';
-      let data: any = null;
-      if (contentType.includes('application/json')) {
-        data = await resp.json();
-      }
-      if (resp.ok && data && data.success && data.user) {
+      const data = await resp.json();
+      if (resp.ok && data.success && data.user) {
         const authedUser: User = {
           ...data.user,
           id: data.user.id || ('user_' + data.user.uid),
@@ -692,7 +690,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return {
           success: false,
           message:
-            (data && data.message) ||
+            data.message ||
             (localUser
               ? 'Incorrect password. Please verify your password and try again.'
               : 'User account not found. Please register first.'),
@@ -713,9 +711,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!cleanUser) {
       return { success: false, message: 'Please enter a username.' };
     }
-    if (cleanUser.length < 3) {
-      return { success: false, message: 'Username must be at least 3 characters.' };
-    }
     if (!password || password.length < 4) {
       return { success: false, message: 'Password must be at least 4 characters.' };
     }
@@ -726,217 +721,110 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // Check if username already exists locally
-    const existsLocally = users.some((u) => u.username.toLowerCase() === cleanUser.toLowerCase());
-    if (existsLocally) {
-      return { success: false, message: 'This username is already taken.' };
-    }
-
-    // 1. Try centralized backend registration endpoint first
-    let serverResponded = false;
-    let data: any = null;
-
+    // Call centralized backend registration endpoint directly on live Render service
     try {
-      const response = await fetch(getApiUrl('/api/auth/register'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          username: cleanUser,
-          password,
-          inviteCode: cleanCode,
-        }),
-      });
+      const registerPayload = {
+        username: cleanUser,
+        password,
+        inviteCode: cleanCode,
+      };
 
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        data = await response.json();
-        serverResponded = true;
-      } else {
-        const text = await response.text();
-        try {
-          data = JSON.parse(text);
-          serverResponded = true;
-        } catch {
-          serverResponded = false;
-        }
+      let response: Response;
+      try {
+        response = await fetch(getApiUrl('/api/auth/register'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(registerPayload),
+        });
+      } catch (firstErr) {
+        // If live Render free service was in cold-start idle sleep, ping it and retry
+        console.warn('Initial register attempt had network hiccup, waking backend and retrying...', firstErr);
+        await renderKeepAlive.ping();
+        await new Promise((r) => setTimeout(r, 1500));
+        response = await fetch(getApiUrl('/api/auth/register'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(registerPayload),
+        });
       }
 
-      if (serverResponded && data) {
-        // If the server explicitly rejected the input (e.g. invalid code or username taken)
-        if (!response.ok || !data.success || !data.user) {
-          return {
-            success: false,
-            message:
-              data.message ||
-              'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
-          };
-        }
+      const data = await response.json();
 
-        const newUser: User = {
-          ...data.user,
-          id: data.user.id || ('user_' + data.user.uid),
-          password,
-          todayOrdersCount: 0,
-          todayCommission: 0,
-          completedTasksCount: 0,
-          currentCycleTasks: 0,
-          cycleNumber: 1,
-          cycleApprovedByAdmin: false,
-          comboOrderStep: data.user.comboOrderStep || 14,
-          workPermission: false,
-          isDemoAccount: false,
-          totalDeposit: 0.0,
-          totalWithdrawal: 0.0,
-        };
-
-        const newUserInviteCode = newUser.inviteCode || newUser.uid;
-        const newCodeObj: InviteCode = {
-          id: 'inv_user_' + newUser.uid,
-          code: newUserInviteCode,
-          type: 'user',
-          createdBy: `${newUser.uid} (${newUser.username})`,
-          creatorRole: 'user',
-          usageCount: 0,
-          maxUses: null,
-          status: 'active',
-          createdAt: newUser.createdAt || new Date().toISOString().replace('T', ' ').substring(0, 19),
-        };
-
-        setInviteCodes((prev) => {
-          const filtered = prev.filter((c) => c.code.toUpperCase() !== newUserInviteCode.toUpperCase());
-          return [newCodeObj, ...filtered];
-        });
-
-        setUsers((prev) => {
-          const filtered = prev.filter((u) => u.uid !== newUser.uid && u.id !== newUser.id);
-          const updated = [newUser, ...filtered];
-          try {
-            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
-          } catch {}
-          return updated;
-        });
-
-        setCurrentUserId(newUser.id);
-
-        try {
-          window.dispatchEvent(new CustomEvent('tradeweb_users_updated', { detail: [newUser, ...users] }));
-        } catch {}
-
+      if (!response.ok || !data.success || !data.user) {
         return {
-          success: true,
-          user: newUser,
+          success: false,
           message:
             data.message ||
-            `Registration successful! Your UID is ${newUser.uid} and your Referral Code is ${newUserInviteCode}.`,
+            'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
         };
       }
-    } catch (netErr) {
-      console.warn('Network call to registration server encountered error:', netErr);
-      serverResponded = false;
-    }
 
-    // 2. Resilient fallback registration:
-    // If backend is unreachable or deployed static-only on Vercel without external API URL,
-    // validate invitation code against known system codes and active local members.
-    const SYSTEM_CODES = ['SYS888', 'SYS100', 'TRADEVIP', 'ALPHA99', 'VELORA888'];
-    const isSystemCode = SYSTEM_CODES.includes(cleanCode);
-    const matchingMember = users.find(
-      (u) =>
-        (u.inviteCode && u.inviteCode.toUpperCase() === cleanCode) ||
-        String(u.uid).toUpperCase() === cleanCode ||
-        u.username.toUpperCase() === cleanCode
-    );
-    const isKnownInviteCode = inviteCodes.some(
-      (c) => c.code.toUpperCase() === cleanCode && c.status === 'active'
-    );
-    const isSixDigitCode = /^\d{6}$/.test(cleanCode);
+      const newUser: User = {
+        ...data.user,
+        id: data.user.id || ('user_' + data.user.uid),
+        password,
+        todayOrdersCount: 0,
+        todayCommission: 0,
+        completedTasksCount: 0,
+        currentCycleTasks: 0,
+        cycleNumber: 1,
+        cycleApprovedByAdmin: false,
+        comboOrderStep: data.user.comboOrderStep || 14,
+        workPermission: false,
+        isDemoAccount: false,
+        totalDeposit: 0.0,
+        totalWithdrawal: 0.0,
+      };
 
-    if (!isSystemCode && !matchingMember && !isKnownInviteCode && !isSixDigitCode) {
+      // Add user's own referral code to inviteCodes list
+      const newUserInviteCode = newUser.inviteCode || newUser.uid;
+      const newCodeObj: InviteCode = {
+        id: 'inv_user_' + newUser.uid,
+        code: newUserInviteCode,
+        type: 'user',
+        createdBy: `${newUser.uid} (${newUser.username})`,
+        creatorRole: 'user',
+        usageCount: 0,
+        maxUses: null,
+        status: 'active',
+        createdAt: newUser.createdAt || new Date().toISOString().replace('T', ' ').substring(0, 19),
+      };
+
+      setInviteCodes((prev) => {
+        const filtered = prev.filter((c) => c.code.toUpperCase() !== newUserInviteCode.toUpperCase());
+        return [newCodeObj, ...filtered];
+      });
+
+      setUsers((prev) => {
+        const filtered = prev.filter((u) => u.uid !== newUser.uid && u.id !== newUser.id);
+        const updated = [newUser, ...filtered];
+        try {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+
+      setCurrentUserId(newUser.id);
+
+      // Trigger cross-tab sync
+      try {
+        window.dispatchEvent(new CustomEvent('tradeweb_users_updated', { detail: [newUser, ...users] }));
+      } catch {}
+
+      return {
+        success: true,
+        user: newUser,
+        message:
+          data.message ||
+          `Registration successful! Your UID is ${newUser.uid} and your Referral Code is ${newUserInviteCode}.`,
+      };
+    } catch (err: any) {
+      console.error('Registration API error:', err);
       return {
         success: false,
-        message:
-          'Invalid Invitation Code. Please enter an active referral code provided by an admin or existing member.',
+        message: 'Network error connecting to registration server. Please try again in a moment.',
       };
     }
-
-    // Generate unique 6-digit numeric UID
-    const existingUids = new Set(users.map((u) => String(u.uid)));
-    let candidateUid = Math.floor(100000 + Math.random() * 900000).toString();
-    while (existingUids.has(candidateUid)) {
-      candidateUid = Math.floor(100000 + Math.random() * 900000).toString();
-    }
-
-    const localNewUser: User = {
-      id: 'user_' + candidateUid,
-      uid: candidateUid,
-      username: cleanUser,
-      password,
-      withdrawalPassword: null,
-      inviteCode: candidateUid,
-      referredBy: matchingMember ? (matchingMember.inviteCode || matchingMember.uid) : cleanCode,
-      balance: 0.0,
-      frozenBalance: 0,
-      vipLevel: 0,
-      status: 'active',
-      avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
-      wallet: null,
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      todayOrdersCount: 0,
-      todayCommission: 0,
-      completedTasksCount: 0,
-      currentCycleTasks: 0,
-      cycleNumber: 1,
-      cycleApprovedByAdmin: false,
-      comboOrderStep: 14,
-      isVipAccount: false,
-      isLockedAccount: false,
-      customCombos: [],
-      workPermission: false,
-      isDemoAccount: false,
-      totalDeposit: 0.0,
-      totalWithdrawal: 0.0,
-    };
-
-    const newCodeObj: InviteCode = {
-      id: 'inv_user_' + candidateUid,
-      code: candidateUid,
-      type: 'user',
-      createdBy: `${candidateUid} (${cleanUser})`,
-      creatorRole: 'user',
-      usageCount: 0,
-      maxUses: null,
-      status: 'active',
-      createdAt: localNewUser.createdAt,
-    };
-
-    setInviteCodes((prev) => [newCodeObj, ...prev.filter((c) => c.code.toUpperCase() !== candidateUid)]);
-    setUsers((prev) => {
-      const updated = [localNewUser, ...prev.filter((u) => u.uid !== candidateUid)];
-      try {
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
-
-    setCurrentUserId(localNewUser.id);
-
-    // Sync to backend asynchronously if and when backend is available
-    try {
-      fetch(getApiUrl('/api/users/sync'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: localNewUser }),
-      }).catch(() => {});
-    } catch {}
-
-    return {
-      success: true,
-      user: localNewUser,
-      message: `Registration successful! Your UID is ${candidateUid} and your Referral Code is ${candidateUid}.`,
-    };
   };
 
   const logoutUser = () => {
@@ -953,6 +841,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Withdrawal password must be at least 4 digits.' };
     }
 
+    syncUserUpdateToBackend(currentUser.uid, { withdrawalPassword: password });
     setUsers((prev) =>
       prev.map((u) => (u.id === currentUser.id ? { ...u, withdrawalPassword: password } : u))
     );
@@ -979,6 +868,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       boundAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
     };
 
+    syncUserUpdateToBackend(currentUser.uid, { wallet: boundWallet });
     setUsers((prev) =>
       prev.map((u) => (u.id === currentUser.id ? { ...u, wallet: boundWallet } : u))
     );
