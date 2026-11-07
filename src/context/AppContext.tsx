@@ -464,13 +464,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
   };
 
-  // Real-time synchronization of users & invite codes across devices, tabs, and backend persistent store
+  // Real-time synchronization of users, deposits & invite codes across devices, tabs, and backend persistent store
   useEffect(() => {
     const fetchRemoteData = async () => {
       try {
-        const [usersRes, invitesRes] = await Promise.all([
+        const [usersRes, invitesRes, depositsRes] = await Promise.all([
           fetch(getApiUrl('/api/users')).then((r) => r.json()).catch(() => null),
           fetch(getApiUrl('/api/invites')).then((r) => r.json()).catch(() => null),
+          fetch(getApiUrl('/api/deposits')).then((r) => r.json()).catch(() => null),
         ]);
 
         if (usersRes && usersRes.success && Array.isArray(usersRes.users) && usersRes.users.length > 0) {
@@ -539,6 +540,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
         }
 
+        if (depositsRes && depositsRes.success && Array.isArray(depositsRes.deposits)) {
+          setDeposits((prev) => {
+            const prevMap = new Map(prev.map((d) => [d.id, d]));
+            let hasChanges = false;
+
+            depositsRes.deposits.forEach((remDep: DepositRecord) => {
+              const existing = prevMap.get(remDep.id);
+              if (!existing) {
+                prevMap.set(remDep.id, remDep);
+                hasChanges = true;
+              } else if (
+                existing.status !== remDep.status ||
+                existing.reviewedBy !== remDep.reviewedBy ||
+                existing.rejectionReason !== remDep.rejectionReason ||
+                existing.amount !== remDep.amount
+              ) {
+                prevMap.set(remDep.id, { ...existing, ...remDep });
+                hasChanges = true;
+              }
+            });
+
+            if (hasChanges) {
+              const sorted = Array.from(prevMap.values()).sort((a, b) => {
+                return (b.createdAt || '').localeCompare(a.createdAt || '');
+              });
+              try {
+                localStorage.setItem(STORAGE_KEYS.DEPOSITS, JSON.stringify(sorted));
+              } catch {}
+              return sorted;
+            }
+            return prev;
+          });
+        }
+
         if (invitesRes && invitesRes.success && Array.isArray(invitesRes.invites) && invitesRes.invites.length > 0) {
           setInviteCodes((prev) => {
             const existingCodes = new Set(prev.map((c) => c.code.toUpperCase()));
@@ -563,7 +598,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     fetchRemoteData();
-    const interval = setInterval(fetchRemoteData, 1800); // 1.8s real-time poll
+    // Background polling every 3 seconds for instant real-time UI balance and deposit sync
+    const interval = setInterval(fetchRemoteData, 3000);
 
     // Cross-tab instant synchronization via storage event
     const handleStorage = (e: StorageEvent) => {
@@ -575,9 +611,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         } catch {}
       }
+      if (e.key === STORAGE_KEYS.DEPOSITS && e.newValue) {
+        try {
+          const remoteDeposits = JSON.parse(e.newValue);
+          if (Array.isArray(remoteDeposits) && remoteDeposits.length > 0) {
+            setDeposits(remoteDeposits);
+          }
+        } catch {}
+      }
     };
 
-    // In-tab instant custom event
+    // In-tab instant custom events
     const handleTabSync = (e: Event) => {
       const customEvt = e as CustomEvent<User[]>;
       if (customEvt.detail && Array.isArray(customEvt.detail)) {
@@ -585,17 +629,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
 
+    const handleImmediateRefresh = () => {
+      fetchRemoteData();
+    };
+
     window.addEventListener('storage', handleStorage);
     window.addEventListener('tradeweb_users_updated', handleTabSync);
+    window.addEventListener('tradeweb_balance_updated', handleImmediateRefresh);
+    window.addEventListener('tradeweb_deposits_updated', handleImmediateRefresh);
 
     return () => {
       clearInterval(interval);
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener('tradeweb_users_updated', handleTabSync);
+      window.removeEventListener('tradeweb_balance_updated', handleImmediateRefresh);
+      window.removeEventListener('tradeweb_deposits_updated', handleImmediateRefresh);
     };
   }, []);
 
-  const currentUser = users.find((u) => u.id === currentUserId) || null;
+  const currentUser = users.find(
+    (u) =>
+      u.id === currentUserId ||
+      (currentUserId && String(u.uid) === String(currentUserId)) ||
+      (currentUserId && u.username.toLowerCase() === currentUserId.toLowerCase())
+  ) || null;
   const currentAdmin = admins.find((a) => a.id === currentAdminId) || admins[0];
 
   // Helper to add audit log
@@ -909,6 +966,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setDeposits((prev) => [newDeposit, ...prev]);
+
+    // Send to centralized persistent backend store immediately
+    fetch(getApiUrl('/api/deposits/submit'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deposit: newDeposit }),
+    }).catch((err) => console.warn('Backend deposit submission sync notice:', err));
+
+    try {
+      window.dispatchEvent(new CustomEvent('tradeweb_deposits_updated'));
+    } catch {}
+
     return {
       success: true,
       message: 'Deposit voucher submitted! Please wait for admin verification (1-2 minutes).',
@@ -1885,46 +1954,115 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!dep) return { success: false, message: 'Deposit record not found.' };
     if (dep.status !== 'pending') return { success: false, message: 'Deposit has already been processed.' };
 
-    // Update deposit status
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const reviewer = currentAdmin.username;
+    const depositAmt = Number(dep.amount);
+
+    // 1. Immediately update deposit status in React state
     setDeposits((prev) =>
       prev.map((d) =>
         d.id === depositId
           ? {
               ...d,
               status: 'approved',
-              reviewedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-              reviewedBy: currentAdmin.username,
+              reviewedAt: nowStr,
+              reviewedBy: reviewer,
             }
           : d
       )
     );
 
-    // Credit user balance and update VIP level if needed
+    // 2. Identify target user and compute new balance & totalDeposit
+    const norm = (s?: string | null) => (s ? String(s).trim().toLowerCase() : '');
+    const depUserUid = String(dep.userUid || '');
+    const depUserId = String(dep.userId || '');
+    const depUsername = norm(dep.username);
+
+    const targetUser = users.find((u) => {
+      return (
+        (depUserUid && String(u.uid) === depUserUid) ||
+        (depUserId && (u.id === depUserId || String(u.uid) === depUserId)) ||
+        (depUsername && norm(u.username) === depUsername)
+      );
+    });
+
+    const targetBal = targetUser ? (targetUser.balance || 0) : 0;
+    const targetTotalDep = targetUser ? (targetUser.totalDeposit || 0) : 0;
+    const currentVip = targetUser ? (targetUser.vipLevel || 0) : 0;
+
+    const newBal = Number((targetBal + depositAmt).toFixed(4));
+    const newTotalDep = Number((targetTotalDep + depositAmt).toFixed(4));
+    let newVip = currentVip;
+    if (newBal >= 899) newVip = Math.max(newVip, 3);
+    else if (newBal >= 499) newVip = Math.max(newVip, 2);
+    else if (newBal >= 20) newVip = Math.max(newVip, 1);
+
     setUsers((prev) =>
       prev.map((u) => {
-        if (u.id === dep.userId) {
-          const newBal = Number((u.balance + dep.amount).toFixed(4));
-          let vip = u.vipLevel;
-          if (newBal >= 899) vip = Math.max(vip, 3);
-          else if (newBal >= 499) vip = Math.max(vip, 2);
-          else if (newBal >= 20) vip = Math.max(vip, 1);
+        const matches =
+          (depUserUid && String(u.uid) === depUserUid) ||
+          (depUserId && (u.id === depUserId || String(u.uid) === depUserId)) ||
+          (depUsername && norm(u.username) === depUsername);
+
+        if (matches) {
           return {
             ...u,
             balance: newBal,
-            vipLevel: vip,
+            totalDeposit: newTotalDep,
+            vipLevel: newVip,
           };
         }
         return u;
       })
     );
 
+    // 3. Persist to backend server immediately so polling doesn't overwrite it
+    const effectiveUid = dep.userUid || targetUser?.uid;
+    const effectiveUserId = dep.userId || targetUser?.id;
+    const effectiveUsername = dep.username || targetUser?.username;
+
+    fetch(getApiUrl('/api/deposits/approve'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        depositId: dep.id,
+        amount: depositAmt,
+        userUid: effectiveUid,
+        userId: effectiveUserId,
+        username: effectiveUsername,
+        adminUsername: reviewer,
+      }),
+    }).catch((err) => console.warn('Backend deposit approve sync error:', err));
+
+    if (effectiveUid) {
+      syncUserUpdateToBackend(effectiveUid, {
+        balance: newBal,
+        totalDeposit: newTotalDep,
+        vipLevel: newVip,
+      });
+    }
+
+    // 4. Dispatch instant UI events across windows/tabs
+    try {
+      window.dispatchEvent(
+        new CustomEvent('tradeweb_balance_updated', {
+          detail: { userUid: dep.userUid, newBalance: newBal, amount: depositAmt },
+        })
+      );
+      window.dispatchEvent(new CustomEvent('tradeweb_users_updated'));
+      window.dispatchEvent(new CustomEvent('tradeweb_deposits_updated'));
+    } catch {}
+
     logAuditAction(
       'APPROVE_DEPOSIT',
-      `Approved deposit of ${dep.amount} USDT for user ${dep.username} (UID: ${dep.userUid}). TXID: ${dep.txid.substring(0, 16)}...`,
+      `Approved deposit of ${depositAmt} USDT for user ${dep.username} (UID: ${dep.userUid}). TXID: ${dep.txid.substring(0, 16)}... User balance updated to ${newBal} USDT`,
       dep.userUid
     );
 
-    return { success: true, message: `Deposit of ${dep.amount} USDT approved and credited!` };
+    return {
+      success: true,
+      message: `Deposit of ${depositAmt} USDT approved! ${dep.username}'s balance is now ${newBal.toFixed(2)} USDT.`,
+    };
   };
 
   const rejectDeposit = (depositId: string, reason = 'Invalid or unverified transaction hash') => {
@@ -1936,6 +2074,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!dep) return { success: false, message: 'Deposit record not found.' };
     if (dep.status !== 'pending') return { success: false, message: 'Deposit has already been processed.' };
 
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const reviewer = currentAdmin.username;
+
     setDeposits((prev) =>
       prev.map((d) =>
         d.id === depositId
@@ -1943,12 +2084,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               ...d,
               status: 'rejected',
               rejectionReason: reason,
-              reviewedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-              reviewedBy: currentAdmin.username,
+              reviewedAt: nowStr,
+              reviewedBy: reviewer,
             }
           : d
       )
     );
+
+    fetch(getApiUrl('/api/deposits/reject'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        depositId: dep.id,
+        reason,
+        adminUsername: reviewer,
+      }),
+    }).catch((err) => console.warn('Backend deposit reject sync error:', err));
+
+    try {
+      window.dispatchEvent(new CustomEvent('tradeweb_deposits_updated'));
+    } catch {}
 
     logAuditAction(
       'REJECT_DEPOSIT',
@@ -2005,13 +2160,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!wd) return { success: false, message: 'Withdrawal record not found.' };
     if (wd.status !== 'pending') return { success: false, message: 'Withdrawal already processed.' };
 
-    // Refund funds back to user
+    // Refund funds back to user and sync to backend
     setUsers((prev) =>
       prev.map((u) => {
-        if (u.id === wd.userId) {
+        if (u.id === wd.userId || (wd.userUid && String(u.uid) === String(wd.userUid))) {
+          const newBal = Number(((u.balance || 0) + wd.amount).toFixed(4));
+          syncUserUpdateToBackend(u.uid, { balance: newBal });
           return {
             ...u,
-            balance: Number((u.balance + wd.amount).toFixed(4)),
+            balance: newBal,
           };
         }
         return u;
@@ -2031,6 +2188,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : w
       )
     );
+
+    try {
+      window.dispatchEvent(new CustomEvent('tradeweb_balance_updated'));
+      window.dispatchEvent(new CustomEvent('tradeweb_users_updated'));
+    } catch {}
 
     logAuditAction(
       'REJECT_WITHDRAWAL',

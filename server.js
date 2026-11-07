@@ -93,6 +93,7 @@ const connectMongoDB = async () => {
     console.log(`Database Host: ${conn.connection.host}`);
     console.log(`Database Name: ${conn.connection.name}`);
     await seedInitialMembers();
+    await seedInitialDeposits();
   } catch (error) {
     console.error('MongoDB Connection Error:', error.message);
     console.log('----------------------------------------------------------------------');
@@ -316,6 +317,189 @@ const seedInitialMembers = async () => {
   }
 };
 
+// ==============================================================================
+// PERSISTENT DEPOSITS STORE (Disk & Atlas)
+// ==============================================================================
+const SEEDED_DEPOSITS = [
+  {
+    id: 'dep_101',
+    userId: 'user_1',
+    userUid: '925886',
+    username: 'Hanif8989',
+    amount: 100.0,
+    currency: 'USDT',
+    protocol: 'TRC-20',
+    depositAddress: 'TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5',
+    txid: 'f8d3b4e6a1c872990deab5512b9308cc4b1f618a5996611f7c0062bca90823c1',
+    status: 'approved',
+    createdAt: '2026-02-11 10:20:15',
+    reviewedAt: '2026-02-11 10:24:00',
+    reviewedBy: 'sub_finance',
+  },
+  {
+    id: 'dep_102',
+    userId: 'user_1',
+    userUid: '925886',
+    username: 'Hanif8989',
+    amount: 350.0,
+    currency: 'USDT',
+    protocol: 'TRC-20',
+    depositAddress: 'TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5',
+    txid: '2c5e7b899a01fd45a6c0e812d431f0ba679b32e185f29910a34bcf921d78ea94',
+    status: 'approved',
+    createdAt: '2026-02-12 14:05:30',
+    reviewedAt: '2026-02-12 14:09:12',
+    reviewedBy: 'admin',
+  },
+  {
+    id: 'dep_103',
+    userId: 'user_2',
+    userUid: '418290',
+    username: 'Elena_Crypto',
+    amount: 950.0,
+    currency: 'USDT',
+    protocol: 'TRC-20',
+    depositAddress: 'TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5',
+    txid: '99a4c11876b5de3301fae2984bb3009712cf5a6d9018e47265ba189cd2007f31',
+    status: 'approved',
+    createdAt: '2026-02-14 11:45:00',
+    reviewedAt: '2026-02-14 11:48:30',
+    reviewedBy: 'sub_finance',
+  },
+  {
+    id: 'dep_104',
+    userId: 'user_1',
+    userUid: '925886',
+    username: 'Hanif8989',
+    amount: 200.0,
+    currency: 'USDT',
+    protocol: 'TRC-20',
+    depositAddress: 'TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5',
+    txid: 'e49987aa12c09d5600b39f1165aae044199c80dfa3172089ba85cd55419077de',
+    status: 'pending',
+    createdAt: '2026-02-21 02:45:10',
+  },
+  {
+    id: 'dep_105',
+    userId: 'user_4',
+    userUid: '772109',
+    username: 'Newbie_VIP0',
+    amount: 50.0,
+    currency: 'USDT',
+    protocol: 'TRC-20',
+    depositAddress: 'TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5',
+    txid: '71acdd99201f9450abce614399b1a0942e48fa1119572630048ba8123dfac095',
+    status: 'pending',
+    createdAt: '2026-02-21 03:10:44',
+  },
+  {
+    id: 'dep_106',
+    userId: 'user_3',
+    userUid: '637184',
+    username: 'Marcus_T',
+    amount: 320.0,
+    currency: 'USDT',
+    protocol: 'TRC-20',
+    depositAddress: 'TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5',
+    txid: '3c89f1a0e1b23908ac447e9112b0561aa4f58c70129bcfe34591028374a6b291',
+    status: 'approved',
+    createdAt: '2026-02-16 16:30:00',
+    reviewedAt: '2026-02-16 16:35:00',
+    reviewedBy: 'sub_finance',
+  },
+  {
+    id: 'dep_107',
+    userId: 'user_l2_1',
+    userUid: '529104',
+    username: 'Lucas_Defi',
+    amount: 640.0,
+    currency: 'USDT',
+    protocol: 'TRC-20',
+    depositAddress: 'TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5',
+    txid: '5d1209e84b76a01298c4fe713a2908f51cb7e40918a2456bc9013847291a084c',
+    status: 'approved',
+    createdAt: '2026-02-17 15:30:00',
+    reviewedAt: '2026-02-17 15:35:00',
+    reviewedBy: 'admin',
+  },
+  {
+    id: 'dep_108',
+    userId: 'user_l2_2',
+    userUid: '738192',
+    username: 'Amina_K',
+    amount: 180.0,
+    currency: 'USDT',
+    protocol: 'TRC-20',
+    depositAddress: 'TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5',
+    txid: '7e2319f09a87b1234c56e78901f23456789a0b1c2d3e4f5a6b7c8d9e0f1a2b3c',
+    status: 'approved',
+    createdAt: '2026-02-18 10:45:00',
+    reviewedAt: '2026-02-18 10:50:00',
+    reviewedBy: 'sub_finance',
+  },
+  {
+    id: 'dep_109',
+    userId: 'user_l3_1',
+    userUid: '849201',
+    username: 'David_Pro',
+    amount: 250.0,
+    currency: 'USDT',
+    protocol: 'TRC-20',
+    depositAddress: 'TC14p55R17Neg8Qmom6dj1GmaK1vo2Mpg5',
+    txid: '9f3420a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9',
+    status: 'approved',
+    createdAt: '2026-02-19 17:30:00',
+    reviewedAt: '2026-02-19 17:34:00',
+    reviewedBy: 'admin',
+  },
+];
+
+const PERSISTENT_DEPOSITS_FILE = path.join(DATA_DIR, 'persistent_deposits.json');
+
+const loadPersistentDeposits = () => {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(PERSISTENT_DEPOSITS_FILE)) {
+      const raw = fs.readFileSync(PERSISTENT_DEPOSITS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const existingIds = new Set(parsed.map((d) => d.id));
+        const missingSeeds = SEEDED_DEPOSITS.filter((s) => !existingIds.has(s.id));
+        return [...parsed, ...missingSeeds];
+      }
+    }
+  } catch (err) {
+    console.warn('Persistent deposits load note:', err.message);
+  }
+  return [...SEEDED_DEPOSITS];
+};
+
+let ACTIVE_DEPOSITS = loadPersistentDeposits();
+
+const savePersistentDeposits = () => {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(PERSISTENT_DEPOSITS_FILE, JSON.stringify(ACTIVE_DEPOSITS, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving persistent deposits to disk:', err.message);
+  }
+};
+savePersistentDeposits();
+
+const seedInitialDeposits = async () => {
+  try {
+    if (mongoose.connection.readyState !== 1) return;
+    for (const dep of ACTIVE_DEPOSITS) {
+      const exists = await Deposit.findOne({ id: dep.id });
+      if (!exists) {
+        await Deposit.create(dep);
+      }
+    }
+  } catch (err) {
+    console.warn('Initial deposit seed note:', err.message);
+  }
+};
+
 /**
  * 2) Task Simulation Model: Orders, commission calculation, combo steps
  */
@@ -489,6 +673,31 @@ const withdrawalTaxRecordSchema = new mongoose.Schema(
 export const WithdrawalTaxRecord =
   mongoose.models.WithdrawalTaxRecord ||
   mongoose.model('WithdrawalTaxRecord', withdrawalTaxRecordSchema);
+
+/**
+ * 5) Deposit Model: Deposit vouchers, verification hash, multi-channel approval, persistent balance crediting
+ */
+const depositSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true, unique: true },
+    userId: { type: String },
+    userUid: { type: String, required: true },
+    username: { type: String, required: true },
+    amount: { type: Number, required: true },
+    currency: { type: String, default: 'USDT' },
+    protocol: { type: String, default: 'TRC-20' },
+    depositAddress: { type: String },
+    txid: { type: String, required: true },
+    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    createdAt: { type: String },
+    reviewedAt: { type: String },
+    reviewedBy: { type: String },
+    rejectionReason: { type: String },
+  },
+  { timestamps: true }
+);
+
+export const Deposit = mongoose.models.Deposit || mongoose.model('Deposit', depositSchema);
 
 // ==============================================================================
 // 4. REST API ROUTES
@@ -846,7 +1055,7 @@ app.post('/api/users/sync', (req, res) => {
 
 /**
  * POST /api/users/update
- * Update user fields (workPermission, balance, status, wallet, VIP) in persistent database
+ * Update user fields (workPermission, balance, totalDeposit, status, wallet, VIP) in persistent database
  */
 app.post('/api/users/update', async (req, res) => {
   try {
@@ -856,7 +1065,7 @@ app.post('/api/users/update', async (req, res) => {
     }
 
     const targetIdx = ACTIVE_USERS.findIndex(
-      (u) => (uid && String(u.uid) === String(uid)) || (id && u.id === id)
+      (u) => (uid && String(u.uid) === String(uid)) || (id && (u.id === id || String(u.uid) === String(id)))
     );
 
     if (targetIdx >= 0) {
@@ -870,7 +1079,7 @@ app.post('/api/users/update', async (req, res) => {
     // Also persist to MongoDB Atlas if connected
     if (mongoose.connection.readyState === 1) {
       try {
-        const query = uid ? { uid: String(uid) } : { _id: id };
+        const query = uid ? { uid: String(uid) } : { $or: [{ _id: id }, { uid: String(id) }] };
         await User.updateOne(query, { $set: updates });
       } catch (dbErr) {
         console.warn('MongoDB user update notice:', dbErr.message);
@@ -883,6 +1092,259 @@ app.post('/api/users/update', async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to update user' });
+  }
+});
+
+/**
+ * GET /api/deposits
+ * Returns list of all deposit vouchers from persistent disk store & MongoDB
+ */
+app.get('/api/deposits', async (req, res) => {
+  try {
+    let mongoDeps = [];
+    if (mongoose.connection.readyState === 1) {
+      try {
+        mongoDeps = await Deposit.find({}).sort({ createdAt: -1 });
+      } catch (err) {
+        console.warn('Mongo fetch deposits notice:', err.message);
+      }
+    }
+
+    const depMap = new Map(ACTIVE_DEPOSITS.map((d) => [d.id, d]));
+    mongoDeps.forEach((md) => {
+      const dObj = md.toObject();
+      const existing = depMap.get(md.id);
+      if (!existing) {
+        depMap.set(md.id, dObj);
+      } else {
+        depMap.set(md.id, { ...existing, ...dObj });
+      }
+    });
+
+    const depositsList = Array.from(depMap.values()).sort((a, b) => {
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
+
+    return res.json({ success: true, deposits: depositsList });
+  } catch (err) {
+    return res.json({ success: true, deposits: ACTIVE_DEPOSITS });
+  }
+});
+
+/**
+ * POST /api/deposits/submit
+ * Submit a new deposit voucher (persisted to disk & MongoDB)
+ */
+app.post('/api/deposits/submit', async (req, res) => {
+  try {
+    const { deposit } = req.body;
+    if (!deposit || !deposit.id) {
+      return res.status(400).json({ success: false, message: 'Deposit record is required.' });
+    }
+
+    const existsIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === deposit.id);
+    if (existsIdx >= 0) {
+      ACTIVE_DEPOSITS[existsIdx] = { ...ACTIVE_DEPOSITS[existsIdx], ...deposit };
+    } else {
+      ACTIVE_DEPOSITS.unshift(deposit);
+    }
+    savePersistentDeposits();
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await Deposit.updateOne({ id: deposit.id }, { $set: deposit }, { upsert: true });
+      } catch (dbErr) {
+        console.warn('Mongo deposit submit notice:', dbErr.message);
+      }
+    }
+
+    return res.json({ success: true, deposit });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to submit deposit: ' + err.message });
+  }
+});
+
+/**
+ * POST /api/deposits/approve
+ * Approves a deposit: Marks deposit as approved and immediately credits user balance and totalDeposit
+ */
+app.post('/api/deposits/approve', async (req, res) => {
+  try {
+    const { depositId, amount, userUid, userId, username, adminUsername } = req.body;
+    if (!depositId) {
+      return res.status(400).json({ success: false, message: 'Deposit ID is required.' });
+    }
+
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const reviewer = adminUsername || 'admin';
+
+    // 1. Update deposit status
+    const depIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === depositId);
+    let targetDeposit = depIdx >= 0 ? ACTIVE_DEPOSITS[depIdx] : null;
+    const parsedAmount = Number(amount || targetDeposit?.amount || 0);
+
+    if (depIdx >= 0) {
+      ACTIVE_DEPOSITS[depIdx] = {
+        ...ACTIVE_DEPOSITS[depIdx],
+        status: 'approved',
+        reviewedAt: nowStr,
+        reviewedBy: reviewer,
+      };
+      targetDeposit = ACTIVE_DEPOSITS[depIdx];
+    } else {
+      targetDeposit = {
+        id: depositId,
+        userId: userId || '',
+        userUid: userUid || '',
+        username: username || '',
+        amount: parsedAmount,
+        currency: 'USDT',
+        protocol: 'TRC-20',
+        txid: 'tx_approved_' + Date.now(),
+        status: 'approved',
+        createdAt: nowStr,
+        reviewedAt: nowStr,
+        reviewedBy: reviewer,
+      };
+      ACTIVE_DEPOSITS.unshift(targetDeposit);
+    }
+    savePersistentDeposits();
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await Deposit.updateOne(
+          { id: depositId },
+          {
+            $set: {
+              status: 'approved',
+              reviewedAt: nowStr,
+              reviewedBy: reviewer,
+            },
+          },
+          { upsert: true }
+        );
+      } catch (dbErr) {
+        console.warn('MongoDB deposit approve notice:', dbErr.message);
+      }
+    }
+
+    // 2. Identify target user and increment balance & totalDeposit
+    const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
+    const targetUserUid = String(userUid || targetDeposit?.userUid || '');
+    const targetUserId = String(userId || targetDeposit?.userId || '');
+    const targetUsername = norm(username || targetDeposit?.username);
+
+    const userIdx = ACTIVE_USERS.findIndex((u) => {
+      if (targetUserUid && String(u.uid) === targetUserUid) return true;
+      if (targetUserId && (u.id === targetUserId || String(u.uid) === targetUserId)) return true;
+      if (targetUsername && norm(u.username) === targetUsername) return true;
+      return false;
+    });
+
+    let updatedUser = null;
+    if (userIdx >= 0) {
+      const u = ACTIVE_USERS[userIdx];
+      const newBal = Number(((u.balance || 0) + parsedAmount).toFixed(4));
+      const newTotalDep = Number(((u.totalDeposit || 0) + parsedAmount).toFixed(4));
+
+      let vip = u.vipLevel || 0;
+      if (newBal >= 899) vip = Math.max(vip, 3);
+      else if (newBal >= 499) vip = Math.max(vip, 2);
+      else if (newBal >= 20) vip = Math.max(vip, 1);
+
+      ACTIVE_USERS[userIdx] = {
+        ...u,
+        balance: newBal,
+        totalDeposit: newTotalDep,
+        vipLevel: vip,
+      };
+      updatedUser = ACTIVE_USERS[userIdx];
+      savePersistentUsers();
+
+      if (mongoose.connection.readyState === 1) {
+        try {
+          await User.updateOne(
+            { $or: [{ uid: u.uid }, { username: u.username }] },
+            {
+              $set: {
+                balance: newBal,
+                totalDeposit: newTotalDep,
+                vipLevel: vip,
+              },
+            }
+          );
+        } catch (dbErr) {
+          console.warn('MongoDB user deposit balance increment notice:', dbErr.message);
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Deposit of ${parsedAmount} USDT approved and balance credited!`,
+      deposit: targetDeposit,
+      user: updatedUser,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to approve deposit: ' + err.message });
+  }
+});
+
+/**
+ * POST /api/deposits/reject
+ * Reject a deposit voucher
+ */
+app.post('/api/deposits/reject', async (req, res) => {
+  try {
+    const { depositId, reason, adminUsername } = req.body;
+    if (!depositId) {
+      return res.status(400).json({ success: false, message: 'Deposit ID is required.' });
+    }
+
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const reviewer = adminUsername || 'admin';
+    const rejectReason = reason || 'Invalid transaction hash';
+
+    const depIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === depositId);
+    let targetDeposit = null;
+
+    if (depIdx >= 0) {
+      ACTIVE_DEPOSITS[depIdx] = {
+        ...ACTIVE_DEPOSITS[depIdx],
+        status: 'rejected',
+        rejectionReason: rejectReason,
+        reviewedAt: nowStr,
+        reviewedBy: reviewer,
+      };
+      targetDeposit = ACTIVE_DEPOSITS[depIdx];
+      savePersistentDeposits();
+    }
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await Deposit.updateOne(
+          { id: depositId },
+          {
+            $set: {
+              status: 'rejected',
+              rejectionReason: rejectReason,
+              reviewedAt: nowStr,
+              reviewedBy: reviewer,
+            },
+          }
+        );
+      } catch (dbErr) {
+        console.warn('MongoDB deposit reject notice:', dbErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Deposit voucher rejected.',
+      deposit: targetDeposit,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to reject deposit: ' + err.message });
   }
 });
 
@@ -1366,3 +1828,5 @@ const startServer = async () => {
 startServer().catch((err) => {
   console.error('Server startup error:', err);
 });
+
+export default app;
