@@ -61,6 +61,7 @@ export interface User {
   totalWithdrawal?: number;
   createdAt: string;
   todayOrdersCount: number;
+  todayCompletedCount?: number;
   todayCommission: number;
   yesterdayCommission?: number;
   lastActiveDate?: string; // YYYY-MM-DD for midnight reset
@@ -103,6 +104,8 @@ export interface DepositRecord {
   depositAddress: string;
   txid: string;
   status: 'pending' | 'approved' | 'rejected';
+  balanceCredited?: boolean;
+  creditedAt?: string;
   rejectionReason?: string;
   createdAt: string;
   reviewedAt?: string;
@@ -148,6 +151,7 @@ export interface GrabbedOrder {
   id: string;
   orderNo: string;
   userId: string;
+  userUid?: string;
   vipTier: 'VIP 1' | 'VIP 2' | 'VIP 3';
   platform: 'Amazon' | 'Alibaba' | 'Aliexpress';
   items?: OrderProductItem[];

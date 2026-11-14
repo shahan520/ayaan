@@ -124,7 +124,7 @@ interface AppContextType {
     combos: CustomComboRule[]
   ) => { success: boolean; message?: string };
   clearUserTax: (userId: string) => { success: boolean; message?: string };
-  approveDeposit: (depositId: string) => { success: boolean; message?: string };
+  approveDeposit: (depositId: string) => Promise<{ success: boolean; message?: string }> | { success: boolean; message?: string };
   rejectDeposit: (depositId: string, reason?: string) => { success: boolean; message?: string };
   approveWithdrawal: (withdrawalId: string) => { success: boolean; message?: string };
   rejectWithdrawal: (withdrawalId: string, reason?: string) => { success: boolean; message?: string };
@@ -232,22 +232,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ? u.wallet
             : null;
         const workPerm = u.workPermission === true;
+        const cycleTasks = u.currentCycleTasks ?? (u.completedTasksCount >= 25 ? 25 : u.completedTasksCount ?? 0);
+        const hasActiveInCycle = cycleTasks > 0 && cycleTasks < 25;
+        const preservedTodayOrders = hasActiveInCycle
+          ? Math.max(u.todayOrdersCount ?? 0, u.todayCompletedCount ?? 0, cycleTasks)
+          : isNewDay
+          ? 0
+          : Math.max(u.todayOrdersCount ?? 0, u.todayCompletedCount ?? 0);
         return {
           ...u,
           wallet: normalizedWallet,
           withdrawalPassword: u.withdrawalPassword || null,
-          todayOrdersCount: isNewDay ? 0 : (u.todayOrdersCount ?? 0),
+          todayOrdersCount: preservedTodayOrders,
+          todayCompletedCount: preservedTodayOrders,
           todayCommission: isNewDay ? 0 : (u.todayCommission ?? 0),
           yesterdayCommission: isNewDay ? (u.todayCommission ?? 0) : (u.yesterdayCommission ?? 0),
           lastActiveDate: today,
           completedTasksCount: u.completedTasksCount ?? 0,
-          currentCycleTasks:
-            u.currentCycleTasks ?? (u.completedTasksCount >= 25 ? 25 : u.completedTasksCount ?? 0),
+          currentCycleTasks: cycleTasks,
           cycleNumber: typeof u.cycleNumber === 'number' && u.cycleNumber >= 1 ? u.cycleNumber : 1,
           cycleApprovedByAdmin:
             typeof u.cycleApprovedByAdmin === 'boolean'
               ? u.cycleApprovedByAdmin
-              : (workPerm && (u.currentCycleTasks ?? 0) < 25),
+              : (workPerm && cycleTasks < 25),
           comboOrderStep: u.comboOrderStep ?? 14,
           cycleStartBalance: u.cycleStartBalance,
           workPermission: workPerm,
@@ -394,9 +401,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const updated = prev.map((u) => {
           if (u.lastActiveDate && u.lastActiveDate !== today) {
             changed = true;
+            const cycleTasks = u.currentCycleTasks ?? 0;
+            // Never reset Today's Times to 0 while an active work cycle (1..24) or pending task is open
+            const nextTodayCount =
+              cycleTasks > 0 && cycleTasks < 25
+                ? Math.max(u.todayOrdersCount ?? 0, cycleTasks)
+                : 0;
             return {
               ...u,
-              todayOrdersCount: 0,
+              todayOrdersCount: nextTodayCount,
+              todayCompletedCount: nextTodayCount,
               yesterdayCommission: u.todayCommission || 0,
               todayCommission: 0,
               lastActiveDate: today,
@@ -514,10 +528,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 remoteUser.wallet.walletAddress.trim().length > 0
                   ? remoteUser.wallet
                   : null;
+              const cycleTasks = typeof remoteUser.currentCycleTasks === 'number' ? remoteUser.currentCycleTasks : 0;
+              const rawToday =
+                typeof remoteUser.todayOrdersCount === 'number'
+                  ? remoteUser.todayOrdersCount
+                  : typeof remoteUser.todayCompletedCount === 'number'
+                  ? remoteUser.todayCompletedCount
+                  : 0;
+              const effectiveToday = cycleTasks > 0 ? Math.max(rawToday, cycleTasks) : rawToday;
               const normalizedRemote: User = {
                 ...remoteUser,
                 wallet: normalizedWallet,
                 withdrawalPassword: remoteUser.withdrawalPassword || null,
+                todayOrdersCount: effectiveToday,
+                todayCompletedCount: effectiveToday,
                 workPermission: remoteUser.workPermission === true,
                 cycleApprovedByAdmin: remoteUser.cycleApprovedByAdmin === true,
                 isVipAccount: remoteUser.isVipAccount === true,
@@ -659,16 +683,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (ordersRes && ordersRes.success && Array.isArray(ordersRes.orders) && ordersRes.orders.length > 0) {
           setOrders((prev) => {
-            const existingOrderNos = new Set(prev.map((o) => o.orderNo));
+            const existingByOrderNo = new Map(prev.map((o) => [String(o.orderNo), o]));
             const remoteUsersList = (usersRes && Array.isArray(usersRes.users)) ? (usersRes.users as User[]) : [];
             const uidToUserId = new Map<string, string>();
             remoteUsersList.forEach((ru) => {
               if (ru.uid) uidToUserId.set(String(ru.uid), ru.id || ('user_' + ru.uid));
             });
 
-            const toAdd: GrabbedOrder[] = [];
+            let changed = false;
             ordersRes.orders.forEach((remOrd: {
               id?: string;
+              orderId?: string;
               orderNo?: string;
               userId?: string;
               userUid?: string;
@@ -677,44 +702,76 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               productTitle?: string;
               orderAmount?: number;
               commission?: number;
+              expectedIncome?: number;
               status?: 'incomplete' | 'completed';
               createdAt?: string;
               completedAt?: string;
               isComboOrder?: boolean;
               comboStepNumber?: number;
+              requiredBalance?: number;
+              comboDepositPercent?: number;
+              comboCommissionPercent?: number;
+              requiredDepositDeficit?: number;
+              depositAddress?: string;
+              items?: GrabbedOrder['items'];
             }) => {
-              if (!remOrd || !remOrd.orderNo || existingOrderNos.has(remOrd.orderNo)) return;
+              if (!remOrd || !remOrd.orderNo) return;
+              const orderNoKey = String(remOrd.orderNo);
+              const existing = existingByOrderNo.get(orderNoKey);
               const resolvedUserId =
                 remOrd.userId ||
                 (remOrd.userUid ? uidToUserId.get(String(remOrd.userUid)) || ('user_' + remOrd.userUid) : '');
               if (!resolvedUserId) return;
+
+              if (existing) {
+                if (existing.status !== 'completed' && remOrd.status === 'completed') {
+                  existingByOrderNo.set(orderNoKey, {
+                    ...existing,
+                    status: 'completed',
+                    completedAt: remOrd.completedAt || existing.completedAt,
+                    userUid: remOrd.userUid || existing.userUid,
+                  });
+                  changed = true;
+                }
+                return;
+              }
+
               const amt = Number(remOrd.orderAmount || 0);
               const comm = Number(remOrd.commission || 0);
-              toAdd.push({
-                id: remOrd.id || ('ord_' + remOrd.orderNo),
-                orderNo: remOrd.orderNo,
+              existingByOrderNo.set(orderNoKey, {
+                id: remOrd.id || remOrd.orderId || ('ord_' + orderNoKey),
+                orderNo: orderNoKey,
                 userId: resolvedUserId,
+                userUid: remOrd.userUid ? String(remOrd.userUid) : undefined,
                 vipTier: remOrd.vipTier || 'VIP 1',
                 platform: remOrd.platform || 'Amazon',
+                items: Array.isArray(remOrd.items) && remOrd.items.length > 0 ? remOrd.items : undefined,
                 productTitle: remOrd.productTitle || 'Retail Matched Item',
-                productImage: '/assets/aistudio/41lyVjfaJ7L._AC_UY218__3d4a1b42.jpg',
-                unitPrice: amt,
-                quantity: 1,
+                productImage: remOrd.items?.[0]?.image || '/assets/aistudio/41lyVjfaJ7L._AC_UY218__3d4a1b42.jpg',
+                unitPrice: remOrd.items?.[0]?.unitPrice || amt,
+                quantity: remOrd.items?.[0]?.quantity || 1,
                 orderAmount: amt,
                 commissionRate: amt > 0 ? Number((comm / amt).toFixed(4)) : 0.04,
                 commission: comm,
-                expectedIncome: Number((amt + comm).toFixed(4)),
+                expectedIncome: remOrd.expectedIncome ?? Number((amt + comm).toFixed(4)),
                 status: remOrd.status || 'completed',
                 createdAt: remOrd.createdAt || remOrd.completedAt || new Date().toISOString().replace('T', ' ').substring(0, 19),
                 completedAt: remOrd.completedAt,
                 isComboOrder: Boolean(remOrd.isComboOrder),
                 comboStepNumber: remOrd.comboStepNumber || undefined,
+                requiredBalance: remOrd.requiredBalance,
+                comboDepositPercent: remOrd.comboDepositPercent,
+                comboCommissionPercent: remOrd.comboCommissionPercent,
+                requiredDepositDeficit: remOrd.requiredDepositDeficit,
+                depositAddress: remOrd.depositAddress,
               });
-              existingOrderNos.add(remOrd.orderNo);
+              changed = true;
             });
 
-            if (toAdd.length > 0) {
-              const merged = [...toAdd, ...prev].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+            if (changed) {
+              const merged = Array.from(existingByOrderNo.values()).sort((a, b) =>
+                (b.createdAt || '').localeCompare(a.createdAt || '')
+              );
               try {
                 localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(merged));
               } catch {}
@@ -833,22 +890,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Please enter your password.' };
     }
 
-    // Fast path: Check local users state
     const localUser = users.find(
       (u) =>
         u.username.toLowerCase() === trimmed.toLowerCase() ||
         u.uid === trimmed
     );
 
-    if (localUser && localUser.password && localUser.password === password) {
-      if (localUser.status === 'frozen') {
-        return { success: false, message: 'Your account is frozen. Please contact customer service.' };
-      }
-      setCurrentUserId(localUser.id);
-      return { success: true, message: 'Login successful!' };
-    }
-
-    // Centralized server authentication fallback (supports users registered from any device)
+    // Always query authoritative backend login first so persisted task counts (todayOrdersCount, currentCycleTasks),
+    // workPermission, balance, and pending incomplete orders synchronize accurately across logouts & sessions.
     try {
       const resp = await fetch(getApiUrl('/api/auth/login'), {
         method: 'POST',
@@ -861,11 +910,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           data.user.wallet && typeof data.user.wallet.walletAddress === 'string' && data.user.wallet.walletAddress.trim().length > 0
             ? data.user.wallet
             : null;
+        const cycleTasks = typeof data.user.currentCycleTasks === 'number' ? data.user.currentCycleTasks : 0;
+        const rawToday =
+          typeof data.user.todayOrdersCount === 'number'
+            ? data.user.todayOrdersCount
+            : typeof data.user.todayCompletedCount === 'number'
+            ? data.user.todayCompletedCount
+            : 0;
+        const effectiveToday = cycleTasks > 0 ? Math.max(rawToday, cycleTasks) : rawToday;
         const authedUser: User = {
           ...data.user,
           id: data.user.id || ('user_' + data.user.uid),
           wallet: normalizedWallet,
-          withdrawalPassword: data.user.withdrawalPassword || undefined,
+          withdrawalPassword: data.user.withdrawalPassword || null,
+          todayOrdersCount: effectiveToday,
+          todayCompletedCount: effectiveToday,
+          workPermission: data.user.workPermission === true,
+          cycleApprovedByAdmin: data.user.cycleApprovedByAdmin === true,
           password,
         };
         setUsers((prev) => {
@@ -877,8 +938,65 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return updated;
         });
         setCurrentUserId(authedUser.id);
+
+        // Immediately hydrate this user's orders (including any pending incomplete order #14) on relogin
+        try {
+          const ordRes = await fetch(getApiUrl(`/api/orders?userUid=${encodeURIComponent(String(authedUser.uid))}`));
+          const ordData = await ordRes.json();
+          if (ordData && ordData.success && Array.isArray(ordData.orders)) {
+            setOrders((prev) => {
+              const map = new Map(prev.map((o) => [String(o.orderNo), o]));
+              ordData.orders.forEach((remOrd: any) => {
+                if (!remOrd || !remOrd.orderNo) return;
+                const key = String(remOrd.orderNo);
+                const existing = map.get(key);
+                if (!existing || (existing.status !== 'completed' && remOrd.status === 'completed')) {
+                  const amt = Number(remOrd.orderAmount || 0);
+                  const comm = Number(remOrd.commission || 0);
+                  map.set(key, {
+                    id: existing?.id || remOrd.id || remOrd.orderId || ('ord_' + key),
+                    orderNo: key,
+                    userId: authedUser.id,
+                    userUid: String(authedUser.uid),
+                    vipTier: remOrd.vipTier || existing?.vipTier || 'VIP 1',
+                    platform: remOrd.platform || existing?.platform || 'Amazon',
+                    items: Array.isArray(remOrd.items) && remOrd.items.length > 0 ? remOrd.items : existing?.items,
+                    productTitle: remOrd.productTitle || existing?.productTitle || 'Retail Matched Item',
+                    productImage: remOrd.items?.[0]?.image || existing?.productImage || '/assets/aistudio/41lyVjfaJ7L._AC_UY218__3d4a1b42.jpg',
+                    unitPrice: remOrd.items?.[0]?.unitPrice || existing?.unitPrice || amt,
+                    quantity: remOrd.items?.[0]?.quantity || existing?.quantity || 1,
+                    orderAmount: amt,
+                    commissionRate: amt > 0 ? Number((comm / amt).toFixed(4)) : 0.04,
+                    commission: comm,
+                    expectedIncome: remOrd.expectedIncome ?? Number((amt + comm).toFixed(4)),
+                    status: remOrd.status || 'completed',
+                    createdAt: remOrd.createdAt || existing?.createdAt || new Date().toISOString().replace('T', ' ').substring(0, 19),
+                    completedAt: remOrd.completedAt || existing?.completedAt,
+                    isComboOrder: Boolean(remOrd.isComboOrder),
+                    comboStepNumber: remOrd.comboStepNumber || existing?.comboStepNumber,
+                    requiredBalance: remOrd.requiredBalance ?? existing?.requiredBalance,
+                    comboDepositPercent: remOrd.comboDepositPercent ?? existing?.comboDepositPercent,
+                    comboCommissionPercent: remOrd.comboCommissionPercent ?? existing?.comboCommissionPercent,
+                    requiredDepositDeficit: remOrd.requiredDepositDeficit ?? existing?.requiredDepositDeficit,
+                    depositAddress: remOrd.depositAddress ?? existing?.depositAddress,
+                  });
+                }
+              });
+              return Array.from(map.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+            });
+          }
+        } catch {}
+
         return { success: true, message: 'Login successful!' };
       } else {
+        // Fallback ONLY if user exists locally and server doesn't have it (e.g. demo created offline)
+        if (resp.status === 404 && localUser && localUser.password && localUser.password === password) {
+          if (localUser.status === 'frozen') {
+            return { success: false, message: 'Your account is frozen. Please contact customer service.' };
+          }
+          setCurrentUserId(localUser.id);
+          return { success: true, message: 'Login successful!' };
+        }
         return {
           success: false,
           message:
@@ -889,6 +1007,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       }
     } catch {
+      if (localUser && localUser.password && localUser.password === password) {
+        if (localUser.status === 'frozen') {
+          return { success: false, message: 'Your account is frozen. Please contact customer service.' };
+        }
+        setCurrentUserId(localUser.id);
+        return { success: true, message: 'Login successful!' };
+      }
       if (localUser) {
         return { success: false, message: 'Incorrect password. Please verify your password and try again.' };
       }
@@ -1114,7 +1239,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetAddress = depositAddress || systemConfig.trc20DepositAddress;
 
     const newDeposit: DepositRecord = {
-      id: 'dep_' + Date.now(),
+      id: 'dep_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       userId: currentUser.id,
       userUid: currentUser.uid,
       username: currentUser.username,
@@ -1124,6 +1249,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       depositAddress: targetAddress,
       txid: cleanTxid,
       status: 'pending',
+      balanceCredited: false,
       createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
     };
 
@@ -1507,7 +1633,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // RULE: Mandatory Deposit Requirement & Incomplete Order Blocker:
     // When a Combo Order is triggered, user MUST deposit required deficit and submit before grabbing subsequent tasks.
     const incompleteOrder = orders.find(
-      (o) => o.userId === currentUser.id && o.status === 'incomplete'
+      (o) =>
+        (o.userId === currentUser.id || (o.userUid && String(o.userUid) === String(currentUser.uid))) &&
+        o.status === 'incomplete'
     );
     if (incompleteOrder) {
       if (incompleteOrder.isComboOrder) {
@@ -1667,6 +1795,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: 'ord_' + Date.now(),
       orderNo,
       userId: currentUser.id,
+      userUid: currentUser.uid,
       vipTier,
       platform,
       items: matchedItems,
@@ -1692,6 +1821,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setOrders((prev) => [newOrder, ...prev]);
+
+    // Persist grabbed incomplete order to backend so pending tasks (e.g. Order #14) survive logouts/relogins
+    fetch(getApiUrl('/api/orders/grab'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        order: newOrder,
+        userUid: currentUser.uid,
+        username: currentUser.username,
+      }),
+    }).catch(() => {});
+
     return { success: true, order: newOrder, isComboOrder };
   };
 
@@ -1706,7 +1847,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!order) return { success: false, message: 'Order not found.' };
     if (order.status === 'completed') return { success: false, message: 'Order already completed.' };
 
-    const targetUser = users.find((u) => u.id === order.userId);
+    const targetUser = users.find(
+      (u) => u.id === order.userId || (order.userUid && String(u.uid) === String(order.userUid))
+    );
     if (!targetUser) return { success: false, message: 'User not found.' };
 
     // Strict Work Permission Enforcement on order submission
@@ -1771,7 +1914,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const today = new Date().toISOString().substring(0, 10);
     const isNewDay = targetUser.lastActiveDate && targetUser.lastActiveDate !== today;
-    const currentTimes = isNewDay ? 0 : (targetUser.todayOrdersCount ?? 0);
+    const currentTimes = Math.max(targetUser.todayOrdersCount ?? 0, targetUser.currentCycleTasks ?? 0);
     const currentComm = isNewDay ? 0 : (targetUser.todayCommission ?? 0);
     const yestComm = isNewDay ? (targetUser.todayCommission ?? 0) : (targetUser.yesterdayCommission ?? 0);
 
@@ -1795,10 +1938,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     else if (newBalance >= 499) nextVip = Math.max(nextVip, 2);
     else if (newBalance >= 20) nextVip = Math.max(nextVip, 1);
 
+    const nextTodayCount = Math.max(currentTimes + 1, nextCycleTasks);
+
     const userPayloadUpdates: Partial<User> = {
       balance: newBalance,
       vipLevel: nextVip,
-      todayOrdersCount: currentTimes + 1,
+      todayOrdersCount: nextTodayCount,
+      todayCompletedCount: nextTodayCount,
       todayCommission: Number((currentComm + calculatedCommission).toFixed(4)),
       yesterdayCommission: yestComm,
       lastActiveDate: today,
@@ -2040,6 +2186,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     syncUserUpdateToBackend(targetUser.uid, {
       todayOrdersCount: 0,
+      todayCompletedCount: 0,
       currentCycleTasks: 0,
       cycleNumber: nextCycleNum,
       cycleStartBalance: targetUser.balance,
@@ -2054,6 +2201,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ? {
               ...u,
               todayOrdersCount: 0, // When Admin resets task cycle, reset Today's Times back to 0
+              todayCompletedCount: 0,
               currentCycleTasks: 0, // Reset progress strictly to 0
               cycleNumber: nextCycleNum,
               cycleStartBalance: targetUser.balance, // Record starting balance of newly approved cycle (e.g. 30-40 USDT for Cycle 2)
@@ -2206,12 +2354,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // In-flight processing lock to prevent any double-clicks or rapid parallel calls
   const processingDepositIds = useRef<Set<string>>(new Set());
 
-  const approveDeposit = (depositId: string) => {
+  const approveDeposit = async (depositId: string): Promise<{ success: boolean; message?: string }> => {
     if (!hasPermission('can_approve_deposits')) {
       return { success: false, message: 'Permission denied: Your role cannot approve deposits.' };
     }
 
-    // 1. Guard against in-flight clicks or parallel executions
+    // 1. Guard against in-flight clicks or parallel executions for the same depositId
     if (processingDepositIds.current.has(depositId)) {
       return { success: false, message: 'Deposit approval is currently being processed. Please wait.' };
     }
@@ -2219,7 +2367,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const dep = deposits.find((d) => d.id === depositId);
     if (!dep) return { success: false, message: 'Deposit record not found.' };
 
-    // 2. Guard against already approved deposits (Strict Idempotency Check)
+    // 2. Guard against already approved deposits strictly by deposit.id (never by txid)
     if (dep.status === 'approved') {
       return {
         success: false,
@@ -2236,13 +2384,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const reviewer = currentAdmin.username;
     const depositAmt = Number(dep.amount);
 
-    // 3. Immediately mark deposit as approved in React state
+    const norm = (s?: string | null) => (s ? String(s).trim().toLowerCase() : '');
+    const depUserUid = String(dep.userUid || '');
+    const depUserId = String(dep.userId || '');
+    const depUsername = norm(dep.username);
+
+    const matchesTargetUser = (u: User) =>
+      Boolean(
+        (depUserUid && String(u.uid) === depUserUid) ||
+          (depUserId && (u.id === depUserId || String(u.uid) === depUserId)) ||
+          (depUsername && norm(u.username) === depUsername)
+      );
+
+    const targetUserSnapshot = users.find(matchesTargetUser);
+    const effectiveUid = dep.userUid || targetUserSnapshot?.uid;
+    const effectiveUserId = dep.userId || targetUserSnapshot?.id;
+    const effectiveUsername = dep.username || targetUserSnapshot?.username;
+    if (effectiveUid) {
+      pendingUserMutationAt.current[String(effectiveUid)] = Date.now();
+    }
+
+    // 3. Optimistically mark deposit as approved and increment client balance functionally (prevents stale closure races)
     setDeposits((prev) =>
       prev.map((d) =>
         d.id === depositId
           ? {
               ...d,
               status: 'approved',
+              balanceCredited: true,
+              creditedAt: nowStr,
               reviewedAt: nowStr,
               reviewedBy: reviewer,
             }
@@ -2250,101 +2420,146 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
-    // 4. Identify target user and compute new balance & totalDeposit
-    const norm = (s?: string | null) => (s ? String(s).trim().toLowerCase() : '');
-    const depUserUid = String(dep.userUid || '');
-    const depUserId = String(dep.userId || '');
-    const depUsername = norm(dep.username);
-
-    const targetUser = users.find((u) => {
-      return (
-        (depUserUid && String(u.uid) === depUserUid) ||
-        (depUserId && (u.id === depUserId || String(u.uid) === depUserId)) ||
-        (depUsername && norm(u.username) === depUsername)
-      );
-    });
-
-    const targetBal = targetUser ? targetUser.balance || 0 : 0;
-    const targetTotalDep = targetUser ? targetUser.totalDeposit || 0 : 0;
-    const currentVip = targetUser ? targetUser.vipLevel || 0 : 0;
-
-    const newBal = Number((targetBal + depositAmt).toFixed(4));
-    const newTotalDep = Number((targetTotalDep + depositAmt).toFixed(4));
-    let newVip = currentVip;
-    if (newBal >= 899) newVip = Math.max(newVip, 3);
-    else if (newBal >= 499) newVip = Math.max(newVip, 2);
-    else if (newBal >= 20) newVip = Math.max(newVip, 1);
-
-    // Increment client balance EXACTLY ONCE
+    let optimisticNewBal = Number(((targetUserSnapshot?.balance || 0) + depositAmt).toFixed(4));
     setUsers((prev) =>
       prev.map((u) => {
-        const matches =
-          (depUserUid && String(u.uid) === depUserUid) ||
-          (depUserId && (u.id === depUserId || String(u.uid) === depUserId)) ||
-          (depUsername && norm(u.username) === depUsername);
+        if (matchesTargetUser(u)) {
+          const curBal = Number(u.balance || 0);
+          const curTotalDep = Number(u.totalDeposit || 0);
+          const nextBal = Number((curBal + depositAmt).toFixed(4));
+          const nextTotalDep = Number((curTotalDep + depositAmt).toFixed(4));
+          let nextVip = u.vipLevel || 0;
+          if (nextBal >= 899) nextVip = Math.max(nextVip, 3);
+          else if (nextBal >= 499) nextVip = Math.max(nextVip, 2);
+          else if (nextBal >= 20) nextVip = Math.max(nextVip, 1);
 
-        if (matches) {
+          optimisticNewBal = nextBal;
           return {
             ...u,
-            balance: newBal,
-            totalDeposit: newTotalDep,
-            vipLevel: newVip,
+            balance: nextBal,
+            totalDeposit: nextTotalDep,
+            vipLevel: nextVip,
+            workPermission: u.workPermission === true,
+            cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
           };
         }
         return u;
       })
     );
 
-    const effectiveUid = dep.userUid || targetUser?.uid;
-    const effectiveUserId = dep.userId || targetUser?.id;
-    const effectiveUsername = dep.username || targetUser?.username;
-    if (effectiveUid) {
-      pendingUserMutationAt.current[String(effectiveUid)] = Date.now();
-    }
-
-    // 5. Send single atomic approve request to backend
-    // Notice: We do NOT make a duplicate call to syncUserUpdateToBackend here.
-    // /api/deposits/approve is the single atomic authoritative backend handler.
-    fetch(getApiUrl('/api/deposits/approve'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        depositId: dep.id,
-        amount: depositAmt,
-        userUid: effectiveUid,
-        userId: effectiveUserId,
-        username: effectiveUsername,
-        adminUsername: reviewer,
-      }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.success && data.user) {
-          // Adopt authoritative server state for exact synchronization
-          setUsers((prev) =>
-            prev.map((u) =>
-              String(u.uid) === String(data.user.uid)
-                ? {
-                    ...u,
-                    balance: data.user.balance,
-                    totalDeposit: data.user.totalDeposit,
-                    vipLevel: data.user.vipLevel,
-                  }
-                : u
-            )
-          );
-        }
-      })
-      .catch((err) => console.warn('Backend deposit approve sync error:', err))
-      .finally(() => {
-        processingDepositIds.current.delete(depositId);
+    let finalNewBal = optimisticNewBal;
+    try {
+      // 4. Single atomic authoritative approve request to backend
+      const resp = await fetch(getApiUrl('/api/deposits/approve'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          depositId: dep.id,
+          amount: depositAmt,
+          userUid: effectiveUid,
+          userId: effectiveUserId,
+          username: effectiveUsername,
+          adminUsername: reviewer,
+          txid: dep.txid,
+          depositAddress: dep.depositAddress,
+        }),
       });
 
-    // 6. Dispatch instant UI events across windows/tabs
+      const data = await resp.json().catch(() => null);
+
+      if (!resp.ok || (data && data.success === false)) {
+        // Revert optimistic update cleanly on authoritative rejection (e.g. 404 user not found)
+        setDeposits((prev) =>
+          prev.map((d) =>
+            d.id === depositId
+              ? {
+                  ...d,
+                  status: 'pending',
+                  balanceCredited: false,
+                  creditedAt: undefined,
+                  reviewedAt: undefined,
+                  reviewedBy: undefined,
+                }
+              : d
+          )
+        );
+        setUsers((prev) =>
+          prev.map((u) => {
+            if (matchesTargetUser(u)) {
+              return {
+                ...u,
+                balance: Number(Math.max(0, (u.balance || 0) - depositAmt).toFixed(4)),
+                totalDeposit: Number(Math.max(0, (u.totalDeposit || 0) - depositAmt).toFixed(4)),
+              };
+            }
+            return u;
+          })
+        );
+        return {
+          success: false,
+          message: (data && data.message) || 'Failed to approve deposit on server.',
+        };
+      }
+
+      if (data && data.deposit) {
+        setDeposits((prev) =>
+          prev.map((d) => (d.id === depositId ? { ...d, ...data.deposit } : d))
+        );
+      }
+
+      if (data && data.user) {
+        finalNewBal = Number(data.user.balance ?? finalNewBal);
+        if (effectiveUid) {
+          pendingUserMutationAt.current[String(effectiveUid)] = Date.now();
+        }
+        // Adopt authoritative balance/deposit state; never allow deposit approval to grant workPermission
+        setUsers((prev) => {
+          const existsInClient = prev.some(
+            (u) => String(u.uid) === String(data.user.uid) || matchesTargetUser(u)
+          );
+          if (!existsInClient) {
+            return [
+              {
+                ...data.user,
+                id: data.user.id || ('user_' + data.user.uid),
+                workPermission: data.user.workPermission === true,
+                cycleApprovedByAdmin: data.user.cycleApprovedByAdmin === true,
+              },
+              ...prev,
+            ];
+          }
+          return prev.map((u) =>
+            String(u.uid) === String(data.user.uid) || matchesTargetUser(u)
+              ? {
+                  ...u,
+                  balance: data.user.balance,
+                  totalDeposit: data.user.totalDeposit,
+                  vipLevel: data.user.vipLevel,
+                  workPermission: u.workPermission === true,
+                  cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
+                }
+              : u
+          );
+        });
+      }
+
+      if (data && data.alreadyApproved) {
+        return {
+          success: false,
+          message: data.message || 'Deposit has already been approved previously.',
+        };
+      }
+    } catch (err) {
+      console.warn('Backend deposit approve sync error:', err);
+    } finally {
+      processingDepositIds.current.delete(depositId);
+    }
+
+    // 5. Dispatch instant UI events across windows/tabs
     try {
       window.dispatchEvent(
         new CustomEvent('tradeweb_balance_updated', {
-          detail: { userUid: dep.userUid, newBalance: newBal, amount: depositAmt },
+          detail: { userUid: effectiveUid, newBalance: finalNewBal, amount: depositAmt },
         })
       );
       window.dispatchEvent(new CustomEvent('tradeweb_users_updated'));
@@ -2353,13 +2568,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     logAuditAction(
       'APPROVE_DEPOSIT',
-      `Approved deposit of ${depositAmt} USDT for user ${dep.username} (UID: ${dep.userUid}). TXID: ${dep.txid.substring(0, 16)}... User balance updated to ${newBal} USDT`,
+      `Approved deposit of ${depositAmt} USDT for user ${dep.username} (UID: ${dep.userUid}). TXID: ${dep.txid.substring(0, 16)}... User balance updated to ${finalNewBal} USDT`,
       dep.userUid
     );
 
     return {
       success: true,
-      message: `Deposit of ${depositAmt} USDT approved! ${dep.username}'s balance is now ${newBal.toFixed(2)} USDT.`,
+      message: `Deposit of ${depositAmt} USDT approved! ${dep.username}'s balance is now ${finalNewBal.toFixed(2)} USDT.`,
     };
   };
 
@@ -2592,23 +2807,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const tId = target.id;
     const tUname = norm(target.username);
 
-    // Sum all approved deposits for this user
-    const userApprovedDeps = deposits.filter((d) => {
+    // 1. Sum all unique approved deposits for this user strictly by deposit.id (never by txid)
+    const approvedDepMap = new Map<string, DepositRecord>();
+    deposits.forEach((d) => {
       const matches =
         (d.userUid && String(d.userUid) === tUid) ||
         (d.userId && d.userId === tId) ||
         (d.username && norm(d.username) === tUname);
-      return matches && d.status === 'approved';
+      if (matches && d.status === 'approved') {
+        approvedDepMap.set(String(d.id), d);
+      }
     });
-
+    const userApprovedDeps = Array.from(approvedDepMap.values());
     const totalApprovedDeposits = Number(
       userApprovedDeps.reduce((sum, d) => sum + Number(d.amount || 0), 0).toFixed(4)
     );
 
+    // 2. Sum earned commissions from unique completed orders + persisted daily/yesterday commissions
+    const completedOrderMap = new Map<string, number>();
+    orders.forEach((o) => {
+      const matches =
+        (o.userUid && String(o.userUid) === tUid) ||
+        (o.userId && o.userId === tId);
+      if (matches && o.status === 'completed') {
+        const key = String(o.orderNo || o.id);
+        completedOrderMap.set(key, Number(o.commission || 0));
+      }
+    });
+    const ordersCommSum = Number(
+      Array.from(completedOrderMap.values())
+        .reduce((sum, c) => sum + c, 0)
+        .toFixed(4)
+    );
+    const persistedCommSum = Number(
+      ((target.todayCommission || 0) + (target.yesterdayCommission || 0)).toFixed(4)
+    );
+    const earnedCommissions = Number(Math.max(ordersCommSum, persistedCommSum).toFixed(4));
+
+    // 3. Sum non-rejected withdrawals
+    const wdMap = new Map<string, number>();
+    withdrawals.forEach((w) => {
+      const matches =
+        (w.userUid && String(w.userUid) === tUid) ||
+        (w.userId && w.userId === tId) ||
+        (w.username && norm(w.username) === tUname);
+      if (matches && w.status !== 'rejected') {
+        wdMap.set(String(w.id), Number(w.amount || 0));
+      }
+    });
+    const clientWdSum = Number(
+      Array.from(wdMap.values())
+        .reduce((sum, a) => sum + a, 0)
+        .toFixed(4)
+    );
+    const totalWithdrawals = Number(Math.max(clientWdSum, Number(target.totalWithdrawal || 0)).toFixed(4));
+
+    let finalBalance = Number(
+      Math.max(0, totalApprovedDeposits + earnedCommissions - totalWithdrawals).toFixed(4)
+    );
+
     let vip = target.vipLevel || 0;
-    if (totalApprovedDeposits >= 899) vip = Math.max(vip, 3);
-    else if (totalApprovedDeposits >= 499) vip = Math.max(vip, 2);
-    else if (totalApprovedDeposits >= 20) vip = Math.max(vip, 1);
+    if (finalBalance >= 899) vip = Math.max(vip, 3);
+    else if (finalBalance >= 499) vip = Math.max(vip, 2);
+    else if (finalBalance >= 20) vip = Math.max(vip, 1);
 
     // Update client state immediately
     setUsers((prev) =>
@@ -2616,16 +2877,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (u.id === target.id || String(u.uid) === tUid) {
           return {
             ...u,
-            balance: totalApprovedDeposits,
+            balance: finalBalance,
             totalDeposit: totalApprovedDeposits,
+            totalWithdrawal: totalWithdrawals,
             vipLevel: vip,
+            workPermission: u.workPermission === true,
+            cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
           };
         }
         return u;
       })
     );
 
-    // Persist to server recalculation endpoint
+    // Persist to authoritative server recalculation endpoint
     pendingUserMutationAt.current[tUid] = Date.now();
     try {
       const resp = await fetch(getApiUrl('/api/admin/recalculate-balance'), {
@@ -2635,12 +2899,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           userUid: target.uid,
           userId: target.id,
           username: target.username,
+          earnedCommissions,
+          totalWithdrawals,
         }),
       });
       const data = await resp.json();
       if (data && data.success && data.user) {
+        finalBalance = Number(data.user.balance ?? finalBalance);
         setUsers((prev) =>
-          prev.map((u) => (String(u.uid) === String(data.user.uid) ? { ...u, ...data.user } : u))
+          prev.map((u) =>
+            String(u.uid) === String(data.user.uid)
+              ? {
+                  ...u,
+                  ...data.user,
+                  workPermission: u.workPermission === true,
+                  cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
+                }
+              : u
+          )
         );
       }
     } catch (err) {
@@ -2654,13 +2930,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     logAuditAction(
       'CREDIT_BALANCE',
-      `Recalculated balance for ${target.username} (UID: ${target.uid}) from ${userApprovedDeps.length} approved deposits. Exact balance set to ${totalApprovedDeposits} USDT.`,
+      `Recalculated balance for ${target.username} (UID: ${target.uid}): ${userApprovedDeps.length} approved deposits (${totalApprovedDeposits.toFixed(2)}) + commissions (${earnedCommissions.toFixed(2)}) - withdrawals (${totalWithdrawals.toFixed(2)}) = ${finalBalance.toFixed(2)} USDT.`,
       target.uid
     );
 
     return {
       success: true,
-      message: `Balance for ${target.username} successfully reset to exact approved deposits total: ${totalApprovedDeposits.toFixed(2)} USDT (${userApprovedDeps.length} approved deposit${userApprovedDeps.length === 1 ? '' : 's'}).`,
+      message: `Balance for ${target.username} recalculated to ${finalBalance.toFixed(2)} USDT (${userApprovedDeps.length} approved deposits: ${totalApprovedDeposits.toFixed(2)} + commissions: ${earnedCommissions.toFixed(2)} - withdrawals: ${totalWithdrawals.toFixed(2)}).`,
     };
   };
 
@@ -3060,7 +3336,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       vipLevel: vip,
       status: 'active',
       isDemoAccount: true,
-      workPermission: data.workPermission !== undefined ? data.workPermission : true,
+      workPermission: data.workPermission === true,
       demoWalletAddress: walletAddr,
       wallet: {
         walletName: 'TRC-20 Demo Wallet',
@@ -3072,11 +3348,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
       createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
       todayOrdersCount: 0,
+      todayCompletedCount: 0,
       todayCommission: 0,
       completedTasksCount: 0,
       currentCycleTasks: 0,
       cycleNumber: 1,
-      cycleApprovedByAdmin: true,
+      cycleApprovedByAdmin: data.workPermission === true,
       comboOrderStep: 9, // Demo combo at #9, #14, #19, #24
       isVipAccount: false,
       isLockedAccount: false,
@@ -3115,6 +3392,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           cycleApprovedByAdmin: true,
           currentCycleTasks: 0,
           todayOrdersCount: 0,
+          todayCompletedCount: 0,
           cycleNumber: nextCycleNum,
           cycleStartBalance: target.balance,
         }

@@ -198,6 +198,10 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    todayCompletedCount: {
+      type: Number,
+      default: 0,
+    },
     todayCommission: {
       type: Number,
       default: 0.0,
@@ -262,6 +266,23 @@ const normalizeWallet = (w) => {
     return w;
   }
   return null;
+};
+
+const resolveEffectiveTodayCount = (u) => {
+  const cycleTasks = typeof u?.currentCycleTasks === 'number' ? u.currentCycleTasks : 0;
+  const rawToday =
+    typeof u?.todayOrdersCount === 'number'
+      ? u.todayOrdersCount
+      : typeof u?.todayCompletedCount === 'number'
+      ? u.todayCompletedCount
+      : 0;
+  if (cycleTasks > 0 && cycleTasks < 25) {
+    return Math.max(rawToday, cycleTasks);
+  }
+  if (cycleTasks >= 25) {
+    return Math.max(rawToday, cycleTasks);
+  }
+  return rawToday;
 };
 
 export const User = mongoose.models.User || mongoose.model('User', userSchema);
@@ -626,8 +647,38 @@ const taskSimulationSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'completed', 'shortage'],
+      enum: ['incomplete', 'pending', 'completed', 'shortage'],
       default: 'completed',
+    },
+    platform: {
+      type: String,
+      default: 'Amazon',
+    },
+    vipTier: {
+      type: String,
+      default: 'VIP 1',
+    },
+    expectedIncome: {
+      type: Number,
+      default: 0,
+    },
+    requiredBalance: {
+      type: Number,
+    },
+    comboDepositPercent: {
+      type: Number,
+    },
+    comboCommissionPercent: {
+      type: Number,
+    },
+    requiredDepositDeficit: {
+      type: Number,
+    },
+    depositAddress: {
+      type: String,
+    },
+    items: {
+      type: mongoose.Schema.Types.Mixed,
     },
     userBalanceBefore: {
       type: Number,
@@ -766,6 +817,8 @@ const depositSchema = new mongoose.Schema(
     depositAddress: { type: String },
     txid: { type: String, required: true },
     status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    balanceCredited: { type: Boolean },
+    creditedAt: { type: String },
     createdAt: { type: String },
     reviewedAt: { type: String },
     reviewedBy: { type: String },
@@ -903,6 +956,7 @@ app.post('/api/auth/register', async (req, res) => {
       wallet: null,
       createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
       todayOrdersCount: 0,
+      todayCompletedCount: 0,
       todayCommission: 0,
       yesterdayCommission: 0,
       lastActiveDate: new Date().toISOString().substring(0, 10),
@@ -1076,6 +1130,7 @@ app.get('/api/users', async (req, res) => {
     });
 
     const safeUsers = Array.from(activeMap.values()).map((u) => {
+      const effectiveToday = resolveEffectiveTodayCount(u);
       return {
         ...u,
         id: u.id || ('user_' + u.uid),
@@ -1083,7 +1138,8 @@ app.get('/api/users', async (req, res) => {
         withdrawalPassword: u.withdrawalPassword || null,
         totalDeposit: typeof u.totalDeposit === 'number' ? u.totalDeposit : (u.balance > 0 ? u.balance : 0),
         totalWithdrawal: typeof u.totalWithdrawal === 'number' ? u.totalWithdrawal : 0,
-        todayOrdersCount: typeof u.todayOrdersCount === 'number' ? u.todayOrdersCount : 0,
+        todayOrdersCount: effectiveToday,
+        todayCompletedCount: effectiveToday,
         todayCommission: typeof u.todayCommission === 'number' ? u.todayCommission : 0,
         yesterdayCommission: typeof u.yesterdayCommission === 'number' ? u.yesterdayCommission : 0,
         lastActiveDate: u.lastActiveDate || '',
@@ -1266,7 +1322,8 @@ app.get('/api/deposits', async (req, res) => {
 
 /**
  * POST /api/deposits/submit
- * Submit a new deposit voucher (persisted to disk & MongoDB)
+ * Submit a new deposit voucher (persisted to disk & MongoDB).
+ * Allows multiple deposits with the same TXID — uniqueness is tracked strictly by deposit.id.
  */
 app.post('/api/deposits/submit', async (req, res) => {
   try {
@@ -1275,57 +1332,136 @@ app.post('/api/deposits/submit', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Deposit record is required.' });
     }
 
-    const existsIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === deposit.id);
+    const normalizedDeposit = {
+      ...deposit,
+      id: String(deposit.id),
+      userUid: String(deposit.userUid || ''),
+      amount: Number(deposit.amount || 0),
+      txid:
+        deposit.txid && String(deposit.txid).trim().length > 0
+          ? String(deposit.txid).trim()
+          : 'tx_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36),
+      status: deposit.status || 'pending',
+      balanceCredited: deposit.status === 'approved' ? Boolean(deposit.balanceCredited) : false,
+    };
+
+    const existsIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === normalizedDeposit.id);
     if (existsIdx >= 0) {
-      ACTIVE_DEPOSITS[existsIdx] = { ...ACTIVE_DEPOSITS[existsIdx], ...deposit };
+      ACTIVE_DEPOSITS[existsIdx] = { ...ACTIVE_DEPOSITS[existsIdx], ...normalizedDeposit };
     } else {
-      ACTIVE_DEPOSITS.unshift(deposit);
+      ACTIVE_DEPOSITS.unshift(normalizedDeposit);
     }
     savePersistentDeposits();
 
     if (mongoose.connection.readyState === 1) {
       try {
-        await Deposit.updateOne({ id: deposit.id }, { $set: deposit }, { upsert: true });
+        await Deposit.updateOne(
+          { id: normalizedDeposit.id },
+          { $set: normalizedDeposit },
+          { upsert: true }
+        );
       } catch (dbErr) {
         console.warn('Mongo deposit submit notice:', dbErr.message);
       }
     }
 
-    return res.json({ success: true, deposit });
+    return res.json({ success: true, deposit: normalizedDeposit });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to submit deposit: ' + err.message });
   }
 });
 
+// In-flight lock set keyed strictly by unique depositId to serialize concurrent approvals of the same deposit
+const IN_FLIGHT_DEPOSIT_APPROVALS = new Set();
+
+const findUserFromMemoryOrMongo = async ({ userUid, userId, username }) => {
+  const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
+  const tUid = String(userUid || '').trim();
+  const tId = String(userId || '').trim();
+  const tUname = norm(username);
+
+  let userIdx = ACTIVE_USERS.findIndex((u) => {
+    if (tUid && String(u.uid) === tUid) return true;
+    if (tId && (u.id === tId || String(u.uid) === tId)) return true;
+    if (tUname && norm(u.username) === tUname) return true;
+    return false;
+  });
+
+  let mongoUser = null;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const orClauses = [];
+      if (tUid) orClauses.push({ uid: tUid });
+      if (tId && mongoose.Types.ObjectId.isValid(tId)) orClauses.push({ _id: tId });
+      if (tUname) {
+        orClauses.push({ username: { $regex: new RegExp(`^${escapeRegex(tUname)}$`, 'i') } });
+      }
+      if (userIdx >= 0 && ACTIVE_USERS[userIdx]?.uid) {
+        orClauses.push({ uid: String(ACTIVE_USERS[userIdx].uid) });
+      }
+      if (orClauses.length > 0) {
+        mongoUser = await User.findOne({ $or: orClauses });
+        if (mongoUser && userIdx < 0) {
+          const uObj = mongoUser.toObject();
+          ACTIVE_USERS.unshift({
+            id: mongoUser._id?.toString() || ('user_' + mongoUser.uid),
+            ...uObj,
+          });
+          userIdx = 0;
+          savePersistentUsers();
+        }
+      }
+    } catch (dbErr) {
+      console.warn('MongoDB user lookup notice:', dbErr.message);
+    }
+  }
+
+  return { userIdx, mongoUser };
+};
+
 /**
  * POST /api/deposits/approve
- * Approves a deposit: Marks deposit as approved and immediately credits user balance and totalDeposit
- * STRICT IDEMPOTENCY: Verifies deposit is not already approved to prevent duplicate balance additions.
+ * Approves a deposit: Marks deposit as approved and atomically increments user balance and totalDeposit.
+ * STRICT IDEMPOTENCY: Tracked strictly by unique depositId (never by txid) so multiple deposits
+ * sharing the same test TXID credit independently and each deposit credits EXACTLY ONCE.
  */
 app.post('/api/deposits/approve', async (req, res) => {
-  try {
-    const { depositId, amount, userUid, userId, username, adminUsername } = req.body;
-    if (!depositId) {
-      return res.status(400).json({ success: false, message: 'Deposit ID is required.' });
-    }
+  const { depositId, amount, userUid, userId, username, adminUsername, txid, depositAddress } = req.body || {};
+  if (!depositId) {
+    return res.status(400).json({ success: false, message: 'Deposit ID is required.' });
+  }
 
+  if (IN_FLIGHT_DEPOSIT_APPROVALS.has(depositId)) {
+    return res.status(409).json({
+      success: false,
+      message: 'Deposit approval is currently in progress. Please wait.',
+    });
+  }
+
+  IN_FLIGHT_DEPOSIT_APPROVALS.add(depositId);
+
+  try {
     const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
     const reviewer = adminUsername || 'admin';
 
-    // 1. Check existing deposit in memory
-    const depIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === depositId);
+    // 1. Check existing deposit strictly by unique depositId in memory + MongoDB
+    let depIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === depositId);
     let targetDeposit = depIdx >= 0 ? ACTIVE_DEPOSITS[depIdx] : null;
+    let mongoDep = null;
 
-    // Check existing deposit in MongoDB if not found or to verify persisted status
     if (mongoose.connection.readyState === 1) {
       try {
-        const mongoDep = await Deposit.findOne({ id: depositId });
+        mongoDep = await Deposit.findOne({ id: depositId });
         if (mongoDep) {
+          const mongoDepObj = mongoDep.toObject();
           if (!targetDeposit) {
-            targetDeposit = mongoDep.toObject();
+            targetDeposit = mongoDepObj;
             ACTIVE_DEPOSITS.unshift(targetDeposit);
-          } else if (mongoDep.status === 'approved') {
-            targetDeposit.status = 'approved';
+            depIdx = 0;
+          } else {
+            targetDeposit = { ...targetDeposit, ...mongoDepObj };
+            ACTIVE_DEPOSITS[depIdx] = targetDeposit;
           }
         }
       } catch (dbErr) {
@@ -1333,53 +1469,161 @@ app.post('/api/deposits/approve', async (req, res) => {
       }
     }
 
-    // STRICT IDEMPOTENCY GUARD:
+    const effectiveUserUid = String(userUid || targetDeposit?.userUid || '');
+    const effectiveUserId = String(userId || targetDeposit?.userId || '');
+    const effectiveUsername = username || targetDeposit?.username || '';
+
+    // 2. STRICT IDEMPOTENCY GUARD (by unique depositId ONLY, never by txid):
     // If deposit has already been approved, DO NOT increment user balance again!
     if (targetDeposit && targetDeposit.status === 'approved') {
-      const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
-      const tUserUid = String(userUid || targetDeposit.userUid || '');
-      const tUserId = String(userId || targetDeposit.userId || '');
-      const tUsername = norm(username || targetDeposit.username);
-
-      const existingUser = ACTIVE_USERS.find((u) => {
-        if (tUserUid && String(u.uid) === tUserUid) return true;
-        if (tUserId && (u.id === tUserId || String(u.uid) === tUserId)) return true;
-        if (tUsername && norm(u.username) === tUsername) return true;
-        return false;
+      const { userIdx, mongoUser } = await findUserFromMemoryOrMongo({
+        userUid: effectiveUserUid,
+        userId: effectiveUserId,
+        username: effectiveUsername,
       });
+      const existingUser =
+        mongoUser
+          ? {
+              ...(userIdx >= 0 ? ACTIVE_USERS[userIdx] : {}),
+              ...mongoUser.toObject(),
+              id: (userIdx >= 0 && ACTIVE_USERS[userIdx]?.id) || mongoUser._id?.toString() || ('user_' + mongoUser.uid),
+            }
+          : userIdx >= 0
+          ? ACTIVE_USERS[userIdx]
+          : null;
 
       return res.json({
         success: true,
         alreadyApproved: true,
         message: `Deposit ${depositId} has already been approved. Balance was not incremented again.`,
         deposit: targetDeposit,
-        user: existingUser || null,
+        user: existingUser,
       });
     }
 
-    const parsedAmount = Number(amount || targetDeposit?.amount || 0);
+    if (targetDeposit && targetDeposit.status === 'rejected') {
+      return res.status(400).json({
+        success: false,
+        message: `Deposit ${depositId} was already rejected.`,
+      });
+    }
 
-    // Update deposit status to approved
+    const parsedAmount = Number(Number(amount ?? targetDeposit?.amount ?? 0).toFixed(4));
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid positive deposit amount is required.',
+      });
+    }
+
+    // 3. Resolve target user FIRST (before marking deposit approved!) so we never approve a deposit without crediting
+    const { userIdx, mongoUser } = await findUserFromMemoryOrMongo({
+      userUid: effectiveUserUid,
+      userId: effectiveUserId,
+      username: effectiveUsername,
+    });
+
+    if (userIdx < 0 && !mongoUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'Target user not found. Deposit remains pending and was not approved.',
+      });
+    }
+
+    const memUser = userIdx >= 0 ? ACTIVE_USERS[userIdx] : null;
+    const resolvedUid = String((mongoUser && mongoUser.uid) || (memUser && memUser.uid) || effectiveUserUid);
+    const resolvedUserId = (memUser && memUser.id) || (mongoUser && mongoUser._id?.toString()) || effectiveUserId;
+    const resolvedUsername = (mongoUser && mongoUser.username) || (memUser && memUser.username) || effectiveUsername;
+
+    // 4. Atomically transition deposit status -> 'approved' & balanceCredited: true
+    if (mongoose.connection.readyState === 1) {
+      try {
+        if (mongoDep) {
+          const claimed = await Deposit.findOneAndUpdate(
+            { id: depositId, status: { $ne: 'approved' } },
+            {
+              $set: {
+                status: 'approved',
+                balanceCredited: true,
+                creditedAt: nowStr,
+                reviewedAt: nowStr,
+                reviewedBy: reviewer,
+              },
+            },
+            { new: true }
+          );
+          if (!claimed) {
+            // Concurrent request already claimed and approved this depositId
+            const latestDep = await Deposit.findOne({ id: depositId });
+            const latestUser = await User.findOne({ uid: resolvedUid });
+            if (latestDep) {
+              const obj = latestDep.toObject();
+              if (depIdx >= 0) ACTIVE_DEPOSITS[depIdx] = obj;
+              else ACTIVE_DEPOSITS.unshift(obj);
+              savePersistentDeposits();
+            }
+            return res.json({
+              success: true,
+              alreadyApproved: true,
+              message: `Deposit ${depositId} has already been approved. Balance was not incremented again.`,
+              deposit: latestDep ? latestDep.toObject() : targetDeposit,
+              user: latestUser ? latestUser.toObject() : memUser,
+            });
+          }
+          targetDeposit = claimed.toObject();
+        } else {
+          const newDepPayload = {
+            id: depositId,
+            userId: resolvedUserId || '',
+            userUid: resolvedUid,
+            username: resolvedUsername,
+            amount: parsedAmount,
+            currency: targetDeposit?.currency || 'USDT',
+            protocol: targetDeposit?.protocol || 'TRC-20',
+            depositAddress: depositAddress || targetDeposit?.depositAddress || '',
+            txid: txid || targetDeposit?.txid || ('tx_approved_' + Date.now()),
+            status: 'approved',
+            balanceCredited: true,
+            creditedAt: nowStr,
+            createdAt: targetDeposit?.createdAt || nowStr,
+            reviewedAt: nowStr,
+            reviewedBy: reviewer,
+          };
+          await Deposit.updateOne({ id: depositId }, { $set: newDepPayload }, { upsert: true });
+          targetDeposit = newDepPayload;
+        }
+      } catch (dbErr) {
+        console.warn('MongoDB deposit approve transition notice:', dbErr.message);
+      }
+    }
+
     if (depIdx >= 0) {
       ACTIVE_DEPOSITS[depIdx] = {
         ...ACTIVE_DEPOSITS[depIdx],
+        ...(targetDeposit || {}),
         status: 'approved',
+        balanceCredited: true,
+        creditedAt: nowStr,
         reviewedAt: nowStr,
         reviewedBy: reviewer,
       };
       targetDeposit = ACTIVE_DEPOSITS[depIdx];
     } else {
       targetDeposit = {
+        ...(targetDeposit || {}),
         id: depositId,
-        userId: userId || '',
-        userUid: userUid || '',
-        username: username || '',
+        userId: resolvedUserId || '',
+        userUid: resolvedUid,
+        username: resolvedUsername,
         amount: parsedAmount,
         currency: 'USDT',
         protocol: 'TRC-20',
-        txid: 'tx_approved_' + Date.now(),
+        depositAddress: depositAddress || targetDeposit?.depositAddress || '',
+        txid: txid || targetDeposit?.txid || ('tx_approved_' + Date.now()),
         status: 'approved',
-        createdAt: nowStr,
+        balanceCredited: true,
+        creditedAt: nowStr,
+        createdAt: targetDeposit?.createdAt || nowStr,
         reviewedAt: nowStr,
         reviewedBy: reviewer,
       };
@@ -1387,42 +1631,82 @@ app.post('/api/deposits/approve', async (req, res) => {
     }
     savePersistentDeposits();
 
-    if (mongoose.connection.readyState === 1) {
+    // 5. Atomically increment user's balance and totalDeposit EXACTLY ONCE
+    // STRICT DECOUPLING: Deposit approval ONLY credits balance/totalDeposit/vipLevel.
+    // It MUST NEVER enable or toggle on workPermission or cycleApprovedByAdmin.
+    let updatedUser = null;
+
+    if (mongoose.connection.readyState === 1 && mongoUser) {
       try {
-        await Deposit.updateOne(
-          { id: depositId },
-          {
-            $set: {
-              status: 'approved',
-              reviewedAt: nowStr,
-              reviewedBy: reviewer,
-            },
-          },
-          { upsert: true }
+        // Ensure numeric fields before atomic $inc (guards against null/undefined fields)
+        if (typeof mongoUser.balance !== 'number' || typeof mongoUser.totalDeposit !== 'number') {
+          await User.updateOne(
+            { _id: mongoUser._id },
+            {
+              $set: {
+                balance: Number(mongoUser.balance || 0),
+                totalDeposit: Number(mongoUser.totalDeposit || 0),
+              },
+            }
+          );
+        }
+
+        const incDoc = await User.findOneAndUpdate(
+          { _id: mongoUser._id },
+          { $inc: { balance: parsedAmount, totalDeposit: parsedAmount } },
+          { new: true }
         );
+
+        if (incDoc) {
+          const cleanBal = Number(Number(incDoc.balance || 0).toFixed(4));
+          const cleanTotalDep = Number(Number(incDoc.totalDeposit || 0).toFixed(4));
+
+          let vip = incDoc.vipLevel || 0;
+          if (cleanBal >= 899) vip = Math.max(vip, 3);
+          else if (cleanBal >= 499) vip = Math.max(vip, 2);
+          else if (cleanBal >= 20) vip = Math.max(vip, 1);
+
+          if (cleanBal !== incDoc.balance || cleanTotalDep !== incDoc.totalDeposit || vip !== incDoc.vipLevel) {
+            await User.updateOne(
+              { _id: mongoUser._id },
+              {
+                $set: {
+                  balance: cleanBal,
+                  totalDeposit: cleanTotalDep,
+                  vipLevel: vip,
+                },
+              }
+            );
+          }
+
+          const baseMem = memUser || { id: mongoUser._id?.toString() || ('user_' + mongoUser.uid), ...mongoUser.toObject() };
+          updatedUser = {
+            ...baseMem,
+            ...incDoc.toObject(),
+            id: baseMem.id,
+            balance: cleanBal,
+            totalDeposit: cleanTotalDep,
+            vipLevel: vip,
+            workPermission: baseMem.workPermission === true,
+            cycleApprovedByAdmin: baseMem.cycleApprovedByAdmin === true,
+          };
+
+          if (userIdx >= 0) {
+            ACTIVE_USERS[userIdx] = updatedUser;
+          } else {
+            ACTIVE_USERS.unshift(updatedUser);
+          }
+          savePersistentUsers();
+        }
       } catch (dbErr) {
-        console.warn('MongoDB deposit approve notice:', dbErr.message);
+        console.warn('MongoDB atomic deposit balance increment notice:', dbErr.message);
       }
     }
 
-    // 2. Identify target user and increment balance & totalDeposit EXACTLY ONCE
-    const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
-    const targetUserUid = String(userUid || targetDeposit?.userUid || '');
-    const targetUserId = String(userId || targetDeposit?.userId || '');
-    const targetUsername = norm(username || targetDeposit?.username);
-
-    const userIdx = ACTIVE_USERS.findIndex((u) => {
-      if (targetUserUid && String(u.uid) === targetUserUid) return true;
-      if (targetUserId && (u.id === targetUserId || String(u.uid) === targetUserId)) return true;
-      if (targetUsername && norm(u.username) === targetUsername) return true;
-      return false;
-    });
-
-    let updatedUser = null;
-    if (userIdx >= 0) {
+    if (!updatedUser && userIdx >= 0) {
       const u = ACTIVE_USERS[userIdx];
-      const newBal = Number(((u.balance || 0) + parsedAmount).toFixed(4));
-      const newTotalDep = Number(((u.totalDeposit || 0) + parsedAmount).toFixed(4));
+      const newBal = Number((Number(u.balance || 0) + parsedAmount).toFixed(4));
+      const newTotalDep = Number((Number(u.totalDeposit || 0) + parsedAmount).toFixed(4));
 
       let vip = u.vipLevel || 0;
       if (newBal >= 899) vip = Math.max(vip, 3);
@@ -1434,6 +1718,8 @@ app.post('/api/deposits/approve', async (req, res) => {
         balance: newBal,
         totalDeposit: newTotalDep,
         vipLevel: vip,
+        workPermission: u.workPermission === true,
+        cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
       };
       updatedUser = ACTIVE_USERS[userIdx];
       savePersistentUsers();
@@ -1451,7 +1737,7 @@ app.post('/api/deposits/approve', async (req, res) => {
             }
           );
         } catch (dbErr) {
-          console.warn('MongoDB user deposit balance increment notice:', dbErr.message);
+          console.warn('MongoDB user deposit fallback increment notice:', dbErr.message);
         }
       }
     }
@@ -1465,94 +1751,174 @@ app.post('/api/deposits/approve', async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to approve deposit: ' + err.message });
+  } finally {
+    IN_FLIGHT_DEPOSIT_APPROVALS.delete(depositId);
   }
 });
 
 /**
  * POST /api/admin/recalculate-balance
- * Recalculate and set user balance to the exact calculated sum of approved deposits
- * Fixes any double-counting or discrepancies.
+ * Recalculates and sets user balance to:
+ *   sum(unique approved deposits by deposit.id) + earnedCommissions - totalWithdrawals
+ * Deduplicates deposits strictly by unique deposit document ID (never by txid).
  */
 app.post('/api/admin/recalculate-balance', async (req, res) => {
   try {
-    const { userUid, userId, username, baseBalance = 0 } = req.body;
+    const {
+      userUid,
+      userId,
+      username,
+      baseBalance = 0,
+      earnedCommissions: clientEarnedCommissions,
+      totalWithdrawals: clientTotalWithdrawals,
+    } = req.body || {};
+
     if (!userUid && !userId && !username) {
       return res.status(400).json({ success: false, message: 'User identifier (UID, ID, or username) is required.' });
     }
 
     const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
-    const tUid = String(userUid || '');
-    const tId = String(userId || '');
-    const tUname = norm(username);
 
-    // 1. Locate user in ACTIVE_USERS
-    const userIdx = ACTIVE_USERS.findIndex((u) => {
-      if (tUid && String(u.uid) === tUid) return true;
-      if (tId && (u.id === tId || String(u.uid) === tId)) return true;
-      if (tUname && norm(u.username) === tUname) return true;
-      return false;
-    });
+    // 1. Locate user in ACTIVE_USERS or MongoDB
+    const { userIdx, mongoUser } = await findUserFromMemoryOrMongo({ userUid, userId, username });
 
-    if (userIdx < 0) {
+    if (userIdx < 0 && !mongoUser) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    const u = ACTIVE_USERS[userIdx];
+    const u = mongoUser
+      ? {
+          ...(userIdx >= 0 ? ACTIVE_USERS[userIdx] : {}),
+          ...mongoUser.toObject(),
+          id: (userIdx >= 0 && ACTIVE_USERS[userIdx]?.id) || mongoUser._id?.toString() || ('user_' + mongoUser.uid),
+        }
+      : ACTIVE_USERS[userIdx];
+
     const uidStr = String(u.uid);
     const unameLower = norm(u.username);
     const uId = u.id;
+    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const unameRegex = new RegExp(`^${escapeRegex(u.username)}$`, 'i');
 
     // 2. Fetch all approved deposits for this user from memory + MongoDB
+    // Deduplicate STRICTLY by unique deposit ID (never by txid)
     let mongoDeps = [];
+    let mongoCompletedTasks = [];
+    let mongoWithdrawals = [];
+
     if (mongoose.connection.readyState === 1) {
       try {
-        mongoDeps = await Deposit.find({
-          status: 'approved',
-          $or: [
-            { userUid: uidStr },
-            { userId: uId },
-            { username: new RegExp(`^${u.username}$`, 'i') },
-          ],
-        });
+        [mongoDeps, mongoCompletedTasks, mongoWithdrawals] = await Promise.all([
+          Deposit.find({
+            status: 'approved',
+            $or: [{ userUid: uidStr }, { userId: uId }, { username: unameRegex }],
+          }),
+          TaskSimulation.find({
+            status: 'completed',
+            $or: [{ userId: uidStr }, { userId: uId }, { username: unameRegex }],
+          }),
+          WithdrawalTaxRecord.find({
+            status: { $ne: 'rejected' },
+            $or: [{ userId: uidStr }, { userId: uId }, { username: unameRegex }],
+          }),
+        ]);
       } catch (mErr) {
-        console.warn('MongoDB deposits recalculation notice:', mErr.message);
+        console.warn('MongoDB recalculation fetch notice:', mErr.message);
       }
     }
 
     const approvedDepMap = new Map();
-    // Memory approved deposits
     ACTIVE_DEPOSITS.forEach((d) => {
       if (
         d.status === 'approved' &&
         (String(d.userUid) === uidStr || d.userId === uId || norm(d.username) === unameLower)
       ) {
-        approvedDepMap.set(d.id, d);
+        approvedDepMap.set(String(d.id), d);
       }
     });
-    // Merge mongo approved deposits
     mongoDeps.forEach((md) => {
       const dObj = md.toObject();
-      if (!approvedDepMap.has(md.id)) {
-        approvedDepMap.set(md.id, dObj);
+      const key = String(dObj.id || md._id);
+      if (!approvedDepMap.has(key)) {
+        approvedDepMap.set(key, dObj);
       }
     });
 
     const userApprovedDeposits = Array.from(approvedDepMap.values());
-    const totalApprovedDeposits = userApprovedDeposits.reduce((sum, d) => sum + Number(d.amount || 0), 0);
-    const exactBalance = Number((Number(baseBalance || 0) + totalApprovedDeposits).toFixed(4));
-    const exactTotalDeposit = Number(totalApprovedDeposits.toFixed(4));
+    const totalApprovedDeposits = Number(
+      userApprovedDeposits.reduce((sum, d) => sum + Number(d.amount || 0), 0).toFixed(4)
+    );
+
+    // 3. Sum earned commissions from unique completed orders (disk + MongoDB) and persisted commission totals
+    const completedOrderMap = new Map();
+    ACTIVE_SUBMITTED_ORDERS.forEach((o) => {
+      if (
+        o.status === 'completed' &&
+        (String(o.userUid) === uidStr || o.userId === uId || norm(o.username) === unameLower)
+      ) {
+        const key = String(o.orderNo || o.orderId || '');
+        if (key) completedOrderMap.set(key, Number(o.commission || 0));
+      }
+    });
+    mongoCompletedTasks.forEach((t) => {
+      const tObj = t.toObject();
+      const key = String(tObj.orderNumber || tObj._id || '');
+      if (key && !completedOrderMap.has(key)) {
+        completedOrderMap.set(key, Number(tObj.commission || 0));
+      }
+    });
+
+    const ordersCommSum = Number(
+      Array.from(completedOrderMap.values())
+        .reduce((sum, c) => sum + c, 0)
+        .toFixed(4)
+    );
+    const persistedCommSum = Number(
+      ((Number(u.todayCommission || 0) || 0) + (Number(u.yesterdayCommission || 0) || 0)).toFixed(4)
+    );
+    const clientComm =
+      typeof clientEarnedCommissions === 'number' && !isNaN(clientEarnedCommissions)
+        ? Number(Math.max(0, clientEarnedCommissions).toFixed(4))
+        : 0;
+    const earnedCommissions = Number(Math.max(ordersCommSum, persistedCommSum, clientComm).toFixed(4));
+
+    // 4. Sum non-rejected withdrawals
+    const mongoWithdrawalsSum = Number(
+      mongoWithdrawals.reduce((sum, w) => sum + Number(w.amount || 0), 0).toFixed(4)
+    );
+    const clientWd =
+      typeof clientTotalWithdrawals === 'number' && !isNaN(clientTotalWithdrawals)
+        ? Number(Math.max(0, clientTotalWithdrawals).toFixed(4))
+        : 0;
+    const totalWithdrawals = Number(
+      Math.max(mongoWithdrawalsSum, clientWd, Number(u.totalWithdrawal || 0)).toFixed(4)
+    );
+
+    const exactBalance = Number(
+      Math.max(0, Number(baseBalance || 0) + totalApprovedDeposits + earnedCommissions - totalWithdrawals).toFixed(4)
+    );
+    const exactTotalDeposit = totalApprovedDeposits;
 
     let vip = u.vipLevel || 0;
     if (exactBalance >= 899) vip = Math.max(vip, 3);
     else if (exactBalance >= 499) vip = Math.max(vip, 2);
     else if (exactBalance >= 20) vip = Math.max(vip, 1);
 
-    ACTIVE_USERS[userIdx] = {
+    const updatedRecord = {
       ...u,
       balance: exactBalance,
       totalDeposit: exactTotalDeposit,
+      totalWithdrawal: totalWithdrawals,
       vipLevel: vip,
+      workPermission: u.workPermission === true,
+      cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
     };
+
+    if (userIdx >= 0) {
+      ACTIVE_USERS[userIdx] = updatedRecord;
+    } else {
+      ACTIVE_USERS.unshift(updatedRecord);
+    }
     savePersistentUsers();
 
     if (mongoose.connection.readyState === 1) {
@@ -1563,6 +1929,7 @@ app.post('/api/admin/recalculate-balance', async (req, res) => {
             $set: {
               balance: exactBalance,
               totalDeposit: exactTotalDeposit,
+              totalWithdrawal: totalWithdrawals,
               vipLevel: vip,
             },
           }
@@ -1574,11 +1941,13 @@ app.post('/api/admin/recalculate-balance', async (req, res) => {
 
     return res.json({
       success: true,
-      message: `User ${u.username}'s balance successfully reset to exact approved deposits total: ${exactBalance.toFixed(2)} USDT (${userApprovedDeposits.length} approved deposits).`,
-      user: ACTIVE_USERS[userIdx],
+      message: `User ${u.username}'s balance recalculated accurately: ${exactBalance.toFixed(2)} USDT (${userApprovedDeposits.length} approved deposits: ${exactTotalDeposit.toFixed(2)} + commissions: ${earnedCommissions.toFixed(2)} - withdrawals: ${totalWithdrawals.toFixed(2)}).`,
+      user: updatedRecord,
       calculated: {
         approvedDepositsCount: userApprovedDeposits.length,
         totalApprovedDeposits: exactTotalDeposit,
+        earnedCommissions,
+        totalWithdrawals,
         correctedBalance: exactBalance,
       },
     });
@@ -1722,6 +2091,85 @@ app.post('/api/deposits/reject', async (req, res) => {
 });
 
 /**
+ * POST /api/orders/grab
+ * Persists a newly grabbed incomplete order (e.g., pending Combo Order #14) so it survives logouts, reloads, and session changes
+ */
+app.post('/api/orders/grab', async (req, res) => {
+  try {
+    const { order, userUid, username } = req.body;
+    if (!order || !order.orderNo) {
+      return res.status(400).json({ success: false, message: 'Order payload with orderNo is required.' });
+    }
+
+    const uidStr = String(userUid || order.userUid || '');
+    const u = ACTIVE_USERS.find(
+      (x) => (uidStr && String(x.uid) === uidStr) || (order.userId && x.id === order.userId)
+    );
+
+    const record = {
+      ...order,
+      orderId: order.id || order.orderId || ('ord_' + Date.now()),
+      orderNo: String(order.orderNo),
+      userUid: uidStr || (u ? String(u.uid) : ''),
+      userId: order.userId || (u ? u.id : ''),
+      username: username || (u ? u.username : ''),
+      status: 'incomplete',
+    };
+
+    const existIdx = ACTIVE_SUBMITTED_ORDERS.findIndex(
+      (o) => String(o.orderNo) === record.orderNo || (record.orderId && o.orderId === record.orderId)
+    );
+    if (existIdx >= 0) {
+      if (ACTIVE_SUBMITTED_ORDERS[existIdx].status !== 'completed') {
+        ACTIVE_SUBMITTED_ORDERS[existIdx] = { ...ACTIVE_SUBMITTED_ORDERS[existIdx], ...record };
+      }
+    } else {
+      ACTIVE_SUBMITTED_ORDERS.unshift(record);
+    }
+    savePersistentOrders();
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await TaskSimulation.updateOne(
+          { orderNumber: record.orderNo },
+          {
+            $set: {
+              userId: record.userUid || record.userId,
+              username: record.username,
+              orderNumber: record.orderNo,
+              taskNumber: Number(order.comboStepNumber || (u ? (u.currentCycleTasks || 0) + 1 : 1)),
+              cycleNumber: u?.cycleNumber || 1,
+              productTitle: record.productTitle || 'Matched Retail Order',
+              productPrice: Number(record.orderAmount || 0),
+              commission: Number(record.commission || 0),
+              expectedIncome: Number(record.expectedIncome || 0),
+              platform: record.platform || 'Amazon',
+              vipTier: record.vipTier || 'VIP 1',
+              isCombo: !!record.isComboOrder,
+              comboStep: Number(record.comboStepNumber || 0),
+              requiredBalance: record.requiredBalance,
+              comboDepositPercent: record.comboDepositPercent,
+              comboCommissionPercent: record.comboCommissionPercent,
+              requiredDepositDeficit: record.requiredDepositDeficit,
+              depositAddress: record.depositAddress,
+              items: record.items || [],
+              status: 'incomplete',
+            },
+          },
+          { upsert: true }
+        );
+      } catch (dbErr) {
+        console.warn('MongoDB grab order persist notice:', dbErr.message);
+      }
+    }
+
+    return res.json({ success: true, order: record });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to persist grabbed order: ' + err.message });
+  }
+});
+
+/**
  * POST /api/orders/submit
  * Atomically submits an order, credits commission to user's main account balance EXACTLY ONCE,
  * updates task/cycle/daily commission stats in both disk store and MongoDB.
@@ -1760,14 +2208,19 @@ app.post('/api/orders/submit', async (req, res) => {
         return false;
       });
 
-    // 1. STRICT IDEMPOTENCY GUARD: Prevent double-counting commission if same order was already submitted
+    // 1. STRICT IDEMPOTENCY GUARD: Prevent double-counting commission if same order was ALREADY COMPLETED
     let alreadySubmittedRecord = ACTIVE_SUBMITTED_ORDERS.find(
-      (o) => (orderId && o.orderId === orderId) || (orderNo && o.orderNo === orderNo)
+      (o) =>
+        o.status === 'completed' &&
+        ((orderId && o.orderId === orderId) || (orderNo && String(o.orderNo) === String(orderNo)))
     );
 
     if (!alreadySubmittedRecord && mongoose.connection.readyState === 1 && orderNo) {
       try {
-        const existingMongoTask = await TaskSimulation.findOne({ orderNumber: String(orderNo) });
+        const existingMongoTask = await TaskSimulation.findOne({
+          orderNumber: String(orderNo),
+          status: 'completed',
+        });
         if (existingMongoTask) {
           alreadySubmittedRecord = existingMongoTask.toObject();
         }
@@ -1842,13 +2295,14 @@ app.post('/api/orders/submit', async (req, res) => {
     const today = new Date().toISOString().substring(0, 10);
     const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
     const isNewDay = u.lastActiveDate && u.lastActiveDate !== today;
-    const currentTimes = isNewDay ? 0 : (u.todayOrdersCount ?? 0);
     const currentTodayComm = isNewDay ? 0 : (u.todayCommission ?? 0);
     const yestComm = isNewDay ? (u.todayCommission ?? 0) : (u.yesterdayCommission ?? 0);
 
     const nextCompletedLifetime = (u.completedTasksCount || 0) + 1;
     const nextCycleTasks = (u.currentCycleTasks || 0) + 1;
     const isCycleNowFinished = nextCycleTasks >= 25;
+    // Active cycle completed task count stays persisted against the active cycle (never reset to 0 mid-cycle)
+    const nextTodayTimes = Math.max((u.todayOrdersCount ?? 0) + 1, nextCycleTasks);
 
     const balanceBefore = Number(u.balance || 0);
     let newBalance = Number((balanceBefore + comm).toFixed(4));
@@ -1876,7 +2330,8 @@ app.post('/api/orders/submit', async (req, res) => {
     const updatedUserFields = {
       balance: newBalance,
       vipLevel: vip,
-      todayOrdersCount: currentTimes + 1,
+      todayOrdersCount: nextTodayTimes,
+      todayCompletedCount: nextTodayTimes,
       todayCommission: Number((currentTodayComm + comm).toFixed(4)),
       yesterdayCommission: yestComm,
       lastActiveDate: today,
@@ -1903,6 +2358,7 @@ app.post('/api/orders/submit', async (req, res) => {
       productTitle,
       orderAmount: Number(orderAmount || 0),
       commission: comm,
+      expectedIncome: Number((Number(orderAmount || 0) + comm).toFixed(4)),
       isComboOrder: !!isComboOrder,
       comboStepNumber: comboStepNumber || 0,
       balanceBefore,
@@ -1910,7 +2366,18 @@ app.post('/api/orders/submit', async (req, res) => {
       status: 'completed',
       completedAt: nowStr,
     };
-    ACTIVE_SUBMITTED_ORDERS.unshift(orderRecord);
+    const existingOrderIdx = ACTIVE_SUBMITTED_ORDERS.findIndex(
+      (o) => String(o.orderNo) === orderRecord.orderNo || (orderRecord.orderId && o.orderId === orderRecord.orderId)
+    );
+    if (existingOrderIdx >= 0) {
+      ACTIVE_SUBMITTED_ORDERS[existingOrderIdx] = {
+        ...ACTIVE_SUBMITTED_ORDERS[existingOrderIdx],
+        ...orderRecord,
+        status: 'completed',
+      };
+    } else {
+      ACTIVE_SUBMITTED_ORDERS.unshift(orderRecord);
+    }
     savePersistentOrders();
 
     // Persist to MongoDB Atlas if connected
@@ -1920,22 +2387,30 @@ app.post('/api/orders/submit', async (req, res) => {
           { $or: [{ uid: String(u.uid) }, { username: u.username }] },
           { $set: updatedUserFields }
         );
-        const simDoc = new TaskSimulation({
-          userId: String(u.uid),
-          username: u.username,
-          orderNumber: orderRecord.orderNo,
-          taskNumber: nextCycleTasks,
-          cycleNumber: u.cycleNumber || 1,
-          productTitle: orderRecord.productTitle,
-          productPrice: orderRecord.orderAmount,
-          commission: comm,
-          isCombo: !!isComboOrder,
-          comboStep: comboStepNumber || 0,
-          status: 'completed',
-          userBalanceBefore: balanceBefore,
-          userBalanceAfter: newBalance,
-        });
-        await simDoc.save();
+        await TaskSimulation.updateOne(
+          { orderNumber: orderRecord.orderNo },
+          {
+            $set: {
+              userId: String(u.uid),
+              username: u.username,
+              orderNumber: orderRecord.orderNo,
+              taskNumber: nextCycleTasks,
+              cycleNumber: u.cycleNumber || 1,
+              productTitle: orderRecord.productTitle,
+              productPrice: orderRecord.orderAmount,
+              commission: comm,
+              expectedIncome: orderRecord.expectedIncome,
+              platform: orderRecord.platform,
+              vipTier: orderRecord.vipTier,
+              isCombo: !!isComboOrder,
+              comboStep: comboStepNumber || 0,
+              status: 'completed',
+              userBalanceBefore: balanceBefore,
+              userBalanceAfter: newBalance,
+            },
+          },
+          { upsert: true }
+        );
       } catch (dbErr) {
         console.warn('MongoDB order submit persist notice:', dbErr.message);
       }
@@ -1951,6 +2426,8 @@ app.post('/api/orders/submit', async (req, res) => {
       orderRecord,
       user: {
         ...ACTIVE_USERS[userIdx],
+        todayOrdersCount: nextTodayTimes,
+        todayCompletedCount: nextTodayTimes,
         workPermission: ACTIVE_USERS[userIdx].workPermission === true,
         cycleApprovedByAdmin: ACTIVE_USERS[userIdx].cycleApprovedByAdmin === true,
       },
@@ -1963,35 +2440,57 @@ app.post('/api/orders/submit', async (req, res) => {
 
 /**
  * GET /api/orders
- * Returns persisted completed orders from disk store & MongoDB so order history survives reloads
+ * Returns persisted incomplete & completed orders from disk store & MongoDB so order history and pending tasks survive logouts/reloads
  */
 app.get('/api/orders', async (req, res) => {
   try {
     const { userUid } = req.query;
-    let list = [...ACTIVE_SUBMITTED_ORDERS];
+    const orderMap = new Map();
+
+    ACTIVE_SUBMITTED_ORDERS.forEach((o) => {
+      if (o && o.orderNo) {
+        orderMap.set(String(o.orderNo), o);
+      }
+    });
 
     if (mongoose.connection.readyState === 1) {
       try {
         const filter = userUid ? { userId: String(userUid) } : {};
-        const mongoSims = await TaskSimulation.find(filter).sort({ createdAt: -1 }).limit(200);
-        const existingNos = new Set(list.map((o) => String(o.orderNo)));
+        const mongoSims = await TaskSimulation.find(filter).sort({ createdAt: -1 }).limit(300);
         mongoSims.forEach((ms) => {
           const obj = ms.toObject();
-          if (!existingNos.has(String(obj.orderNumber))) {
-            list.push({
-              orderId: 'ord_mongo_' + obj._id.toString(),
-              orderNo: String(obj.orderNumber),
+          const key = String(obj.orderNumber);
+          const existing = orderMap.get(key);
+          const mappedStatus = obj.status === 'incomplete' || obj.status === 'pending' ? 'incomplete' : 'completed';
+          if (!existing || (existing.status !== 'completed' && mappedStatus === 'completed')) {
+            orderMap.set(key, {
+              orderId: existing?.orderId || ('ord_mongo_' + obj._id.toString()),
+              id: existing?.id || ('ord_mongo_' + obj._id.toString()),
+              orderNo: key,
               userUid: String(obj.userId),
               username: obj.username,
+              platform: obj.platform || existing?.platform || 'Amazon',
+              vipTier: obj.vipTier || existing?.vipTier || 'VIP 1',
               productTitle: obj.productTitle,
               orderAmount: obj.productPrice,
               commission: obj.commission,
+              expectedIncome: obj.expectedIncome || Number(((obj.productPrice || 0) + (obj.commission || 0)).toFixed(4)),
               isComboOrder: !!obj.isCombo,
               comboStepNumber: obj.comboStep || 0,
-              status: obj.status || 'completed',
-              completedAt: obj.createdAt
+              requiredBalance: obj.requiredBalance ?? existing?.requiredBalance,
+              comboDepositPercent: obj.comboDepositPercent ?? existing?.comboDepositPercent,
+              comboCommissionPercent: obj.comboCommissionPercent ?? existing?.comboCommissionPercent,
+              requiredDepositDeficit: obj.requiredDepositDeficit ?? existing?.requiredDepositDeficit,
+              depositAddress: obj.depositAddress ?? existing?.depositAddress,
+              items: Array.isArray(obj.items) && obj.items.length > 0 ? obj.items : existing?.items,
+              status: mappedStatus,
+              createdAt: obj.createdAt
                 ? new Date(obj.createdAt).toISOString().replace('T', ' ').substring(0, 19)
-                : '',
+                : (existing?.createdAt || ''),
+              completedAt:
+                mappedStatus === 'completed'
+                  ? (obj.updatedAt ? new Date(obj.updatedAt).toISOString().replace('T', ' ').substring(0, 19) : existing?.completedAt || '')
+                  : undefined,
             });
           }
         });
@@ -2000,6 +2499,7 @@ app.get('/api/orders', async (req, res) => {
       }
     }
 
+    let list = Array.from(orderMap.values());
     if (userUid) {
       list = list.filter((o) => String(o.userUid) === String(userUid));
     }
@@ -2059,18 +2559,18 @@ app.post('/api/auth/login', async (req, res) => {
 
     const cleanUser = username.trim();
 
-    // 1. Check in persistent ACTIVE_USERS memory/disk store first
-    let user = ACTIVE_USERS.find(
+    // 1. Check in persistent ACTIVE_USERS memory/disk store and MongoDB, merging latest state
+    const activeUser = ACTIVE_USERS.find(
       (u) =>
         (u.username && u.username.toLowerCase() === cleanUser.toLowerCase()) ||
         (u.uid && String(u.uid) === cleanUser)
     ) || null;
 
-    // 2. If not found in ACTIVE_USERS, check MongoDB if connected
-    if (!user && mongoose.connection.readyState === 1) {
+    let mongoUserDoc = null;
+    if (mongoose.connection.readyState === 1) {
       try {
         const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        user = await User.findOne({
+        mongoUserDoc = await User.findOne({
           $or: [
             { username: { $regex: new RegExp(`^${escapeRegex(cleanUser)}$`, 'i') } },
             { uid: cleanUser },
@@ -2079,6 +2579,23 @@ app.post('/api/auth/login', async (req, res) => {
       } catch (dbErr) {
         console.warn('MongoDB login search error:', dbErr.message);
       }
+    }
+
+    const mongoObj = mongoUserDoc ? mongoUserDoc.toObject() : null;
+    let user = null;
+    if (activeUser && mongoObj) {
+      user = {
+        ...activeUser,
+        ...mongoObj,
+        id: activeUser.id || (mongoObj._id ? mongoObj._id.toString() : ('user_' + mongoObj.uid)),
+      };
+    } else if (activeUser) {
+      user = activeUser;
+    } else if (mongoObj) {
+      user = {
+        ...mongoObj,
+        id: mongoObj._id ? mongoObj._id.toString() : ('user_' + mongoObj.uid),
+      };
     }
 
     if (!user) {
@@ -2097,11 +2614,13 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
+    const effectiveTodayCount = resolveEffectiveTodayCount(user);
+
     return res.json({
       success: true,
       message: 'Login successful!',
       user: {
-        id: user._id ? user._id.toString() : user.id,
+        id: user.id || (user._id ? user._id.toString() : ('user_' + user.uid)),
         uid: user.uid,
         username: user.username,
         withdrawalPassword: user.withdrawalPassword || null,
@@ -2114,7 +2633,8 @@ app.post('/api/auth/login', async (req, res) => {
         vipLevel: user.vipLevel,
         avatarUrl: user.avatarUrl,
         wallet: normalizeWallet(user.wallet),
-        todayOrdersCount: user.todayOrdersCount || 0,
+        todayOrdersCount: effectiveTodayCount,
+        todayCompletedCount: effectiveTodayCount,
         todayCommission: user.todayCommission || 0,
         yesterdayCommission: user.yesterdayCommission || 0,
         lastActiveDate: user.lastActiveDate || '',

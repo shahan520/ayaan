@@ -15,7 +15,9 @@ export const RecordTab: React.FC<Props> = ({ onNavigateToDeposit }) => {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [inspectOrder, setInspectOrder] = useState<GrabbedOrder | null>(null);
 
-  const userOrders = orders.filter((o) => currentUser && o.userId === currentUser.id);
+  const userOrders = orders.filter(
+    (o) => currentUser && (o.userId === currentUser.id || (o.userUid && String(o.userUid) === String(currentUser.uid)))
+  );
 
   const incompleteOrders = userOrders.filter((o) => o.status === 'incomplete');
   const completeOrders = userOrders.filter((o) => o.status === 'completed');

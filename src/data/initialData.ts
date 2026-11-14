@@ -376,7 +376,8 @@ export const INITIAL_USERS: User[] = [
     },
     avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
     createdAt: '2026-02-10 08:30:00',
-    todayOrdersCount: 4,
+    todayOrdersCount: 13,
+    todayCompletedCount: 13,
     todayCommission: 12.7968,
     completedTasksCount: 13, // At 13 tasks: Next order is Task #14 -> Triggers Special Combo Order!
     currentCycleTasks: 13,

@@ -113,7 +113,7 @@ export const AdminPanel: React.FC = () => {
   const [demoPassword, setDemoPassword] = useState('123456');
   const [demoBalance, setDemoBalance] = useState('300');
   const [demoSelectedAddress, setDemoSelectedAddress] = useState<string>(DEMO_TRC20_ADDRESS_POOL[0]);
-  const [demoWorkPermission, setDemoWorkPermission] = useState(true);
+  const [demoWorkPermission, setDemoWorkPermission] = useState(false);
   const [createdDemoUser, setCreatedDemoUser] = useState<User | null>(null);
 
   // Balance adjustment modal state
@@ -2027,6 +2027,14 @@ export const AdminPanel: React.FC = () => {
                   d.status === 'approved'
               );
               const approvedSum = userApprovedDeps.reduce((sum, d) => sum + Number(d.amount || 0), 0);
+              const fullModalUser = users.find(
+                (u) => u.id === balanceModalUser.id || String(u.uid) === String(balanceModalUser.uid)
+              );
+              const earnedCommSum = Number(
+                ((fullModalUser?.todayCommission || 0) + (fullModalUser?.yesterdayCommission || 0)).toFixed(4)
+              );
+              const wdSum = Number(fullModalUser?.totalWithdrawal || 0);
+              const netTotal = Number(Math.max(0, approvedSum + earnedCommSum - wdSum).toFixed(2));
 
               return (
                 <div className="bg-slate-900/90 border border-emerald-500/30 rounded-xl p-3 space-y-2">
@@ -2040,7 +2048,9 @@ export const AdminPanel: React.FC = () => {
                     </span>
                   </div>
                   <div className="text-[11px] text-slate-400">
-                    Verified {userApprovedDeps.length} approved deposit record{userApprovedDeps.length === 1 ? '' : 's'}.
+                    Verified {userApprovedDeps.length} approved deposit record{userApprovedDeps.length === 1 ? '' : 's'}
+                    {earnedCommSum > 0 ? ` + ${earnedCommSum.toFixed(2)} commissions` : ''}
+                    {wdSum > 0 ? ` - ${wdSum.toFixed(2)} withdrawals` : ''}.
                   </div>
                   <button
                     type="button"
@@ -2051,7 +2061,7 @@ export const AdminPanel: React.FC = () => {
                     }}
                     className="w-full py-1.5 bg-emerald-700/80 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
                   >
-                    Reset Balance to Exact Approved Total ({approvedSum.toFixed(2)} USDT)
+                    Recalculate Balance (Deposits + Commissions - Withdrawals ≈ {netTotal.toFixed(2)} USDT)
                   </button>
                 </div>
               );

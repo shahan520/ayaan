@@ -120,7 +120,10 @@ export const MenuTab: React.FC<Props> = ({
 
   // Pending gap calculation (if an incomplete order requires more balance)
   const incompleteOrder = orders.find(
-    (o) => o.userId === currentUser?.id && o.status === 'incomplete'
+    (o) =>
+      currentUser &&
+      (o.userId === currentUser.id || (o.userUid && String(o.userUid) === String(currentUser.uid))) &&
+      o.status === 'incomplete'
   );
   const pendingShortfall =
     incompleteOrder && incompleteOrder.requiredBalance && currentUser
@@ -215,7 +218,11 @@ export const MenuTab: React.FC<Props> = ({
   if (activePlatformDetail) {
     // Dynamic Stats metrics
     const userBalanceDisplay = currentUser ? currentUser.balance.toFixed(2) : '0.00';
-    const todayTimes = currentUser?.todayOrdersCount ?? 0;
+    const cycleTasksCompleted = currentUser?.currentCycleTasks ?? 0;
+    const todayTimes =
+      cycleTasksCompleted > 0
+        ? Math.max(currentUser?.todayOrdersCount ?? 0, currentUser?.todayCompletedCount ?? 0, cycleTasksCompleted)
+        : (currentUser?.todayOrdersCount ?? currentUser?.todayCompletedCount ?? 0);
     const todayCommissionStr = `${(currentUser?.todayCommission ?? 0).toFixed(4)}USDT`;
     const cashGapStr = pendingShortfall > 0 ? `${pendingShortfall.toFixed(2)}USDT` : '0USDT';
     const yesterdayBuyCommissionStr = `${(currentUser?.yesterdayCommission ?? 0).toFixed(4)}USDT`;
@@ -259,7 +266,7 @@ export const MenuTab: React.FC<Props> = ({
             {/* ROW 1: Left - Today's Times */}
             <div className="flex flex-col items-center justify-center">
               <span className="text-base sm:text-lg font-bold text-slate-900 font-mono leading-none">
-                {todayTimes}
+                {todayTimes} / 25
               </span>
               <span className="text-[11px] sm:text-xs text-slate-400 font-medium mt-1.5 leading-tight">
                 Today's Times
