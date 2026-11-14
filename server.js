@@ -1167,6 +1167,7 @@ app.post('/api/deposits/submit', async (req, res) => {
 /**
  * POST /api/deposits/approve
  * Approves a deposit: Marks deposit as approved and immediately credits user balance and totalDeposit
+ * STRICT IDEMPOTENCY: Verifies deposit is not already approved to prevent duplicate balance additions.
  */
 app.post('/api/deposits/approve', async (req, res) => {
   try {
@@ -1178,11 +1179,54 @@ app.post('/api/deposits/approve', async (req, res) => {
     const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
     const reviewer = adminUsername || 'admin';
 
-    // 1. Update deposit status
+    // 1. Check existing deposit in memory
     const depIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === depositId);
     let targetDeposit = depIdx >= 0 ? ACTIVE_DEPOSITS[depIdx] : null;
+
+    // Check existing deposit in MongoDB if not found or to verify persisted status
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const mongoDep = await Deposit.findOne({ id: depositId });
+        if (mongoDep) {
+          if (!targetDeposit) {
+            targetDeposit = mongoDep.toObject();
+            ACTIVE_DEPOSITS.unshift(targetDeposit);
+          } else if (mongoDep.status === 'approved') {
+            targetDeposit.status = 'approved';
+          }
+        }
+      } catch (dbErr) {
+        console.warn('MongoDB deposit lookup notice:', dbErr.message);
+      }
+    }
+
+    // STRICT IDEMPOTENCY GUARD:
+    // If deposit has already been approved, DO NOT increment user balance again!
+    if (targetDeposit && targetDeposit.status === 'approved') {
+      const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
+      const tUserUid = String(userUid || targetDeposit.userUid || '');
+      const tUserId = String(userId || targetDeposit.userId || '');
+      const tUsername = norm(username || targetDeposit.username);
+
+      const existingUser = ACTIVE_USERS.find((u) => {
+        if (tUserUid && String(u.uid) === tUserUid) return true;
+        if (tUserId && (u.id === tUserId || String(u.uid) === tUserId)) return true;
+        if (tUsername && norm(u.username) === tUsername) return true;
+        return false;
+      });
+
+      return res.json({
+        success: true,
+        alreadyApproved: true,
+        message: `Deposit ${depositId} has already been approved. Balance was not incremented again.`,
+        deposit: targetDeposit,
+        user: existingUser || null,
+      });
+    }
+
     const parsedAmount = Number(amount || targetDeposit?.amount || 0);
 
+    // Update deposit status to approved
     if (depIdx >= 0) {
       ACTIVE_DEPOSITS[depIdx] = {
         ...ACTIVE_DEPOSITS[depIdx],
@@ -1228,7 +1272,7 @@ app.post('/api/deposits/approve', async (req, res) => {
       }
     }
 
-    // 2. Identify target user and increment balance & totalDeposit
+    // 2. Identify target user and increment balance & totalDeposit EXACTLY ONCE
     const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
     const targetUserUid = String(userUid || targetDeposit?.userUid || '');
     const targetUserId = String(userId || targetDeposit?.userId || '');
@@ -1281,12 +1325,208 @@ app.post('/api/deposits/approve', async (req, res) => {
 
     return res.json({
       success: true,
+      alreadyApproved: false,
       message: `Deposit of ${parsedAmount} USDT approved and balance credited!`,
       deposit: targetDeposit,
       user: updatedUser,
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to approve deposit: ' + err.message });
+  }
+});
+
+/**
+ * POST /api/admin/recalculate-balance
+ * Recalculate and set user balance to the exact calculated sum of approved deposits
+ * Fixes any double-counting or discrepancies.
+ */
+app.post('/api/admin/recalculate-balance', async (req, res) => {
+  try {
+    const { userUid, userId, username, baseBalance = 0 } = req.body;
+    if (!userUid && !userId && !username) {
+      return res.status(400).json({ success: false, message: 'User identifier (UID, ID, or username) is required.' });
+    }
+
+    const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
+    const tUid = String(userUid || '');
+    const tId = String(userId || '');
+    const tUname = norm(username);
+
+    // 1. Locate user in ACTIVE_USERS
+    const userIdx = ACTIVE_USERS.findIndex((u) => {
+      if (tUid && String(u.uid) === tUid) return true;
+      if (tId && (u.id === tId || String(u.uid) === tId)) return true;
+      if (tUname && norm(u.username) === tUname) return true;
+      return false;
+    });
+
+    if (userIdx < 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const u = ACTIVE_USERS[userIdx];
+    const uidStr = String(u.uid);
+    const unameLower = norm(u.username);
+    const uId = u.id;
+
+    // 2. Fetch all approved deposits for this user from memory + MongoDB
+    let mongoDeps = [];
+    if (mongoose.connection.readyState === 1) {
+      try {
+        mongoDeps = await Deposit.find({
+          status: 'approved',
+          $or: [
+            { userUid: uidStr },
+            { userId: uId },
+            { username: new RegExp(`^${u.username}$`, 'i') },
+          ],
+        });
+      } catch (mErr) {
+        console.warn('MongoDB deposits recalculation notice:', mErr.message);
+      }
+    }
+
+    const approvedDepMap = new Map();
+    // Memory approved deposits
+    ACTIVE_DEPOSITS.forEach((d) => {
+      if (
+        d.status === 'approved' &&
+        (String(d.userUid) === uidStr || d.userId === uId || norm(d.username) === unameLower)
+      ) {
+        approvedDepMap.set(d.id, d);
+      }
+    });
+    // Merge mongo approved deposits
+    mongoDeps.forEach((md) => {
+      const dObj = md.toObject();
+      if (!approvedDepMap.has(md.id)) {
+        approvedDepMap.set(md.id, dObj);
+      }
+    });
+
+    const userApprovedDeposits = Array.from(approvedDepMap.values());
+    const totalApprovedDeposits = userApprovedDeposits.reduce((sum, d) => sum + Number(d.amount || 0), 0);
+    const exactBalance = Number((Number(baseBalance || 0) + totalApprovedDeposits).toFixed(4));
+    const exactTotalDeposit = Number(totalApprovedDeposits.toFixed(4));
+
+    let vip = u.vipLevel || 0;
+    if (exactBalance >= 899) vip = Math.max(vip, 3);
+    else if (exactBalance >= 499) vip = Math.max(vip, 2);
+    else if (exactBalance >= 20) vip = Math.max(vip, 1);
+
+    ACTIVE_USERS[userIdx] = {
+      ...u,
+      balance: exactBalance,
+      totalDeposit: exactTotalDeposit,
+      vipLevel: vip,
+    };
+    savePersistentUsers();
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await User.updateOne(
+          { $or: [{ uid: u.uid }, { username: u.username }] },
+          {
+            $set: {
+              balance: exactBalance,
+              totalDeposit: exactTotalDeposit,
+              vipLevel: vip,
+            },
+          }
+        );
+      } catch (dbErr) {
+        console.warn('MongoDB user balance correction notice:', dbErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `User ${u.username}'s balance successfully reset to exact approved deposits total: ${exactBalance.toFixed(2)} USDT (${userApprovedDeposits.length} approved deposits).`,
+      user: ACTIVE_USERS[userIdx],
+      calculated: {
+        approvedDepositsCount: userApprovedDeposits.length,
+        totalApprovedDeposits: exactTotalDeposit,
+        correctedBalance: exactBalance,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to recalculate balance: ' + err.message });
+  }
+});
+
+/**
+ * POST /api/admin/adjust-balance
+ * Explicitly sets or adjusts a user's balance with an audit note
+ */
+app.post('/api/admin/adjust-balance', async (req, res) => {
+  try {
+    const { userUid, userId, username, newBalance, mode = 'set', amount = 0, reason, adminUsername } = req.body;
+    if (!userUid && !userId && !username) {
+      return res.status(400).json({ success: false, message: 'User identifier is required.' });
+    }
+
+    const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
+    const tUid = String(userUid || '');
+    const tId = String(userId || '');
+    const tUname = norm(username);
+
+    const userIdx = ACTIVE_USERS.findIndex((u) => {
+      if (tUid && String(u.uid) === tUid) return true;
+      if (tId && (u.id === tId || String(u.uid) === tId)) return true;
+      if (tUname && norm(u.username) === tUname) return true;
+      return false;
+    });
+
+    if (userIdx < 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const u = ACTIVE_USERS[userIdx];
+    let finalBal = u.balance || 0;
+
+    if (mode === 'set' && typeof newBalance === 'number') {
+      finalBal = Number(newBalance.toFixed(4));
+    } else if (mode === 'credit') {
+      finalBal = Number(((u.balance || 0) + Number(amount)).toFixed(4));
+    } else if (mode === 'debit') {
+      finalBal = Number(Math.max(0, (u.balance || 0) - Number(amount)).toFixed(4));
+    }
+
+    let vip = u.vipLevel || 0;
+    if (finalBal >= 899) vip = Math.max(vip, 3);
+    else if (finalBal >= 499) vip = Math.max(vip, 2);
+    else if (finalBal >= 20) vip = Math.max(vip, 1);
+
+    ACTIVE_USERS[userIdx] = {
+      ...u,
+      balance: finalBal,
+      vipLevel: vip,
+    };
+    savePersistentUsers();
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await User.updateOne(
+          { $or: [{ uid: u.uid }, { username: u.username }] },
+          {
+            $set: {
+              balance: finalBal,
+              vipLevel: vip,
+            },
+          }
+        );
+      } catch (dbErr) {
+        console.warn('MongoDB user balance adjust notice:', dbErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `User ${u.username} balance updated to ${finalBal.toFixed(2)} USDT`,
+      user: ACTIVE_USERS[userIdx],
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to adjust balance: ' + err.message });
   }
 });
 

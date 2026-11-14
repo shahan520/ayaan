@@ -70,6 +70,7 @@ export const AdminPanel: React.FC = () => {
     approveWithdrawal,
     rejectWithdrawal,
     adjustUserBalance,
+    recalculateUserBalanceFromDeposits,
     toggleUserStatus,
     resetUserPassword,
     generateInviteCode,
@@ -117,9 +118,10 @@ export const AdminPanel: React.FC = () => {
 
   // Balance adjustment modal state
   const [balanceModalUser, setBalanceModalUser] = useState<{ id: string; username: string; uid: string; balance: number } | null>(null);
-  const [adjustType, setAdjustType] = useState<'credit' | 'debit'>('credit');
+  const [adjustType, setAdjustType] = useState<'credit' | 'debit' | 'set'>('credit');
   const [adjustAmount, setAdjustAmount] = useState('');
   const [adjustReason, setAdjustReason] = useState('');
+  const [processingDepositIds, setProcessingDepositIds] = useState<Set<string>>(new Set());
 
   // Password reset modal state
   const [passwordModalUser, setPasswordModalUser] = useState<{ id: string; username: string; uid: string } | null>(null);
@@ -572,15 +574,29 @@ export const AdminPanel: React.FC = () => {
                           {dep.status === 'pending' ? (
                             <div className="flex items-center justify-end gap-1.5">
                               <button
-                                onClick={() => notify(approveDeposit(dep.id))}
+                                disabled={!hasPermission('can_approve_deposits') || processingDepositIds.has(dep.id)}
+                                onClick={async () => {
+                                  if (processingDepositIds.has(dep.id)) return;
+                                  setProcessingDepositIds((prev) => new Set(prev).add(dep.id));
+                                  try {
+                                    const res = await approveDeposit(dep.id);
+                                    notify(res);
+                                  } finally {
+                                    setProcessingDepositIds((prev) => {
+                                      const next = new Set(prev);
+                                      next.delete(dep.id);
+                                      return next;
+                                    });
+                                  }
+                                }}
                                 title={!hasPermission('can_approve_deposits') ? 'Permission Required' : 'One-Click Approve'}
                                 className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors ${
-                                  hasPermission('can_approve_deposits')
+                                  hasPermission('can_approve_deposits') && !processingDepositIds.has(dep.id)
                                     ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                                     : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                                 }`}
                               >
-                                Approve
+                                {processingDepositIds.has(dep.id) ? 'Approving...' : 'Approve'}
                               </button>
                               <button
                                 onClick={() => notify(rejectDeposit(dep.id))}
@@ -2001,8 +2017,48 @@ export const AdminPanel: React.FC = () => {
               Balance: <strong className="text-emerald-400">{balanceModalUser.balance.toFixed(2)} USDT</strong>
             </div>
 
+            {/* Approved Deposits Summary Card with 1-Click Exact Total Recalculation */}
+            {(() => {
+              const userApprovedDeps = deposits.filter(
+                (d) =>
+                  (d.userId === balanceModalUser.id ||
+                    String(d.userUid) === String(balanceModalUser.uid) ||
+                    (d.username && d.username.toLowerCase() === balanceModalUser.username.toLowerCase())) &&
+                  d.status === 'approved'
+              );
+              const approvedSum = userApprovedDeps.reduce((sum, d) => sum + Number(d.amount || 0), 0);
+
+              return (
+                <div className="bg-slate-900/90 border border-emerald-500/30 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300 font-semibold flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                      Approved Deposits Total:
+                    </span>
+                    <span className="font-mono font-bold text-emerald-400 text-sm">
+                      {approvedSum.toFixed(2)} USDT
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    Verified {userApprovedDeps.length} approved deposit record{userApprovedDeps.length === 1 ? '' : 's'}.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const res = await recalculateUserBalanceFromDeposits(balanceModalUser.id);
+                      notify(res);
+                      setBalanceModalUser(null);
+                    }}
+                    className="w-full py-1.5 bg-emerald-700/80 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    Reset Balance to Exact Approved Total ({approvedSum.toFixed(2)} USDT)
+                  </button>
+                </div>
+              );
+            })()}
+
             <div className="space-y-3">
-              <div className="flex gap-2">
+              <div className="flex gap-1.5">
                 <button
                   type="button"
                   onClick={() => setAdjustType('credit')}
@@ -2025,18 +2081,29 @@ export const AdminPanel: React.FC = () => {
                 >
                   Debit (-)
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setAdjustType('set')}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg border transition-colors ${
+                    adjustType === 'set'
+                      ? 'bg-amber-950 text-amber-300 border-amber-700'
+                      : 'bg-slate-900 text-slate-400 border-slate-800'
+                  }`}
+                >
+                  Set Exact (=)
+                </button>
               </div>
 
               <div>
                 <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                  Amount (USDT)
+                  {adjustType === 'set' ? 'New Exact Balance (USDT)' : 'Amount (USDT)'}
                 </label>
                 <input
                   type="number"
                   step="any"
                   value={adjustAmount}
                   onChange={(e) => setAdjustAmount(e.target.value)}
-                  placeholder="e.g. 50.00"
+                  placeholder={adjustType === 'set' ? 'e.g. 500.00' : 'e.g. 50.00'}
                   className="w-full bg-white border-2 border-slate-300 rounded-lg px-3 py-2 text-xs font-bold text-black placeholder:text-black/60 focus:outline-hidden focus:ring-2 focus:ring-red-500"
                 />
               </div>
@@ -2064,15 +2131,22 @@ export const AdminPanel: React.FC = () => {
                 <button
                   onClick={() => {
                     const amt = parseFloat(adjustAmount);
-                    if (isNaN(amt) || amt <= 0) {
-                      notify({ success: false, message: 'Please enter a valid positive amount.' });
-                      return;
+                    if (adjustType === 'set') {
+                      if (isNaN(amt) || amt < 0) {
+                        notify({ success: false, message: 'Please enter a valid non-negative balance.' });
+                        return;
+                      }
+                    } else {
+                      if (isNaN(amt) || amt <= 0) {
+                        notify({ success: false, message: 'Please enter a valid positive amount.' });
+                        return;
+                      }
                     }
                     const res = adjustUserBalance(
                       balanceModalUser.id,
                       amt,
                       adjustType,
-                      adjustReason || 'Manual adjustment'
+                      adjustReason || (adjustType === 'set' ? 'Balance reset to exact amount' : 'Manual adjustment')
                     );
                     notify(res);
                     if (res.success) setBalanceModalUser(null);

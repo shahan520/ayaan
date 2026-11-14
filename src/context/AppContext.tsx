@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   INITIAL_ADMINS,
   INITIAL_AUDIT_LOGS,
@@ -129,9 +129,12 @@ interface AppContextType {
   adjustUserBalance: (
     userId: string,
     amount: number,
-    type: 'credit' | 'debit',
+    type: 'credit' | 'debit' | 'set',
     reason: string
   ) => { success: boolean; message?: string };
+  recalculateUserBalanceFromDeposits: (
+    userId: string
+  ) => Promise<{ success: boolean; message?: string }> | { success: boolean; message?: string };
   toggleUserStatus: (userId: string) => { success: boolean; message?: string };
   resetUserPassword: (
     userId: string,
@@ -1945,20 +1948,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
+  // In-flight processing lock to prevent any double-clicks or rapid parallel calls
+  const processingDepositIds = useRef<Set<string>>(new Set());
+
   const approveDeposit = (depositId: string) => {
     if (!hasPermission('can_approve_deposits')) {
       return { success: false, message: 'Permission denied: Your role cannot approve deposits.' };
     }
 
+    // 1. Guard against in-flight clicks or parallel executions
+    if (processingDepositIds.current.has(depositId)) {
+      return { success: false, message: 'Deposit approval is currently being processed. Please wait.' };
+    }
+
     const dep = deposits.find((d) => d.id === depositId);
     if (!dep) return { success: false, message: 'Deposit record not found.' };
-    if (dep.status !== 'pending') return { success: false, message: 'Deposit has already been processed.' };
+
+    // 2. Guard against already approved deposits (Strict Idempotency Check)
+    if (dep.status === 'approved') {
+      return {
+        success: false,
+        message: 'Deposit has already been approved previously. Balance was added exactly once.',
+      };
+    }
+    if (dep.status !== 'pending') {
+      return { success: false, message: `Deposit has already been processed (status: ${dep.status}).` };
+    }
+
+    processingDepositIds.current.add(depositId);
 
     const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
     const reviewer = currentAdmin.username;
     const depositAmt = Number(dep.amount);
 
-    // 1. Immediately update deposit status in React state
+    // 3. Immediately mark deposit as approved in React state
     setDeposits((prev) =>
       prev.map((d) =>
         d.id === depositId
@@ -1972,7 +1995,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
-    // 2. Identify target user and compute new balance & totalDeposit
+    // 4. Identify target user and compute new balance & totalDeposit
     const norm = (s?: string | null) => (s ? String(s).trim().toLowerCase() : '');
     const depUserUid = String(dep.userUid || '');
     const depUserId = String(dep.userId || '');
@@ -1986,9 +2009,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     });
 
-    const targetBal = targetUser ? (targetUser.balance || 0) : 0;
-    const targetTotalDep = targetUser ? (targetUser.totalDeposit || 0) : 0;
-    const currentVip = targetUser ? (targetUser.vipLevel || 0) : 0;
+    const targetBal = targetUser ? targetUser.balance || 0 : 0;
+    const targetTotalDep = targetUser ? targetUser.totalDeposit || 0 : 0;
+    const currentVip = targetUser ? targetUser.vipLevel || 0 : 0;
 
     const newBal = Number((targetBal + depositAmt).toFixed(4));
     const newTotalDep = Number((targetTotalDep + depositAmt).toFixed(4));
@@ -1997,6 +2020,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     else if (newBal >= 499) newVip = Math.max(newVip, 2);
     else if (newBal >= 20) newVip = Math.max(newVip, 1);
 
+    // Increment client balance EXACTLY ONCE
     setUsers((prev) =>
       prev.map((u) => {
         const matches =
@@ -2016,11 +2040,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    // 3. Persist to backend server immediately so polling doesn't overwrite it
     const effectiveUid = dep.userUid || targetUser?.uid;
     const effectiveUserId = dep.userId || targetUser?.id;
     const effectiveUsername = dep.username || targetUser?.username;
 
+    // 5. Send single atomic approve request to backend
+    // Notice: We do NOT make a duplicate call to syncUserUpdateToBackend here.
+    // /api/deposits/approve is the single atomic authoritative backend handler.
     fetch(getApiUrl('/api/deposits/approve'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2032,17 +2058,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         username: effectiveUsername,
         adminUsername: reviewer,
       }),
-    }).catch((err) => console.warn('Backend deposit approve sync error:', err));
-
-    if (effectiveUid) {
-      syncUserUpdateToBackend(effectiveUid, {
-        balance: newBal,
-        totalDeposit: newTotalDep,
-        vipLevel: newVip,
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.success && data.user) {
+          // Adopt authoritative server state for exact synchronization
+          setUsers((prev) =>
+            prev.map((u) =>
+              String(u.uid) === String(data.user.uid)
+                ? {
+                    ...u,
+                    balance: data.user.balance,
+                    totalDeposit: data.user.totalDeposit,
+                    vipLevel: data.user.vipLevel,
+                  }
+                : u
+            )
+          );
+        }
+      })
+      .catch((err) => console.warn('Backend deposit approve sync error:', err))
+      .finally(() => {
+        processingDepositIds.current.delete(depositId);
       });
-    }
 
-    // 4. Dispatch instant UI events across windows/tabs
+    // 6. Dispatch instant UI events across windows/tabs
     try {
       window.dispatchEvent(
         new CustomEvent('tradeweb_balance_updated', {
@@ -2206,43 +2246,162 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const adjustUserBalance = (
     userId: string,
     amount: number,
-    type: 'credit' | 'debit',
+    type: 'credit' | 'debit' | 'set',
     reason: string
   ) => {
     if (!hasPermission('can_credit_debit')) {
       return { success: false, message: 'Permission denied: Your role cannot modify user balances.' };
     }
 
-    const target = users.find((u) => u.id === userId);
+    const target = users.find((u) => u.id === userId || String(u.uid) === String(userId));
     if (!target) return { success: false, message: 'User not found.' };
 
     if (type === 'debit' && target.balance < amount) {
       return { success: false, message: 'User balance is insufficient for this debit.' };
     }
 
+    let newBal = target.balance;
+    if (type === 'set') {
+      newBal = Number(Math.max(0, amount).toFixed(4));
+    } else if (type === 'credit') {
+      newBal = Number((target.balance + amount).toFixed(4));
+    } else if (type === 'debit') {
+      newBal = Number(Math.max(0, target.balance - amount).toFixed(4));
+    }
+
+    let vip = target.vipLevel || 0;
+    if (newBal >= 899) vip = Math.max(vip, 3);
+    else if (newBal >= 499) vip = Math.max(vip, 2);
+    else if (newBal >= 20) vip = Math.max(vip, 1);
+
     setUsers((prev) =>
       prev.map((u) => {
-        if (u.id === userId) {
-          const newBal =
-            type === 'credit'
-              ? Number((u.balance + amount).toFixed(4))
-              : Number((u.balance - amount).toFixed(4));
-          syncUserUpdateToBackend(u.uid, { balance: newBal });
-          return { ...u, balance: newBal };
+        if (u.id === target.id || String(u.uid) === String(target.uid)) {
+          return { ...u, balance: newBal, vipLevel: vip };
         }
         return u;
       })
     );
 
+    syncUserUpdateToBackend(target.uid, { balance: newBal, vipLevel: vip });
+
+    fetch(getApiUrl('/api/admin/adjust-balance'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userUid: target.uid,
+        userId: target.id,
+        username: target.username,
+        newBalance: newBal,
+        mode: type,
+        amount,
+        reason,
+        adminUsername: currentAdmin.username,
+      }),
+    }).catch(() => {});
+
+    try {
+      window.dispatchEvent(new CustomEvent('tradeweb_balance_updated'));
+      window.dispatchEvent(new CustomEvent('tradeweb_users_updated'));
+    } catch {}
+
+    const actionText = type === 'set' ? 'SET_BALANCE' : type === 'credit' ? 'CREDIT_BALANCE' : 'DEBIT_BALANCE';
     logAuditAction(
-      type === 'credit' ? 'CREDIT_BALANCE' : 'DEBIT_BALANCE',
-      `${type.toUpperCase()}ED ${amount} USDT for UID: ${target.uid} (${target.username}). Reason: ${reason}`,
+      actionText as any,
+      `${actionText} ${type === 'set' ? 'to ' + newBal : amount} USDT for UID: ${target.uid} (${target.username}). Reason: ${reason}`,
       target.uid
     );
 
     return {
       success: true,
-      message: `Successfully ${type}ed ${amount} USDT for ${target.username}.`,
+      message:
+        type === 'set'
+          ? `Successfully set balance to ${newBal.toFixed(2)} USDT for ${target.username}.`
+          : `Successfully ${type}ed ${amount} USDT for ${target.username}. New balance: ${newBal.toFixed(2)} USDT.`,
+    };
+  };
+
+  const recalculateUserBalanceFromDeposits = async (userId: string) => {
+    if (!hasPermission('can_credit_debit')) {
+      return { success: false, message: 'Permission denied: Your role cannot recalculate user balances.' };
+    }
+
+    const target = users.find((u) => u.id === userId || String(u.uid) === String(userId));
+    if (!target) return { success: false, message: 'User not found.' };
+
+    const norm = (s?: string | null) => (s ? String(s).trim().toLowerCase() : '');
+    const tUid = String(target.uid);
+    const tId = target.id;
+    const tUname = norm(target.username);
+
+    // Sum all approved deposits for this user
+    const userApprovedDeps = deposits.filter((d) => {
+      const matches =
+        (d.userUid && String(d.userUid) === tUid) ||
+        (d.userId && d.userId === tId) ||
+        (d.username && norm(d.username) === tUname);
+      return matches && d.status === 'approved';
+    });
+
+    const totalApprovedDeposits = Number(
+      userApprovedDeps.reduce((sum, d) => sum + Number(d.amount || 0), 0).toFixed(4)
+    );
+
+    let vip = target.vipLevel || 0;
+    if (totalApprovedDeposits >= 899) vip = Math.max(vip, 3);
+    else if (totalApprovedDeposits >= 499) vip = Math.max(vip, 2);
+    else if (totalApprovedDeposits >= 20) vip = Math.max(vip, 1);
+
+    // Update client state immediately
+    setUsers((prev) =>
+      prev.map((u) => {
+        if (u.id === target.id || String(u.uid) === tUid) {
+          return {
+            ...u,
+            balance: totalApprovedDeposits,
+            totalDeposit: totalApprovedDeposits,
+            vipLevel: vip,
+          };
+        }
+        return u;
+      })
+    );
+
+    // Persist to server recalculation endpoint
+    try {
+      const resp = await fetch(getApiUrl('/api/admin/recalculate-balance'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userUid: target.uid,
+          userId: target.id,
+          username: target.username,
+        }),
+      });
+      const data = await resp.json();
+      if (data && data.success && data.user) {
+        setUsers((prev) =>
+          prev.map((u) => (String(u.uid) === String(data.user.uid) ? { ...u, ...data.user } : u))
+        );
+      }
+    } catch (err) {
+      console.warn('Backend recalculate balance notice:', err);
+    }
+
+    try {
+      window.dispatchEvent(new CustomEvent('tradeweb_balance_updated'));
+      window.dispatchEvent(new CustomEvent('tradeweb_users_updated'));
+    } catch {}
+
+    logAuditAction(
+      'CREDIT_BALANCE',
+      `Recalculated balance for ${target.username} (UID: ${target.uid}) from ${userApprovedDeps.length} approved deposits. Exact balance set to ${totalApprovedDeposits} USDT.`,
+      target.uid
+    );
+
+    return {
+      success: true,
+      message: `Balance for ${target.username} successfully reset to exact approved deposits total: ${totalApprovedDeposits.toFixed(2)} USDT (${userApprovedDeps.length} approved deposit${userApprovedDeps.length === 1 ? '' : 's'}).`,
     };
   };
 
@@ -2795,6 +2954,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         approveWithdrawal,
         rejectWithdrawal,
         adjustUserBalance,
+        recalculateUserBalanceFromDeposits,
         toggleUserStatus,
         resetUserPassword,
         generateInviteCode,
