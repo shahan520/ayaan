@@ -328,13 +328,6 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords, navi
                 Deposit of <strong className="text-slate-900">{amount} USDT</strong> has been sent to
                 the administrator for verification.
               </p>
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 flex items-center gap-2 text-left">
-                <Clock className="w-4 h-4 shrink-0 text-amber-600" />
-                <span>
-                  Admin will verify TXID within 1-2 minutes. Switch to Admin Panel anytime to
-                  approve with 1 click!
-                </span>
-              </div>
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={onNavigateToRecords}

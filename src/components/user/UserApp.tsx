@@ -21,6 +21,13 @@ export const UserApp: React.FC = () => {
   const [activeSubpage, setActiveSubpage] = useState<string | null>(null);
   const [depositNavParams, setDepositNavParams] = useState<DepositNavigationParams | null>(null);
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [menuVisitKey, setMenuVisitKey] = useState<number>(0);
+
+  const handleOpenMenu = () => {
+    setActiveSubpage(null);
+    setCurrentTab('menu');
+    setMenuVisitKey((k) => k + 1);
+  };
 
   // Navigation parameter handler for deposit page
   const handleNavigateToDeposit = (params?: DepositNavigationParams) => {
@@ -79,10 +86,7 @@ export const UserApp: React.FC = () => {
             setActiveSubpage(null);
             setCurrentTab('service');
           }}
-          onNavigateToMenu={() => {
-            setActiveSubpage(null);
-            setCurrentTab('menu');
-          }}
+          onNavigateToMenu={handleOpenMenu}
         />
       );
     }
@@ -130,7 +134,9 @@ export const UserApp: React.FC = () => {
         <div className={!activeSubpage && currentTab === 'home' ? 'h-full' : 'hidden'}>
           <HomeTab
             onNavigate={(page) => {
-              if (page === 'service' || page === 'menu' || page === 'record' || page === 'mine') {
+              if (page === 'menu') {
+                handleOpenMenu();
+              } else if (page === 'service' || page === 'record' || page === 'mine') {
                 setCurrentTab(page);
               } else if (page === 'deposit') {
                 handleNavigateToDeposit();
@@ -147,6 +153,7 @@ export const UserApp: React.FC = () => {
 
         <div className={!activeSubpage && currentTab === 'menu' ? 'h-full' : 'hidden'}>
           <MenuTab
+            menuVisitKey={menuVisitKey}
             onNavigateToRecord={() => setCurrentTab('record')}
             onNavigateToDeposit={handleNavigateToDeposit}
             onNavigateToWithdrawal={() => setActiveSubpage('withdrawal')}
@@ -161,7 +168,9 @@ export const UserApp: React.FC = () => {
         <div className={!activeSubpage && currentTab === 'mine' ? 'h-full' : 'hidden'}>
           <MineTab
             onNavigate={(page) => {
-              if (page === 'service' || page === 'menu' || page === 'record' || page === 'home') {
+              if (page === 'menu') {
+                handleOpenMenu();
+              } else if (page === 'service' || page === 'record' || page === 'home') {
                 setCurrentTab(page);
               } else if (page === 'deposit') {
                 handleNavigateToDeposit();
@@ -185,7 +194,11 @@ export const UserApp: React.FC = () => {
                 <button
                   key={item.key}
                   onClick={() => {
-                    setCurrentTab(item.key);
+                    if (item.key === 'menu') {
+                      handleOpenMenu();
+                    } else {
+                      setCurrentTab(item.key);
+                    }
                   }}
                   className="flex flex-col items-center justify-center py-1 transition-transform active:scale-95 group"
                 >

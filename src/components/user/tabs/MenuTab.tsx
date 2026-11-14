@@ -1,5 +1,7 @@
 import {
+  AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   Lock,
   ShoppingBag,
@@ -9,10 +11,16 @@ import {
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { DepositNavigationParams, GrabbedOrder } from '../../../types';
-import { getPlatformBalanceValidationMessage } from '../../../utils/balanceValidation';
+import {
+  getEligiblePlatformForBalance,
+  getPlatformBalanceValidationMessage,
+  getPlatformTierCheck,
+  PlatformName,
+} from '../../../utils/balanceValidation';
 import { OrderDetailsModal } from '../modals/OrderDetailsModal';
 
 interface Props {
+  menuVisitKey?: number;
   onNavigateToRecord: () => void;
   onNavigateToDeposit: (params?: DepositNavigationParams) => void;
   onNavigateToWithdrawal?: () => void;
@@ -20,6 +28,7 @@ interface Props {
 }
 
 export const MenuTab: React.FC<Props> = ({
+  menuVisitKey = 0,
   onNavigateToRecord,
   onNavigateToDeposit,
   onNavigateToWithdrawal,
@@ -27,28 +36,8 @@ export const MenuTab: React.FC<Props> = ({
 }) => {
   const { currentUser, grabOrder, orders } = useApp();
   const [selectedVip, setSelectedVip] = useState<'All' | 'VIP 1' | 'VIP 2' | 'VIP 3'>('All');
-  // Persist selected trading platform per user across navigation and reloads
-  const platformStorageKey = currentUser?.uid ? `tradeweb_active_platform_${currentUser.uid}` : null;
-  const [activePlatformDetail, setActivePlatformDetailState] = useState<'Amazon' | 'Alibaba' | 'Aliexpress' | null>(() => {
-    if (!currentUser?.uid) return null;
-    try {
-      const saved = localStorage.getItem(`tradeweb_active_platform_${currentUser.uid}`);
-      if (saved === 'Amazon' || saved === 'Alibaba' || saved === 'Aliexpress') {
-        return saved;
-      }
-    } catch {}
-    return null;
-  });
-
-  const setActivePlatformDetail = (platform: 'Amazon' | 'Alibaba' | 'Aliexpress' | null) => {
-    setActivePlatformDetailState(platform);
-    if (platformStorageKey) {
-      try {
-        if (platform) localStorage.setItem(platformStorageKey, platform);
-        else localStorage.removeItem(platformStorageKey);
-      } catch {}
-    }
-  };
+  // Always start on the main Menu platform list; never force-redirect into a previously opened platform
+  const [activePlatformDetail, setActivePlatformDetail] = useState<PlatformName | null>(null);
 
   // Toast / feedback message
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -130,23 +119,15 @@ export const MenuTab: React.FC<Props> = ({
       ? Math.max(0, incompleteOrder.requiredBalance - currentUser.balance)
       : 0;
 
-  // Restore saved platform or active incomplete task's platform when user logs in / reloads
+  // Always return to main Menu list when navigating to the Menu tab or switching accounts
   useEffect(() => {
-    if (!currentUser?.uid) {
-      setActivePlatformDetailState(null);
-      return;
+    setActivePlatformDetail(null);
+    if (currentUser?.uid) {
+      try {
+        localStorage.removeItem(`tradeweb_active_platform_${currentUser.uid}`);
+      } catch {}
     }
-    if (incompleteOrder && incompleteOrder.platform && !activePlatformDetail) {
-      setActivePlatformDetailState(incompleteOrder.platform);
-      return;
-    }
-    try {
-      const saved = localStorage.getItem(`tradeweb_active_platform_${currentUser.uid}`);
-      if ((saved === 'Amazon' || saved === 'Alibaba' || saved === 'Aliexpress') && !activePlatformDetail) {
-        setActivePlatformDetailState(saved);
-      }
-    } catch {}
-  }, [currentUser?.uid, incompleteOrder?.id]);
+  }, [menuVisitKey, currentUser?.uid]);
 
   const handleGrabOrder = () => {
     if (!currentUser) {
@@ -216,6 +197,11 @@ export const MenuTab: React.FC<Props> = ({
   // (Screenshot_2026-06-07-12-51-20-33)
   // --------------------------------------------------------------------------
   if (activePlatformDetail) {
+    // Dynamic tier eligibility check for the currently viewed platform
+    const tierCheck = currentUser
+      ? getPlatformTierCheck(activePlatformObj.name, currentUser.balance)
+      : null;
+
     // Dynamic Stats metrics
     const userBalanceDisplay = currentUser ? currentUser.balance.toFixed(2) : '0.00';
     const cycleTasksCompleted = currentUser?.currentCycleTasks ?? 0;
@@ -349,7 +335,7 @@ export const MenuTab: React.FC<Props> = ({
             onClick={handleGrabOrder}
             disabled={isGenerating}
             className={`w-full py-3.5 text-white font-bold text-base rounded-full shadow-md transition-all active:scale-[0.99] cursor-pointer text-center ${
-              isTaskGrabbingLocked
+              isTaskGrabbingLocked || (tierCheck && !tierCheck.isEligible && !incompleteOrder)
                 ? 'bg-slate-400 hover:bg-slate-500'
                 : 'bg-[#694248] hover:bg-[#7b4f56]'
             }`}
@@ -372,6 +358,49 @@ export const MenuTab: React.FC<Props> = ({
               <span>Grab the order immediately</span>
             )}
           </button>
+
+          {/* Dynamic Balance-Based Platform Tier Restriction & Direct Switch Guidance */}
+          {tierCheck && !tierCheck.isEligible && tierCheck.message && (
+            <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-2xl shadow-xs space-y-2.5">
+              <div className="flex items-start gap-2.5 text-xs text-amber-950">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <span className="font-bold text-amber-900 block">
+                    {tierCheck.reason === 'exceeds_tier'
+                      ? `Platform Upgrade Required (${tierCheck.eligibleVipTier} ${tierCheck.eligiblePlatform})`
+                      : 'Platform Balance Requirement Notice'}
+                  </span>
+                  <p className="text-[11px] text-amber-900/90 leading-relaxed font-medium">
+                    {tierCheck.message}
+                  </p>
+                </div>
+              </div>
+              {tierCheck.eligiblePlatform ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivePlatformDetail(tierCheck.eligiblePlatform);
+                    setToastMessage(null);
+                  }}
+                  className="w-full py-2.5 px-3 bg-[#8b0000] hover:bg-[#a00000] text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>
+                    Switch to {tierCheck.eligiblePlatform} ({tierCheck.eligibleVipTier})
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onNavigateToDeposit()}
+                  className="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>Deposit USDT to Start Working</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Active Pending / Matched Order Banner (preserved across navigation & reloads) */}
           {(incompleteOrder || justMatchedOrderNo) && (
@@ -576,35 +605,47 @@ export const MenuTab: React.FC<Props> = ({
 
       {/* Platform VIP Cards List */}
       <div className="p-4 space-y-3.5 flex-1">
-        {filteredPlatforms.map((p) => (
-          <div
-            key={p.name}
-            onClick={() => setActivePlatformDetail(p.name)}
-            className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs cursor-pointer hover:border-amber-400 hover:shadow-md transition-all relative overflow-hidden"
-          >
-            <div className="mb-2">
-              <span className="inline-block bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-[10px] px-2 py-0.5 rounded-sm shadow-xs">
-                {p.tier}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <div
-                className={`w-14 h-14 rounded-2xl ${p.bgColor} flex items-center justify-center shrink-0 shadow-xs`}
-              >
-                {p.icon}
+        {filteredPlatforms.map((p) => {
+          const eligibleInfo = currentUser ? getEligiblePlatformForBalance(currentUser.balance) : null;
+          const isCurrentEligible = eligibleInfo?.platform === p.name;
+          return (
+            <div
+              key={p.name}
+              onClick={() => setActivePlatformDetail(p.name)}
+              className={`bg-white rounded-2xl p-4 border shadow-xs cursor-pointer hover:border-amber-400 hover:shadow-md transition-all relative overflow-hidden ${
+                isCurrentEligible ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-slate-200'
+              }`}
+            >
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="inline-block bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-[10px] px-2 py-0.5 rounded-sm shadow-xs">
+                  {p.tier}
+                </span>
+                {isCurrentEligible && (
+                  <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] px-2 py-0.5 rounded-sm">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    Eligible for Your Balance
+                  </span>
+                )}
               </div>
 
-              <div className="space-y-1 flex-1">
-                <h3 className="font-bold text-sm text-slate-900">{p.name}</h3>
-                <p className="text-xs text-slate-600">Available balance: {p.range}</p>
-                <p className="text-xs text-red-600 font-semibold">
-                  Commissions: <span className="font-bold">{p.rateText}</span>
-                </p>
+              <div className="flex items-center gap-4">
+                <div
+                  className={`w-14 h-14 rounded-2xl ${p.bgColor} flex items-center justify-center shrink-0 shadow-xs`}
+                >
+                  {p.icon}
+                </div>
+
+                <div className="space-y-1 flex-1">
+                  <h3 className="font-bold text-sm text-slate-900">{p.name}</h3>
+                  <p className="text-xs text-slate-600">Available balance: {p.range}</p>
+                  <p className="text-xs text-red-600 font-semibold">
+                    Commissions: <span className="font-bold">{p.rateText}</span>
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         <div className="text-center py-4 text-xs text-slate-400">No more</div>
       </div>
