@@ -998,7 +998,7 @@ export const AdminPanel: React.FC = () => {
                         {/* Work Permission Column */}
                         <td className="py-3 px-3">
                           <div className="space-y-1">
-                            {user.workPermission !== false ? (
+                            {user.workPermission === true ? (
                               <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-[10px] inline-flex items-center gap-1">
                                 <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Granted
                               </span>
@@ -1009,14 +1009,14 @@ export const AdminPanel: React.FC = () => {
                             )}
                             <button
                               onClick={() => notify(toggleUserWorkPermission(user.id))}
-                              title={user.workPermission !== false ? 'Revoke Work Permission' : 'Grant Work Permission (allow task grabbing)'}
+                              title={user.workPermission === true ? 'Revoke Work Permission' : 'Grant Work Permission (allow task grabbing)'}
                               className={`text-[9px] px-1.5 py-0.5 rounded font-bold block transition-colors cursor-pointer ${
-                                user.workPermission !== false
+                                user.workPermission === true
                                   ? 'text-slate-400 hover:text-rose-400 hover:bg-rose-950/40'
                                   : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs'
                               }`}
                             >
-                              {user.workPermission !== false ? 'Revoke' : 'Approve'}
+                              {user.workPermission === true ? 'Revoke' : 'Approve'}
                             </button>
                           </div>
                         </td>
@@ -1091,19 +1091,19 @@ export const AdminPanel: React.FC = () => {
                             {/* Work Permission Toggle */}
                             <button
                               onClick={() => notify(toggleUserWorkPermission(user.id))}
-                              title={user.workPermission !== false ? 'Revoke Work Permission' : 'Grant Work Permission (allow task grabbing)'}
+                              title={user.workPermission === true ? 'Revoke Work Permission' : 'Grant Work Permission (allow task grabbing)'}
                               className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer ${
-                                user.workPermission !== false
+                                user.workPermission === true
                                   ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                                   : 'bg-emerald-600 hover:bg-emerald-500 text-white font-black shadow-xs ring-1 ring-emerald-400/50'
                               }`}
                             >
-                              {user.workPermission !== false ? (
+                              {user.workPermission === true ? (
                                 <UserCheck className="w-3 h-3 text-emerald-400" />
                               ) : (
                                 <ShieldAlert className="w-3 h-3 text-white" />
                               )}
-                              <span>{user.workPermission !== false ? 'Work OK' : 'Grant Work'}</span>
+                              <span>{user.workPermission === true ? 'Work OK' : 'Grant Work'}</span>
                             </button>
 
                             {/* Reset Task Cycle & Approve Next 25 Tasks Button */}

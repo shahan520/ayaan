@@ -12,8 +12,16 @@ export const WalletManagementPage: React.FC<Props> = ({ onBack }) => {
   const [walletName, setWalletName] = useState('');
   const [walletAddress, setWalletAddress] = useState('');
   const [accountName, setAccountName] = useState('');
+  const [protocol, setProtocol] = useState<'TRC-20' | 'ERC-20' | 'BEP-20'>('TRC-20');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+
+  const hasBoundWallet = Boolean(
+    currentUser?.wallet &&
+    typeof currentUser.wallet.walletAddress === 'string' &&
+    currentUser.wallet.walletAddress.trim().length > 0
+  );
+  const isAccountLocked = currentUser?.isLockedAccount === true;
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -25,16 +33,25 @@ export const WalletManagementPage: React.FC<Props> = ({ onBack }) => {
     e.preventDefault();
     setError('');
 
+    if (isAccountLocked) {
+      setError('Your account is locked by Administrator. Please contact Customer Service.');
+      return;
+    }
+
     if (!walletName.trim()) {
       setError('Please enter a wallet name.');
       return;
     }
     if (!walletAddress.trim()) {
-      setError('Please enter a TRC-20 wallet address.');
+      setError(`Please enter a ${protocol} wallet address.`);
       return;
     }
-    if (!walletAddress.trim().startsWith('T') || walletAddress.trim().length < 30) {
+    if (protocol === 'TRC-20' && (!walletAddress.trim().startsWith('T') || walletAddress.trim().length < 30)) {
       setError('Invalid TRC-20 address format. Address must begin with "T".');
+      return;
+    }
+    if ((protocol === 'ERC-20' || protocol === 'BEP-20') && walletAddress.trim().length < 20) {
+      setError(`Please enter a valid ${protocol} wallet address.`);
       return;
     }
     if (!accountName.trim()) {
@@ -44,7 +61,7 @@ export const WalletManagementPage: React.FC<Props> = ({ onBack }) => {
 
     const res = bindWallet({
       walletName: walletName.trim(),
-      protocol: 'TRC-20',
+      protocol,
       walletAddress: walletAddress.trim(),
       accountName: accountName.trim(),
     });
@@ -83,7 +100,7 @@ export const WalletManagementPage: React.FC<Props> = ({ onBack }) => {
         </div>
 
         {/* Existing Bound Wallet Card */}
-        {currentUser?.wallet && !isEditing ? (
+        {hasBoundWallet && currentUser?.wallet && !isEditing ? (
           <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -122,33 +139,46 @@ export const WalletManagementPage: React.FC<Props> = ({ onBack }) => {
 
             <div className="flex justify-between text-xs text-slate-500 pt-1">
               <span>Account: {currentUser.wallet.accountName}</span>
-              <span>Bound: {currentUser.wallet.boundAt.substring(0, 10)}</span>
+              <span>Bound: {(currentUser.wallet.boundAt || '').substring(0, 10)}</span>
             </div>
 
-            {/* ADMIN-ONLY TRC-20 ADDRESS RESET: Direct client change removed */}
+            {/* ADMIN-ONLY ADDRESS RESET */}
             <div className="mt-3 p-3.5 bg-amber-50/90 rounded-xl border border-amber-200/90 text-left space-y-1.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-amber-950 font-bold text-xs">
                   <Lock className="w-3.5 h-3.5 text-amber-700" />
-                  <span>TRC-20 Address Locked</span>
+                  <span>{currentUser.wallet.protocol} Address Locked</span>
                 </div>
                 <span className="text-[10px] bg-amber-200/80 text-amber-900 font-bold px-2 py-0.5 rounded-full">
                   Admin-Only Reset
                 </span>
               </div>
               <p className="text-[11px] text-slate-600 leading-relaxed">
-                For asset protection and anti-tamper security, your receiving TRC-20 withdrawal address is locked after initial setup. If you made an error during setup, please contact Customer Service or an Administrator to request an address reset.
+                For asset protection and anti-tamper security, your receiving withdrawal address is locked after initial setup. If you made an error during setup, please contact Customer Service or an Administrator to request an address reset.
               </p>
             </div>
           </div>
         ) : null}
 
         {/* Add/Edit e-wallet form or button */}
-        {!currentUser?.wallet && !isEditing ? (
+        {!hasBoundWallet && !isEditing ? (
           <div className="space-y-3">
+            {isAccountLocked ? (
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 font-semibold flex items-center gap-2">
+                <Lock className="w-4 h-4 text-rose-700 shrink-0" />
+                <span>Your account is currently locked by Administrator. Contact Customer Service to unlock wallet setup.</span>
+              </div>
+            ) : null}
             <button
-              onClick={() => setIsEditing(true)}
-              className="w-full py-3 bg-[#694248] hover:bg-[#7b4f56] text-white text-sm font-medium rounded-lg transition-colors shadow-xs"
+              onClick={() => {
+                if (isAccountLocked) {
+                  setError('Your account is locked by Administrator. Please contact Customer Service.');
+                  return;
+                }
+                setError('');
+                setIsEditing(true);
+              }}
+              className="w-full py-3 bg-[#694248] hover:bg-[#7b4f56] text-white text-sm font-medium rounded-lg transition-colors shadow-xs cursor-pointer"
             >
               Add e-wallet
             </button>
@@ -207,24 +237,20 @@ export const WalletManagementPage: React.FC<Props> = ({ onBack }) => {
                 Virtual Currency Protocol
               </label>
               <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  className="py-2 text-xs font-bold rounded-xl border border-[#d97706] bg-amber-50/70 text-[#d97706] shadow-2xs"
-                >
-                  TRC-20
-                </button>
-                <button
-                  type="button"
-                  className="py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                >
-                  ERC-20
-                </button>
-                <button
-                  type="button"
-                  className="py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                >
-                  BEP-20
-                </button>
+                {(['TRC-20', 'ERC-20', 'BEP-20'] as const).map((proto) => (
+                  <button
+                    key={proto}
+                    type="button"
+                    onClick={() => setProtocol(proto)}
+                    className={`py-2 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                      protocol === proto
+                        ? 'border-[#d97706] bg-amber-50/70 text-[#d97706] shadow-2xs'
+                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {proto}
+                  </button>
+                ))}
               </div>
             </div>
 

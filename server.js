@@ -169,11 +169,46 @@ const userSchema = new mongoose.Schema(
       default: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
     },
     wallet: {
-      walletName: { type: String, default: '' },
-      protocol: { type: String, enum: ['TRC-20', 'ERC-20', 'BEP-20'], default: 'TRC-20' },
-      walletAddress: { type: String, default: '' },
-      accountName: { type: String, default: '' },
-      boundAt: { type: String, default: '' },
+      type: {
+        walletName: { type: String, default: '' },
+        protocol: { type: String, enum: ['TRC-20', 'ERC-20', 'BEP-20'], default: 'TRC-20' },
+        walletAddress: { type: String, default: '' },
+        accountName: { type: String, default: '' },
+        boundAt: { type: String, default: '' },
+      },
+      default: null,
+    },
+    taxPaid: {
+      type: Boolean,
+      default: false,
+    },
+    taxAmountPaid: {
+      type: Number,
+      default: 0,
+    },
+    totalDeposit: {
+      type: Number,
+      default: 0.0,
+    },
+    totalWithdrawal: {
+      type: Number,
+      default: 0.0,
+    },
+    todayOrdersCount: {
+      type: Number,
+      default: 0,
+    },
+    todayCommission: {
+      type: Number,
+      default: 0.0,
+    },
+    yesterdayCommission: {
+      type: Number,
+      default: 0.0,
+    },
+    lastActiveDate: {
+      type: String,
+      default: '',
     },
     isVipAccount: {
       type: Boolean,
@@ -185,7 +220,7 @@ const userSchema = new mongoose.Schema(
     },
     workPermission: {
       type: Boolean,
-      default: true,
+      default: false,
     },
     completedTasksCount: {
       type: Number,
@@ -201,7 +236,7 @@ const userSchema = new mongoose.Schema(
     },
     cycleApprovedByAdmin: {
       type: Boolean,
-      default: true,
+      default: false,
     },
     comboOrderStep: {
       type: Number,
@@ -222,6 +257,13 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const normalizeWallet = (w) => {
+  if (w && typeof w.walletAddress === 'string' && w.walletAddress.trim().length > 0) {
+    return w;
+  }
+  return null;
+};
+
 export const User = mongoose.models.User || mongoose.model('User', userSchema);
 
 // Initial active member pool for immediate referral verification and Atlas seeding
@@ -241,25 +283,27 @@ const SEEDED_MEMBERS = [
     createdAt: '2026-05-01 10:00:00',
     vipLevel: 1,
     status: 'active',
+    workPermission: true,
+    cycleApprovedByAdmin: true,
   },
-  { uid: '925886', username: 'Hanif8989', password: 'password123', inviteCode: '925886', referredBy: 'SYS888', balance: 479.31, vipLevel: 1, status: 'active' },
+  { uid: '925886', username: 'Hanif8989', password: 'password123', inviteCode: '925886', referredBy: 'SYS888', balance: 479.31, totalDeposit: 450.0, totalWithdrawal: 0.0, vipLevel: 1, status: 'active', workPermission: true, cycleApprovedByAdmin: true },
   // Level 1: Directly referred by Hanif8989 (925886)
-  { uid: '771101', username: 'Karim_88', password: 'password123', inviteCode: '771101', referredBy: '925886', balance: 150.0, totalDeposit: 250.0, totalWithdrawal: 100.0, createdAt: '2026-05-12 10:00:00', vipLevel: 0, status: 'active' },
-  { uid: '771102', username: 'Rafiq_21', password: 'password123', inviteCode: '771102', referredBy: '925886', balance: 300.0, totalDeposit: 500.0, totalWithdrawal: 200.0, createdAt: '2026-05-20 11:30:00', vipLevel: 0, status: 'active' },
-  { uid: '771105', username: 'Sumon_77', password: 'password123', inviteCode: '771105', referredBy: '925886', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, createdAt: '2026-06-02 09:15:00', vipLevel: 0, status: 'active' },
+  { uid: '771101', username: 'Karim_88', password: 'password123', inviteCode: '771101', referredBy: '925886', balance: 150.0, totalDeposit: 250.0, totalWithdrawal: 100.0, createdAt: '2026-05-12 10:00:00', vipLevel: 0, status: 'active', workPermission: false },
+  { uid: '771102', username: 'Rafiq_21', password: 'password123', inviteCode: '771102', referredBy: '925886', balance: 300.0, totalDeposit: 500.0, totalWithdrawal: 200.0, createdAt: '2026-05-20 11:30:00', vipLevel: 0, status: 'active', workPermission: false },
+  { uid: '771105', username: 'Sumon_77', password: 'password123', inviteCode: '771105', referredBy: '925886', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, createdAt: '2026-06-02 09:15:00', vipLevel: 0, status: 'active', workPermission: false },
   // Level 2: Invited by Level 1 members
-  { uid: '771103', username: 'Nasrin_09', password: 'password123', inviteCode: '771103', referredBy: '771101', balance: 80.0, totalDeposit: 120.0, totalWithdrawal: 40.0, createdAt: '2026-05-18 14:00:00', vipLevel: 0, status: 'active' },
-  { uid: '771104', username: 'Jahid_55', password: 'password123', inviteCode: '771104', referredBy: '771101', balance: 150.0, totalDeposit: 300.0, totalWithdrawal: 150.0, createdAt: '2026-05-25 16:45:00', vipLevel: 0, status: 'active' },
-  { uid: '771106', username: 'Mitu_43', password: 'password123', inviteCode: '771106', referredBy: '771102', balance: 80.0, totalDeposit: 80.0, totalWithdrawal: 0.0, createdAt: '2026-06-10 12:10:00', vipLevel: 0, status: 'active' },
+  { uid: '771103', username: 'Nasrin_09', password: 'password123', inviteCode: '771103', referredBy: '771101', balance: 80.0, totalDeposit: 120.0, totalWithdrawal: 40.0, createdAt: '2026-05-18 14:00:00', vipLevel: 0, status: 'active', workPermission: false },
+  { uid: '771104', username: 'Jahid_55', password: 'password123', inviteCode: '771104', referredBy: '771101', balance: 150.0, totalDeposit: 300.0, totalWithdrawal: 150.0, createdAt: '2026-05-25 16:45:00', vipLevel: 0, status: 'active', workPermission: false },
+  { uid: '771106', username: 'Mitu_43', password: 'password123', inviteCode: '771106', referredBy: '771102', balance: 80.0, totalDeposit: 80.0, totalWithdrawal: 0.0, createdAt: '2026-06-10 12:10:00', vipLevel: 0, status: 'active', workPermission: false },
   // Level 3: Invited by Level 2 members
-  { uid: '771107', username: 'Rakib_16', password: 'password123', inviteCode: '771107', referredBy: '771103', balance: 40.0, totalDeposit: 60.0, totalWithdrawal: 20.0, createdAt: '2026-06-05 13:20:00', vipLevel: 0, status: 'active' },
-  { uid: '771108', username: 'Shanta_30', password: 'password123', inviteCode: '771108', referredBy: '771104', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, createdAt: '2026-06-15 15:30:00', vipLevel: 0, status: 'active' },
+  { uid: '771107', username: 'Rakib_16', password: 'password123', inviteCode: '771107', referredBy: '771103', balance: 40.0, totalDeposit: 60.0, totalWithdrawal: 20.0, createdAt: '2026-06-05 13:20:00', vipLevel: 0, status: 'active', workPermission: false },
+  { uid: '771108', username: 'Shanta_30', password: 'password123', inviteCode: '771108', referredBy: '771104', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, createdAt: '2026-06-15 15:30:00', vipLevel: 0, status: 'active', workPermission: false },
   // Additional system users
-  { uid: '819203', username: 'VIP_Trader25', password: 'password123', inviteCode: '819203', referredBy: 'SYS888', balance: 550.0, vipLevel: 2, status: 'active' },
-  { uid: '772109', username: 'Newbie_VIP0', password: 'password123', inviteCode: '772109', referredBy: 'SYS100', balance: 0.0, vipLevel: 0, status: 'active' },
-  { uid: '381942', username: 'Cycle2_Trader', password: 'password123', inviteCode: '381942', referredBy: 'SYS888', balance: 35.0, vipLevel: 1, status: 'active' },
-  { uid: '888001', username: 'Demo_Trader', password: 'password123', inviteCode: '888001', referredBy: 'ADMIN_DEMO', balance: 300.0, vipLevel: 1, status: 'active' },
-  { uid: '998811', username: 'Whale_Investor50k', password: 'password123', inviteCode: '998811', referredBy: 'SYS888', balance: 58500.0, vipLevel: 3, status: 'active' },
+  { uid: '819203', username: 'VIP_Trader25', password: 'password123', inviteCode: '819203', referredBy: 'SYS888', balance: 550.0, totalDeposit: 550.0, totalWithdrawal: 0.0, vipLevel: 2, status: 'active', workPermission: false },
+  { uid: '772109', username: 'Newbie_VIP0', password: 'password123', inviteCode: '772109', referredBy: 'SYS100', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, vipLevel: 0, status: 'active', workPermission: false },
+  { uid: '381942', username: 'Cycle2_Trader', password: 'password123', inviteCode: '381942', referredBy: 'SYS888', balance: 35.0, totalDeposit: 35.0, totalWithdrawal: 0.0, vipLevel: 1, status: 'active', workPermission: true, cycleApprovedByAdmin: true },
+  { uid: '888001', username: 'Demo_Trader', password: 'password123', inviteCode: '888001', referredBy: 'ADMIN_DEMO', balance: 300.0, totalDeposit: 300.0, totalWithdrawal: 0.0, vipLevel: 1, status: 'active', workPermission: true, cycleApprovedByAdmin: true },
+  { uid: '998811', username: 'Whale_Investor50k', password: 'password123', inviteCode: '998811', referredBy: 'SYS888', balance: 58500.0, totalDeposit: 58500.0, totalWithdrawal: 0.0, vipLevel: 3, status: 'active', workPermission: true, cycleApprovedByAdmin: true },
 ];
 
 // Persistent Global User Database on Disk (survives process reboots and operates reliably across all sessions)
@@ -499,6 +543,39 @@ const seedInitialDeposits = async () => {
     console.warn('Initial deposit seed note:', err.message);
   }
 };
+
+// ==============================================================================
+// PERSISTENT SUBMITTED ORDERS STORE (Idempotency ledger for order commissions)
+// ==============================================================================
+const PERSISTENT_ORDERS_FILE = path.join(DATA_DIR, 'persistent_orders.json');
+
+const loadPersistentOrders = () => {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(PERSISTENT_ORDERS_FILE)) {
+      const raw = fs.readFileSync(PERSISTENT_ORDERS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Persistent orders load note:', err.message);
+  }
+  return [];
+};
+
+let ACTIVE_SUBMITTED_ORDERS = loadPersistentOrders();
+
+const savePersistentOrders = () => {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(PERSISTENT_ORDERS_FILE, JSON.stringify(ACTIVE_SUBMITTED_ORDERS, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving persistent orders to disk:', err.message);
+  }
+};
+savePersistentOrders();
 
 /**
  * 2) Task Simulation Model: Orders, commission calculation, combo steps
@@ -818,6 +895,8 @@ app.post('/api/auth/register', async (req, res) => {
       referredBy: canonicalReferredBy,
       balance: 0.0,
       frozenBalance: 0,
+      totalDeposit: 0.0,
+      totalWithdrawal: 0.0,
       vipLevel: 0,
       status: 'active',
       avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
@@ -825,6 +904,8 @@ app.post('/api/auth/register', async (req, res) => {
       createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
       todayOrdersCount: 0,
       todayCommission: 0,
+      yesterdayCommission: 0,
+      lastActiveDate: new Date().toISOString().substring(0, 10),
       completedTasksCount: 0,
       currentCycleTasks: 0,
       cycleNumber: 1,
@@ -857,12 +938,18 @@ app.post('/api/auth/register', async (req, res) => {
           inviteCode: uidCandidate,
           referredBy: canonicalReferredBy,
           balance: 0.0,
+          totalDeposit: 0.0,
+          totalWithdrawal: 0.0,
           vipLevel: 0,
           avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
+          wallet: null,
+          withdrawalPassword: null,
           cycleNumber: 1,
           currentCycleTasks: 0,
           completedTasksCount: 0,
           comboOrderStep: 14,
+          workPermission: false,
+          cycleApprovedByAdmin: false,
         });
         savedMongoUser = await newUserModel.save();
       } catch (dbSaveErr) {
@@ -992,14 +1079,37 @@ app.get('/api/users', async (req, res) => {
       return {
         ...u,
         id: u.id || ('user_' + u.uid),
+        wallet: normalizeWallet(u.wallet),
+        withdrawalPassword: u.withdrawalPassword || null,
         totalDeposit: typeof u.totalDeposit === 'number' ? u.totalDeposit : (u.balance > 0 ? u.balance : 0),
         totalWithdrawal: typeof u.totalWithdrawal === 'number' ? u.totalWithdrawal : 0,
+        todayOrdersCount: typeof u.todayOrdersCount === 'number' ? u.todayOrdersCount : 0,
+        todayCommission: typeof u.todayCommission === 'number' ? u.todayCommission : 0,
+        yesterdayCommission: typeof u.yesterdayCommission === 'number' ? u.yesterdayCommission : 0,
+        lastActiveDate: u.lastActiveDate || '',
+        cycleNumber: typeof u.cycleNumber === 'number' && u.cycleNumber >= 1 ? u.cycleNumber : 1,
+        currentCycleTasks: typeof u.currentCycleTasks === 'number' ? u.currentCycleTasks : 0,
+        completedTasksCount: typeof u.completedTasksCount === 'number' ? u.completedTasksCount : 0,
+        comboOrderStep: u.comboOrderStep || 14,
+        isVipAccount: u.isVipAccount === true,
+        isLockedAccount: u.isLockedAccount === true,
+        customCombos: Array.isArray(u.customCombos) ? u.customCombos : [],
+        workPermission: u.workPermission === true,
+        cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
       };
     });
 
     return res.json({ success: true, users: safeUsers });
   } catch (err) {
-    return res.json({ success: true, users: ACTIVE_USERS });
+    return res.json({
+      success: true,
+      users: ACTIVE_USERS.map((u) => ({
+        ...u,
+        wallet: normalizeWallet(u.wallet),
+        workPermission: u.workPermission === true,
+        cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
+      })),
+    });
   }
 });
 
@@ -1064,14 +1174,33 @@ app.post('/api/users/update', async (req, res) => {
       return res.status(400).json({ success: false, message: 'UID or ID is required.' });
     }
 
-    const targetIdx = ACTIVE_USERS.findIndex(
+    let targetIdx = ACTIVE_USERS.findIndex(
       (u) => (uid && String(u.uid) === String(uid)) || (id && (u.id === id || String(u.uid) === String(id)))
     );
 
+    if (targetIdx < 0 && mongoose.connection.readyState === 1) {
+      try {
+        const query = uid ? { uid: String(uid) } : { $or: [{ _id: id }, { uid: String(id) }] };
+        const mongoUser = await User.findOne(query);
+        if (mongoUser) {
+          const uObj = mongoUser.toObject();
+          ACTIVE_USERS.unshift({
+            id: mongoUser._id?.toString() || ('user_' + mongoUser.uid),
+            ...uObj,
+          });
+          targetIdx = 0;
+        }
+      } catch {}
+    }
+
     if (targetIdx >= 0) {
+      const normalizedUpdates = { ...updates };
+      if ('wallet' in normalizedUpdates) {
+        normalizedUpdates.wallet = normalizeWallet(normalizedUpdates.wallet);
+      }
       ACTIVE_USERS[targetIdx] = {
         ...ACTIVE_USERS[targetIdx],
-        ...updates,
+        ...normalizedUpdates,
       };
       savePersistentUsers();
     }
@@ -1080,7 +1209,11 @@ app.post('/api/users/update', async (req, res) => {
     if (mongoose.connection.readyState === 1) {
       try {
         const query = uid ? { uid: String(uid) } : { $or: [{ _id: id }, { uid: String(id) }] };
-        await User.updateOne(query, { $set: updates });
+        const mongoSet = { ...updates };
+        if ('wallet' in mongoSet) {
+          mongoSet.wallet = normalizeWallet(mongoSet.wallet);
+        }
+        await User.updateOne(query, { $set: mongoSet });
       } catch (dbErr) {
         console.warn('MongoDB user update notice:', dbErr.message);
       }
@@ -1088,7 +1221,7 @@ app.post('/api/users/update', async (req, res) => {
 
     return res.json({
       success: true,
-      user: targetIdx >= 0 ? ACTIVE_USERS[targetIdx] : null,
+      user: targetIdx >= 0 ? { ...ACTIVE_USERS[targetIdx], wallet: normalizeWallet(ACTIVE_USERS[targetIdx].wallet) } : null,
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to update user' });
@@ -1589,6 +1722,295 @@ app.post('/api/deposits/reject', async (req, res) => {
 });
 
 /**
+ * POST /api/orders/submit
+ * Atomically submits an order, credits commission to user's main account balance EXACTLY ONCE,
+ * updates task/cycle/daily commission stats in both disk store and MongoDB.
+ */
+app.post('/api/orders/submit', async (req, res) => {
+  try {
+    const {
+      orderId,
+      orderNo,
+      userUid,
+      userId,
+      username,
+      commission,
+      orderAmount = 0,
+      platform = 'Amazon',
+      vipTier = 'VIP 1',
+      productTitle = 'Matched Retail Order',
+      isComboOrder = false,
+      comboStepNumber = 0,
+    } = req.body;
+
+    if (!orderId && !orderNo) {
+      return res.status(400).json({ success: false, message: 'Order identifier (orderId or orderNo) is required.' });
+    }
+
+    const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
+    const tUid = String(userUid || '');
+    const tId = String(userId || '');
+    const tUname = norm(username);
+
+    const findUserIdx = () =>
+      ACTIVE_USERS.findIndex((u) => {
+        if (tUid && String(u.uid) === tUid) return true;
+        if (tId && (u.id === tId || String(u.uid) === tId)) return true;
+        if (tUname && norm(u.username) === tUname) return true;
+        return false;
+      });
+
+    // 1. STRICT IDEMPOTENCY GUARD: Prevent double-counting commission if same order was already submitted
+    let alreadySubmittedRecord = ACTIVE_SUBMITTED_ORDERS.find(
+      (o) => (orderId && o.orderId === orderId) || (orderNo && o.orderNo === orderNo)
+    );
+
+    if (!alreadySubmittedRecord && mongoose.connection.readyState === 1 && orderNo) {
+      try {
+        const existingMongoTask = await TaskSimulation.findOne({ orderNumber: String(orderNo) });
+        if (existingMongoTask) {
+          alreadySubmittedRecord = existingMongoTask.toObject();
+        }
+      } catch (dbErr) {
+        console.warn('MongoDB order idempotency lookup notice:', dbErr.message);
+      }
+    }
+
+    if (alreadySubmittedRecord) {
+      const idx = findUserIdx();
+      return res.json({
+        success: true,
+        alreadySubmitted: true,
+        message: 'Order has already been submitted and credited.',
+        orderRecord: alreadySubmittedRecord,
+        user: idx >= 0 ? ACTIVE_USERS[idx] : null,
+      });
+    }
+
+    let userIdx = findUserIdx();
+
+    // Load from MongoDB if present there but not in ACTIVE_USERS yet
+    if (userIdx < 0 && mongoose.connection.readyState === 1) {
+      try {
+        const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const mongoUser = await User.findOne({
+          $or: [
+            ...(tUid ? [{ uid: tUid }] : []),
+            ...(tUname ? [{ username: { $regex: new RegExp(`^${escapeRegex(tUname)}$`, 'i') } }] : []),
+          ],
+        });
+        if (mongoUser) {
+          const uObj = mongoUser.toObject();
+          ACTIVE_USERS.unshift({
+            id: mongoUser._id?.toString() || ('user_' + mongoUser.uid),
+            ...uObj,
+          });
+          userIdx = 0;
+        }
+      } catch (dbErr) {
+        console.warn('MongoDB user lookup for order submit notice:', dbErr.message);
+      }
+    }
+
+    if (userIdx < 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const u = ACTIVE_USERS[userIdx];
+
+    // 2. STRICT WORK PERMISSION & 25-TASK CYCLE LOCK CHECK
+    if (u.workPermission !== true) {
+      return res.status(403).json({
+        success: false,
+        isPermissionLocked: true,
+        message: 'Work Permission Required: Your account is pending Admin approval before submitting orders.',
+      });
+    }
+    if ((u.currentCycleTasks || 0) >= 25 || !u.cycleApprovedByAdmin) {
+      return res.status(403).json({
+        success: false,
+        isCycleLocked: true,
+        message: '25-Task Cycle Completed: Task-grabbing permission is locked until an Admin approves your next cycle.',
+      });
+    }
+
+    const comm = Number(Number(commission || 0).toFixed(4));
+    if (isNaN(comm) || comm < 0) {
+      return res.status(400).json({ success: false, message: 'Invalid commission amount.' });
+    }
+
+    const today = new Date().toISOString().substring(0, 10);
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const isNewDay = u.lastActiveDate && u.lastActiveDate !== today;
+    const currentTimes = isNewDay ? 0 : (u.todayOrdersCount ?? 0);
+    const currentTodayComm = isNewDay ? 0 : (u.todayCommission ?? 0);
+    const yestComm = isNewDay ? (u.todayCommission ?? 0) : (u.yesterdayCommission ?? 0);
+
+    const nextCompletedLifetime = (u.completedTasksCount || 0) + 1;
+    const nextCycleTasks = (u.currentCycleTasks || 0) + 1;
+    const isCycleNowFinished = nextCycleTasks >= 25;
+
+    const balanceBefore = Number(u.balance || 0);
+    let newBalance = Number((balanceBefore + comm).toFixed(4));
+
+    const isCycle2Small =
+      (u.cycleNumber || 1) === 2 &&
+      (u.cycleStartBalance === undefined || (u.cycleStartBalance >= 25 && u.cycleStartBalance <= 45)) &&
+      balanceBefore < 450;
+
+    if (u.isDemoAccount) {
+      newBalance = isCycleNowFinished
+        ? Number(Math.min(2680, Math.max(2320, newBalance)).toFixed(4))
+        : Number(Math.min(2650, newBalance).toFixed(4));
+    } else if (isCycle2Small) {
+      newBalance = isCycleNowFinished
+        ? Number(Math.min(348, Math.max(322, newBalance)).toFixed(4))
+        : Number(Math.min(340, newBalance).toFixed(4));
+    }
+
+    let vip = u.vipLevel || 0;
+    if (newBalance >= 899) vip = Math.max(vip, 3);
+    else if (newBalance >= 499) vip = Math.max(vip, 2);
+    else if (newBalance >= 20) vip = Math.max(vip, 1);
+
+    const updatedUserFields = {
+      balance: newBalance,
+      vipLevel: vip,
+      todayOrdersCount: currentTimes + 1,
+      todayCommission: Number((currentTodayComm + comm).toFixed(4)),
+      yesterdayCommission: yestComm,
+      lastActiveDate: today,
+      completedTasksCount: nextCompletedLifetime,
+      currentCycleTasks: nextCycleTasks,
+      cycleApprovedByAdmin: !isCycleNowFinished,
+      workPermission: isCycleNowFinished ? false : true,
+    };
+
+    ACTIVE_USERS[userIdx] = {
+      ...u,
+      ...updatedUserFields,
+    };
+    savePersistentUsers();
+
+    const orderRecord = {
+      orderId: orderId || ('ord_' + Date.now()),
+      orderNo: String(orderNo || ('ORD' + Date.now())),
+      userUid: String(u.uid),
+      userId: u.id || ('user_' + u.uid),
+      username: u.username,
+      platform,
+      vipTier,
+      productTitle,
+      orderAmount: Number(orderAmount || 0),
+      commission: comm,
+      isComboOrder: !!isComboOrder,
+      comboStepNumber: comboStepNumber || 0,
+      balanceBefore,
+      balanceAfter: newBalance,
+      status: 'completed',
+      completedAt: nowStr,
+    };
+    ACTIVE_SUBMITTED_ORDERS.unshift(orderRecord);
+    savePersistentOrders();
+
+    // Persist to MongoDB Atlas if connected
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await User.updateOne(
+          { $or: [{ uid: String(u.uid) }, { username: u.username }] },
+          { $set: updatedUserFields }
+        );
+        const simDoc = new TaskSimulation({
+          userId: String(u.uid),
+          username: u.username,
+          orderNumber: orderRecord.orderNo,
+          taskNumber: nextCycleTasks,
+          cycleNumber: u.cycleNumber || 1,
+          productTitle: orderRecord.productTitle,
+          productPrice: orderRecord.orderAmount,
+          commission: comm,
+          isCombo: !!isComboOrder,
+          comboStep: comboStepNumber || 0,
+          status: 'completed',
+          userBalanceBefore: balanceBefore,
+          userBalanceAfter: newBalance,
+        });
+        await simDoc.save();
+      } catch (dbErr) {
+        console.warn('MongoDB order submit persist notice:', dbErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      alreadySubmitted: false,
+      commission: comm,
+      newBalance,
+      isCycleNowFinished,
+      message: `Order submitted! Commission +${comm.toFixed(4)} USDT credited to balance.`,
+      orderRecord,
+      user: {
+        ...ACTIVE_USERS[userIdx],
+        workPermission: ACTIVE_USERS[userIdx].workPermission === true,
+        cycleApprovedByAdmin: ACTIVE_USERS[userIdx].cycleApprovedByAdmin === true,
+      },
+    });
+  } catch (err) {
+    console.error('Order submit error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to submit order: ' + err.message });
+  }
+});
+
+/**
+ * GET /api/orders
+ * Returns persisted completed orders from disk store & MongoDB so order history survives reloads
+ */
+app.get('/api/orders', async (req, res) => {
+  try {
+    const { userUid } = req.query;
+    let list = [...ACTIVE_SUBMITTED_ORDERS];
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const filter = userUid ? { userId: String(userUid) } : {};
+        const mongoSims = await TaskSimulation.find(filter).sort({ createdAt: -1 }).limit(200);
+        const existingNos = new Set(list.map((o) => String(o.orderNo)));
+        mongoSims.forEach((ms) => {
+          const obj = ms.toObject();
+          if (!existingNos.has(String(obj.orderNumber))) {
+            list.push({
+              orderId: 'ord_mongo_' + obj._id.toString(),
+              orderNo: String(obj.orderNumber),
+              userUid: String(obj.userId),
+              username: obj.username,
+              productTitle: obj.productTitle,
+              orderAmount: obj.productPrice,
+              commission: obj.commission,
+              isComboOrder: !!obj.isCombo,
+              comboStepNumber: obj.comboStep || 0,
+              status: obj.status || 'completed',
+              completedAt: obj.createdAt
+                ? new Date(obj.createdAt).toISOString().replace('T', ' ').substring(0, 19)
+                : '',
+            });
+          }
+        });
+      } catch (dbErr) {
+        console.warn('Mongo orders fetch notice:', dbErr.message);
+      }
+    }
+
+    if (userUid) {
+      list = list.filter((o) => String(o.userUid) === String(userUid));
+    }
+
+    return res.json({ success: true, orders: list });
+  } catch (err) {
+    return res.json({ success: true, orders: ACTIVE_SUBMITTED_ORDERS });
+  }
+});
+
+/**
  * GET /api/invites
  * Returns all active system and user referral invite codes
  */
@@ -1682,18 +2104,31 @@ app.post('/api/auth/login', async (req, res) => {
         id: user._id ? user._id.toString() : user.id,
         uid: user.uid,
         username: user.username,
+        withdrawalPassword: user.withdrawalPassword || null,
         inviteCode: user.inviteCode || user.uid,
         referredBy: user.referredBy,
         balance: user.balance,
         frozenBalance: user.frozenBalance,
+        totalDeposit: typeof user.totalDeposit === 'number' ? user.totalDeposit : 0,
+        totalWithdrawal: typeof user.totalWithdrawal === 'number' ? user.totalWithdrawal : 0,
         vipLevel: user.vipLevel,
         avatarUrl: user.avatarUrl,
-        wallet: user.wallet,
+        wallet: normalizeWallet(user.wallet),
+        todayOrdersCount: user.todayOrdersCount || 0,
+        todayCommission: user.todayCommission || 0,
+        yesterdayCommission: user.yesterdayCommission || 0,
+        lastActiveDate: user.lastActiveDate || '',
         cycleNumber: user.cycleNumber || 1,
+        cycleStartBalance: user.cycleStartBalance,
         currentCycleTasks: user.currentCycleTasks || 0,
         completedTasksCount: user.completedTasksCount || 0,
-        isLockedAccount: user.isLockedAccount || false,
-        workPermission: user.workPermission !== false,
+        comboOrderStep: user.comboOrderStep || 14,
+        cycleApprovedByAdmin: user.cycleApprovedByAdmin === true,
+        isVipAccount: user.isVipAccount === true,
+        isLockedAccount: user.isLockedAccount === true,
+        customCombos: Array.isArray(user.customCombos) ? user.customCombos : [],
+        taxPaid: user.taxPaid === true,
+        workPermission: user.workPermission === true,
       },
     });
   } catch (error) {

@@ -238,7 +238,9 @@
     "vipLevel": 1,
     "status": "active",
     "currentCycleTasks": 1,
-    "completedTasksCount": 1
+    "completedTasksCount": 1,
+    "workPermission": true,
+    "cycleApprovedByAdmin": true
   },
   {
     "uid": "925886",
@@ -248,7 +250,9 @@
     "referredBy": "SYS888",
     "balance": 479.31,
     "vipLevel": 1,
-    "status": "active"
+    "status": "active",
+    "workPermission": true,
+    "cycleApprovedByAdmin": true
   },
   {
     "uid": "771101",
@@ -382,7 +386,9 @@
     "referredBy": "SYS888",
     "balance": 35,
     "vipLevel": 1,
-    "status": "active"
+    "status": "active",
+    "workPermission": true,
+    "cycleApprovedByAdmin": true
   },
   {
     "uid": "888001",
@@ -392,7 +398,9 @@
     "referredBy": "ADMIN_DEMO",
     "balance": 300,
     "vipLevel": 1,
-    "status": "active"
+    "status": "active",
+    "workPermission": true,
+    "cycleApprovedByAdmin": true
   },
   {
     "uid": "998811",
@@ -402,6 +410,8 @@
     "referredBy": "SYS888",
     "balance": 58500,
     "vipLevel": 3,
-    "status": "active"
+    "status": "active",
+    "workPermission": true,
+    "cycleApprovedByAdmin": true
   }
 ]

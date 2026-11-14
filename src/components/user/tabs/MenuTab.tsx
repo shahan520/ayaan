@@ -6,7 +6,7 @@ import {
   ShoppingCart,
   Sparkles,
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { DepositNavigationParams, GrabbedOrder } from '../../../types';
 import { getPlatformBalanceValidationMessage } from '../../../utils/balanceValidation';
@@ -27,8 +27,28 @@ export const MenuTab: React.FC<Props> = ({
 }) => {
   const { currentUser, grabOrder, orders } = useApp();
   const [selectedVip, setSelectedVip] = useState<'All' | 'VIP 1' | 'VIP 2' | 'VIP 3'>('All');
-  // Default to null so the VIP Hall / platform list (Amazon VIP 1, Alibaba VIP 2, Aliexpress VIP 3) is rendered first
-  const [activePlatformDetail, setActivePlatformDetail] = useState<'Amazon' | 'Alibaba' | 'Aliexpress' | null>(null);
+  // Persist selected trading platform per user across navigation and reloads
+  const platformStorageKey = currentUser?.uid ? `tradeweb_active_platform_${currentUser.uid}` : null;
+  const [activePlatformDetail, setActivePlatformDetailState] = useState<'Amazon' | 'Alibaba' | 'Aliexpress' | null>(() => {
+    if (!currentUser?.uid) return null;
+    try {
+      const saved = localStorage.getItem(`tradeweb_active_platform_${currentUser.uid}`);
+      if (saved === 'Amazon' || saved === 'Alibaba' || saved === 'Aliexpress') {
+        return saved;
+      }
+    } catch {}
+    return null;
+  });
+
+  const setActivePlatformDetail = (platform: 'Amazon' | 'Alibaba' | 'Aliexpress' | null) => {
+    setActivePlatformDetailState(platform);
+    if (platformStorageKey) {
+      try {
+        if (platform) localStorage.setItem(platformStorageKey, platform);
+        else localStorage.removeItem(platformStorageKey);
+      } catch {}
+    }
+  };
 
   // Toast / feedback message
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -94,8 +114,9 @@ export const MenuTab: React.FC<Props> = ({
   const activePlatformObj = platforms.find((p) => p.name === activePlatformDetail) || platforms[0];
 
   const currentCycleTasks = currentUser?.currentCycleTasks ?? 0;
-  const isCycleLocked = currentCycleTasks >= 25 || !currentUser?.cycleApprovedByAdmin;
-
+  const hasWorkPermission = currentUser?.workPermission === true;
+  const isCycleCompleted = currentCycleTasks >= 25 || !currentUser?.cycleApprovedByAdmin;
+  const isTaskGrabbingLocked = !hasWorkPermission || isCycleCompleted;
 
   // Pending gap calculation (if an incomplete order requires more balance)
   const incompleteOrder = orders.find(
@@ -106,20 +127,42 @@ export const MenuTab: React.FC<Props> = ({
       ? Math.max(0, incompleteOrder.requiredBalance - currentUser.balance)
       : 0;
 
+  // Restore saved platform or active incomplete task's platform when user logs in / reloads
+  useEffect(() => {
+    if (!currentUser?.uid) {
+      setActivePlatformDetailState(null);
+      return;
+    }
+    if (incompleteOrder && incompleteOrder.platform && !activePlatformDetail) {
+      setActivePlatformDetailState(incompleteOrder.platform);
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(`tradeweb_active_platform_${currentUser.uid}`);
+      if ((saved === 'Amazon' || saved === 'Alibaba' || saved === 'Aliexpress') && !activePlatformDetail) {
+        setActivePlatformDetailState(saved);
+      }
+    } catch {}
+  }, [currentUser?.uid, incompleteOrder?.id]);
+
   const handleGrabOrder = () => {
     if (!currentUser) {
       showToast('Please log in first to grab orders');
       return;
     }
 
-    // RULE 0: Admin Approval & Work Permission Check
-    if (currentUser.workPermission === false) {
-      setShowWorkPermissionModal(true);
+    // RULE 0: Admin Approval & Work Permission Check (Strict === true enforcement)
+    if (!hasWorkPermission) {
+      if (currentCycleTasks >= 25) {
+        setShowCycleLockedModal(true);
+      } else {
+        setShowWorkPermissionModal(true);
+      }
       return;
     }
 
     // RULE 1: Check if 25 tasks completed for current work cycle
-    if (isCycleLocked) {
+    if (isCycleCompleted) {
       setShowCycleLockedModal(true);
       return;
     }
@@ -154,7 +197,9 @@ export const MenuTab: React.FC<Props> = ({
         setJustMatchedOrderNo(res.order.orderNo);
         setActiveModalOrder(res.order);
       } else {
-        if (res.isCycleLocked) {
+        if (res.isPermissionLocked) {
+          setShowWorkPermissionModal(true);
+        } else if (res.isCycleLocked) {
           setShowCycleLockedModal(true);
         } else {
           showToast(res.message || 'Failed to match order');
@@ -275,14 +320,6 @@ export const MenuTab: React.FC<Props> = ({
 
         {/* 3. Action Section matching Previous Scheme */}
         <div className="px-4 mt-6 space-y-4">
-          {/* Work Cycle Progress Indicator */}
-          <div className="flex items-center justify-between text-xs px-2 text-slate-600 font-medium">
-            <span>Cycle #{currentUser?.cycleNumber || 1} Progress</span>
-            <span className="font-bold text-[#8b0000] font-mono">
-              {currentCycleTasks} / 25 Tasks Completed
-            </span>
-          </div>
-
           {/* Professional Motivational Banner */}
           <div className="p-3 bg-gradient-to-r from-slate-50 via-white to-slate-50 border border-slate-200/90 rounded-2xl flex items-center justify-between gap-2 text-xs text-slate-800 shadow-xs">
             <div className="flex items-center gap-2.5">
@@ -305,38 +342,52 @@ export const MenuTab: React.FC<Props> = ({
             onClick={handleGrabOrder}
             disabled={isGenerating}
             className={`w-full py-3.5 text-white font-bold text-base rounded-full shadow-md transition-all active:scale-[0.99] cursor-pointer text-center ${
-              isCycleLocked
+              isTaskGrabbingLocked
                 ? 'bg-slate-400 hover:bg-slate-500'
                 : 'bg-[#694248] hover:bg-[#7b4f56]'
             }`}
           >
             {isGenerating ? (
               <span>Matching task...</span>
-            ) : isCycleLocked ? (
+            ) : currentCycleTasks >= 25 ? (
               <span className="flex items-center justify-center gap-1.5">
                 <Lock className="w-4 h-4" /> Cycle Completed (25/25 Tasks)
+              </span>
+            ) : !hasWorkPermission ? (
+              <span className="flex items-center justify-center gap-1.5">
+                <Lock className="w-4 h-4" /> Grab the order immediately
+              </span>
+            ) : !currentUser?.cycleApprovedByAdmin ? (
+              <span className="flex items-center justify-center gap-1.5">
+                <Lock className="w-4 h-4" /> Admin Approval Required
               </span>
             ) : (
               <span>Grab the order immediately</span>
             )}
           </button>
 
-          {/* Just Matched Order Notification banner */}
-          {justMatchedOrderNo && (
+          {/* Active Pending / Matched Order Banner (preserved across navigation & reloads) */}
+          {(incompleteOrder || justMatchedOrderNo) && (
             <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs text-emerald-800">
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>Task matched! Ready for submission.</span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  {incompleteOrder?.isComboOrder
+                    ? `Active Combo Order #${incompleteOrder.comboStepNumber || 14} pending submission.`
+                    : 'Active task matched! Ready for submission.'}
+                </span>
               </div>
               <button
                 onClick={() => {
-                  const ord = orders.find((o) => o.orderNo === justMatchedOrderNo);
+                  const ord =
+                    incompleteOrder ||
+                    orders.find((o) => o.orderNo === justMatchedOrderNo);
                   if (ord) setActiveModalOrder(ord);
                   else onNavigateToRecord();
                 }}
-                className="font-bold underline text-emerald-700 cursor-pointer"
+                className="font-bold underline text-emerald-700 cursor-pointer shrink-0 ml-2"
               >
-                View Order
+                {incompleteOrder ? 'Resume Order' : 'View Order'}
               </button>
             </div>
           )}
@@ -369,6 +420,7 @@ export const MenuTab: React.FC<Props> = ({
           onClose={() => setActiveModalOrder(null)}
           onNavigateToDeposit={onNavigateToDeposit}
           onOrderSubmitted={() => {
+            setJustMatchedOrderNo(null);
             showToast('Order submitted successfully! Commission credited.');
           }}
         />

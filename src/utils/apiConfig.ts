@@ -22,7 +22,21 @@ export const getApiUrl = (endpoint: string): string => {
     return `${envBase}${cleanEndpoint}`;
   }
 
-  // Hardcode/fallback to the live Render backend
+  // When served directly by our Express full-stack server (localhost, AI Studio *.run.app, or *.onrender.com),
+  // use relative same-origin /api/* routes so all backend features work immediately without hitting stale external builds.
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname.toLowerCase();
+    if (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host.endsWith('.run.app') ||
+      host.endsWith('.onrender.com')
+    ) {
+      return cleanEndpoint;
+    }
+  }
+
+  // Fallback for static frontend deployments (e.g. Vercel)
   return `${RENDER_BACKEND_URL}${cleanEndpoint}`;
 };
 

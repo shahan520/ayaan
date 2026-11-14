@@ -1,9 +1,10 @@
 import {
+  AlertCircle,
   CheckCircle2,
   Clock,
   X,
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { DepositNavigationParams, GrabbedOrder } from '../../../types';
 
@@ -25,6 +26,13 @@ export const OrderDetailsModal: React.FC<Props> = ({
   const { currentUser, submitOrder } = useApp();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSuccessMsg(null);
+    setErrorMsg(null);
+    setIsSubmitting(false);
+  }, [order?.id, isOpen]);
 
   if (!isOpen || !order) return null;
 
@@ -89,6 +97,9 @@ export const OrderDetailsModal: React.FC<Props> = ({
   };
 
   const handleSubmit = () => {
+    if (isSubmitting || order.status === 'completed') return;
+    setErrorMsg(null);
+
     // If Combo order with deficit, clicking submit order takes user to deposit
     if (isComboOrder && userBalance < requiredBalance) {
       if (onNavigateToDeposit) {
@@ -113,9 +124,11 @@ export const OrderDetailsModal: React.FC<Props> = ({
           setSuccessMsg(null);
           onClose();
           if (onOrderSubmitted) onOrderSubmitted();
-        }, 1300);
+        }, 1200);
+      } else {
+        setErrorMsg(res.message || 'Unable to submit order. Please contact support.');
       }
-    }, 600);
+    }, 500);
   };
 
   return (
@@ -141,6 +154,14 @@ export const OrderDetailsModal: React.FC<Props> = ({
           <div className="p-3 bg-emerald-50 border-2 border-emerald-300 rounded-2xl flex items-center gap-2 text-emerald-950 text-xs font-bold animate-in zoom-in-95">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
             <span>{successMsg}</span>
+          </div>
+        )}
+
+        {/* Error alert overlay */}
+        {errorMsg && (
+          <div className="p-3 bg-rose-50 border-2 border-rose-300 rounded-2xl flex items-center gap-2 text-rose-950 text-xs font-bold animate-in zoom-in-95">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+            <span>{errorMsg}</span>
           </div>
         )}
 

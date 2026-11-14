@@ -46,9 +46,14 @@ export const WithdrawalPage: React.FC<Props> = ({
   } = useApp();
 
   const currentCycleTasks = currentUser?.currentCycleTasks ?? 0;
-  const isTaskEligible = currentCycleTasks >= 25;
-  const hasWallet = !!currentUser?.wallet;
-  const hasWithdrawalPassword = !!currentUser?.withdrawalPassword;
+  const hasWallet = Boolean(
+    currentUser?.wallet &&
+    typeof currentUser.wallet.walletAddress === 'string' &&
+    currentUser.wallet.walletAddress.trim().length > 0
+  );
+  const hasWithdrawalPassword = Boolean(
+    currentUser?.withdrawalPassword && String(currentUser.withdrawalPassword).trim().length > 0
+  );
 
   // Account lock & tax condition checks
   const isAccountLocked = !!currentUser?.isLockedAccount;
@@ -57,21 +62,20 @@ export const WithdrawalPage: React.FC<Props> = ({
   const [showLockedModal, setShowLockedModal] = useState<boolean>(isAccountLocked);
   const [showTaxModal, setShowTaxModal] = useState<boolean>(!isAccountLocked && isTaxPending);
 
-  // Initial workflow step determination
-  // Step 1: "Set up your e-wallet" (image_996e19be.png)
-  // Step 2: "Add E-Wallet" form (image_05a80938.png)
-  // Step 3: "Set Withdrawal Password" (image_caeaecef.png)
-  // Step 4: Main withdrawal form
+  // Required Withdrawal Workflow Order:
+  // a) If withdrawal password is NOT set -> Prompt 6-digit withdrawal password first (Step 3)
+  // b) If withdrawal password is set, but no e-wallet bound -> Direct to Add E-Wallet screen (Step 2)
+  // c) Once wallet and password are set -> Show main withdrawal page (Step 4)
   const determineInitialStep = (): 1 | 2 | 3 | 4 => {
-    if (!hasWallet) return 1;
     if (!hasWithdrawalPassword) return 3;
+    if (!hasWallet) return 2;
     return 4;
   };
 
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(determineInitialStep);
 
-  // Step 0: Incomplete cycle check modal (if current cycle tasks < 25)
-  const [showTaskModal, setShowTaskModal] = useState<boolean>(!isTaskEligible && !isAccountLocked && !isTaxPending);
+  // Step 0 modal is triggered on withdrawal submission / Details click when tasks < 25, so setup steps a & b are never blocked
+  const [showTaskModal, setShowTaskModal] = useState<boolean>(false);
 
   // Step 2 (Add E-Wallet) Form States matching image_05a80938.png
   const [walletName, setWalletName] = useState('');
@@ -125,8 +129,7 @@ export const WithdrawalPage: React.FC<Props> = ({
     });
 
     if (res.success) {
-      // Step 3 redirect check: If withdrawal password is not set, redirect to Step 3
-      if (!currentUser?.withdrawalPassword) {
+      if (!hasWithdrawalPassword) {
         setCurrentStep(3);
       } else {
         setCurrentStep(4);
@@ -137,14 +140,14 @@ export const WithdrawalPage: React.FC<Props> = ({
   };
 
   // --------------------------------------------------------------------------
-  // STEP 3 SUBMIT: Set Withdrawal Password
+  // STEP 3 SUBMIT: Set Withdrawal Password (6-digit)
   // --------------------------------------------------------------------------
   const handleSavePassword = (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError('');
 
-    if (!newPassword || newPassword.length < 6) {
-      setPasswordError('Please enter a password with minimum 6 digits.');
+    if (!/^\d{6}$/.test(newPassword)) {
+      setPasswordError('Please enter a valid 6-digit numeric withdrawal password.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -154,8 +157,13 @@ export const WithdrawalPage: React.FC<Props> = ({
 
     const res = setWithdrawalPassword(newPassword);
     if (res.success) {
-      // Proceed to main withdrawal screen (Step 4)
-      setCurrentStep(4);
+      // b) If e-wallet not bound yet -> go directly to Add E-Wallet (Step 2)
+      // c) Otherwise -> proceed to main withdrawal page (Step 4)
+      if (!hasWallet) {
+        setCurrentStep(2);
+      } else {
+        setCurrentStep(4);
+      }
     } else {
       setPasswordError(res.message || 'Failed to set withdrawal password.');
     }
@@ -167,9 +175,10 @@ export const WithdrawalPage: React.FC<Props> = ({
   const handleWithdraw = (e: React.FormEvent) => {
     e.preventDefault();
     setWithdrawError('');
+    if (!currentUser) return;
 
     // Rule 1: Account Lock Check
-    if (currentUser?.isLockedAccount) {
+    if (currentUser.isLockedAccount) {
       setShowLockedModal(true);
       return;
     }
@@ -188,15 +197,15 @@ export const WithdrawalPage: React.FC<Props> = ({
       return;
     }
 
-    // Wallet binding verification
-    if (!currentUser?.wallet) {
-      setCurrentStep(1);
+    // Password check first
+    if (!hasWithdrawalPassword) {
+      setCurrentStep(3);
       return;
     }
 
-    // Withdrawal password verification
-    if (!currentUser.withdrawalPassword) {
-      setCurrentStep(3);
+    // Wallet binding verification second
+    if (!hasWallet) {
+      setCurrentStep(2);
       return;
     }
 
@@ -232,10 +241,10 @@ export const WithdrawalPage: React.FC<Props> = ({
       ) {
         setWithdrawError('Please complete all 25 orders in your current task cycle before initiating a withdrawal.');
         setShowTaskModal(true);
-      } else if (res.message === 'NO_WALLET_SET') {
-        setCurrentStep(1);
       } else if (res.message === 'NO_WITHDRAWAL_PASSWORD_SET') {
         setCurrentStep(3);
+      } else if (res.message === 'NO_WALLET_SET') {
+        setCurrentStep(2);
       } else {
         setWithdrawError(res.message || 'Withdrawal failed.');
       }
@@ -301,7 +310,7 @@ export const WithdrawalPage: React.FC<Props> = ({
         {/* Top Header */}
         <div className="bg-white sticky top-0 z-20 flex items-center px-4 py-3 border-b border-slate-200">
           <button
-            onClick={() => setCurrentStep(1)}
+            onClick={onBack}
             className="p-1 -ml-1 text-slate-900 hover:text-black transition-colors cursor-pointer"
             aria-label="Back"
           >
@@ -398,7 +407,7 @@ export const WithdrawalPage: React.FC<Props> = ({
             </button>
             <button
               type="button"
-              onClick={() => setCurrentStep(1)}
+              onClick={onBack}
               className="w-full py-2.5 text-xs font-semibold text-slate-500 hover:text-black transition-colors cursor-pointer text-center"
             >
               Cancel
@@ -420,7 +429,10 @@ export const WithdrawalPage: React.FC<Props> = ({
         {/* Top Header */}
         <div className="bg-white sticky top-0 z-20 flex items-center px-4 py-3 border-b border-slate-200">
           <button
-            onClick={() => setCurrentStep(hasWallet ? 4 : 2)}
+            onClick={() => {
+              if (hasWithdrawalPassword && hasWallet) setCurrentStep(4);
+              else onBack();
+            }}
             className="p-1 -ml-1 text-slate-900 hover:text-black transition-colors cursor-pointer"
             aria-label="Back"
           >
@@ -558,7 +570,7 @@ export const WithdrawalPage: React.FC<Props> = ({
           <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block">
             Receiving Wallet Address
           </label>
-          {currentUser?.wallet ? (
+          {hasWallet && currentUser?.wallet ? (
             <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -581,7 +593,7 @@ export const WithdrawalPage: React.FC<Props> = ({
               </p>
               <div className="flex justify-between items-center text-[11px] text-slate-500">
                 <span>Account: {currentUser.wallet.accountName}</span>
-                <span>Bound: {currentUser.wallet.boundAt.substring(0, 10)}</span>
+                <span>Bound: {(currentUser.wallet.boundAt || '').substring(0, 10)}</span>
               </div>
               <div className="pt-1 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
                 <span className="flex items-center gap-1">
@@ -603,7 +615,7 @@ export const WithdrawalPage: React.FC<Props> = ({
             </div>
           ) : (
             <button
-              onClick={() => setCurrentStep(1)}
+              onClick={() => setCurrentStep(2)}
               className="w-full py-3 bg-red-50 border-2 border-dashed border-red-300 rounded-2xl text-xs font-bold text-[#7a0a14] flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" />

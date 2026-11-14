@@ -383,6 +383,7 @@ export const INITIAL_USERS: User[] = [
     cycleNumber: 1,
     cycleApprovedByAdmin: true,
     comboOrderStep: 14,
+    workPermission: true,
   },
   {
     id: 'user_karim88',

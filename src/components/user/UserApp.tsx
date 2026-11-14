@@ -21,7 +21,6 @@ export const UserApp: React.FC = () => {
   const [activeSubpage, setActiveSubpage] = useState<string | null>(null);
   const [depositNavParams, setDepositNavParams] = useState<DepositNavigationParams | null>(null);
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
-  const [menuKey, setMenuKey] = useState<number>(0);
 
   // Navigation parameter handler for deposit page
   const handleNavigateToDeposit = (params?: DepositNavigationParams) => {
@@ -55,8 +54,8 @@ export const UserApp: React.FC = () => {
     );
   }
 
-  // Router for subpages
-  const renderContent = () => {
+  // Router for full-screen subpages (rendered on top while preserving mounted tab state)
+  const renderSubpage = () => {
     if (activeSubpage === 'deposit') {
       return (
         <DepositPage
@@ -82,7 +81,6 @@ export const UserApp: React.FC = () => {
           }}
           onNavigateToMenu={() => {
             setActiveSubpage(null);
-            setMenuKey((prev) => prev + 1);
             setCurrentTab('menu');
           }}
         />
@@ -112,60 +110,7 @@ export const UserApp: React.FC = () => {
         <RecordsPage initialType="withdrawal" onBack={() => setActiveSubpage(null)} />
       );
     }
-
-    // Default primary tabs
-    switch (currentTab) {
-      case 'home':
-        return (
-          <HomeTab
-            onNavigate={(page) => {
-              if (page === 'service' || page === 'menu' || page === 'record' || page === 'mine') {
-                if (page === 'menu') {
-                  setMenuKey((prev) => prev + 1);
-                }
-                setCurrentTab(page);
-              } else if (page === 'deposit') {
-                handleNavigateToDeposit();
-              } else {
-                setActiveSubpage(page);
-              }
-            }}
-          />
-        );
-      case 'service':
-        return <ServiceTab />;
-      case 'menu':
-        return (
-          <MenuTab
-            key={`menu-${menuKey}`}
-            onNavigateToRecord={() => setCurrentTab('record')}
-            onNavigateToDeposit={handleNavigateToDeposit}
-            onNavigateToWithdrawal={() => setActiveSubpage('withdrawal')}
-            onNavigateToSupport={() => setCurrentTab('service')}
-          />
-        );
-      case 'record':
-        return <RecordTab onNavigateToDeposit={handleNavigateToDeposit} />;
-      case 'mine':
-      default:
-        return (
-          <MineTab
-            onNavigate={(page) => {
-              if (page === 'service' || page === 'menu' || page === 'record' || page === 'home') {
-                if (page === 'menu') {
-                  setMenuKey((prev) => prev + 1);
-                }
-                setCurrentTab(page);
-              } else if (page === 'deposit') {
-                handleNavigateToDeposit();
-              } else {
-                setActiveSubpage(page);
-              }
-            }}
-            onOpenAuth={() => setShowAuthModal(true)}
-          />
-        );
-    }
+    return null;
   };
 
   const navItems = [
@@ -178,10 +123,58 @@ export const UserApp: React.FC = () => {
 
   return (
     <div className="relative flex flex-col h-full bg-slate-100 select-none overflow-hidden font-sans">
-      {/* Scrollable Main Viewport */}
-      <div className="flex-1 overflow-y-auto">{renderContent()}</div>
+      {/* Scrollable Main Viewport — Primary tabs stay mounted so Menu/Task session never resets on navigation */}
+      <div className="flex-1 overflow-y-auto">
+        {activeSubpage ? renderSubpage() : null}
 
-      {/* Fixed Bottom Navigation Bar matching Screenshot_2026-06-07-12-43-57-54 */}
+        <div className={!activeSubpage && currentTab === 'home' ? 'h-full' : 'hidden'}>
+          <HomeTab
+            onNavigate={(page) => {
+              if (page === 'service' || page === 'menu' || page === 'record' || page === 'mine') {
+                setCurrentTab(page);
+              } else if (page === 'deposit') {
+                handleNavigateToDeposit();
+              } else {
+                setActiveSubpage(page);
+              }
+            }}
+          />
+        </div>
+
+        <div className={!activeSubpage && currentTab === 'service' ? 'h-full' : 'hidden'}>
+          <ServiceTab />
+        </div>
+
+        <div className={!activeSubpage && currentTab === 'menu' ? 'h-full' : 'hidden'}>
+          <MenuTab
+            onNavigateToRecord={() => setCurrentTab('record')}
+            onNavigateToDeposit={handleNavigateToDeposit}
+            onNavigateToWithdrawal={() => setActiveSubpage('withdrawal')}
+            onNavigateToSupport={() => setCurrentTab('service')}
+          />
+        </div>
+
+        <div className={!activeSubpage && currentTab === 'record' ? 'h-full' : 'hidden'}>
+          <RecordTab onNavigateToDeposit={handleNavigateToDeposit} />
+        </div>
+
+        <div className={!activeSubpage && currentTab === 'mine' ? 'h-full' : 'hidden'}>
+          <MineTab
+            onNavigate={(page) => {
+              if (page === 'service' || page === 'menu' || page === 'record' || page === 'home') {
+                setCurrentTab(page);
+              } else if (page === 'deposit') {
+                handleNavigateToDeposit();
+              } else {
+                setActiveSubpage(page);
+              }
+            }}
+            onOpenAuth={() => setShowAuthModal(true)}
+          />
+        </div>
+      </div>
+
+      {/* Fixed Bottom Navigation Bar */}
       {!activeSubpage && (
         <div className="sticky bottom-0 z-40 bg-white border-t border-slate-200/80 px-2 py-1.5 shadow-lg">
           <div className="grid grid-cols-5 items-center">
@@ -192,9 +185,6 @@ export const UserApp: React.FC = () => {
                 <button
                   key={item.key}
                   onClick={() => {
-                    if (item.key === 'menu') {
-                      setMenuKey((prev) => prev + 1);
-                    }
                     setCurrentTab(item.key);
                   }}
                   className="flex flex-col items-center justify-center py-1 transition-transform active:scale-95 group"
