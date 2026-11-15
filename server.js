@@ -22,7 +22,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 const MONGODB_URI =
   process.env.MONGODB_URI ||
   'mongodb+srv://shahanislam935_db_user:ciKbafwUqfbSmt7G@cluster0.pwkfalj.mongodb.net/myFirstDatabase?retryWrites=true&w=majority';
@@ -2975,7 +2975,9 @@ app.get('/api/admin/verify', verifyAdminAuth, (req, res) => {
 // 5. DEV & PRODUCTION ASSET SERVING
 // ==============================================================================
 
-// If running in development with Vite or production build
+let viteMiddlewareHandler = null;
+let viteSetupError = null;
+
 const setupViteOrStatic = async () => {
   if (process.env.NODE_ENV !== 'production') {
     try {
@@ -2984,44 +2986,78 @@ const setupViteOrStatic = async () => {
         server: { middlewareMode: true },
         appType: 'spa',
       });
-      app.use(vite.middlewares);
-    } catch {
-      app.use(express.static(path.join(__dirname, 'dist')));
+      viteMiddlewareHandler = vite.middlewares;
+      console.log('Vite dev middleware initialized successfully');
+    } catch (err) {
+      viteSetupError = err;
+      console.error('Vite middleware initialization error, falling back to dist:', err?.message || err);
     }
-  } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-    });
   }
 };
 
-// Root health check endpoint for Render / Cloud scanners
+const viteReadyPromise = setupViteOrStatic();
+
+// Root health check endpoint for Render / Cloud scanners (non-HTML callers)
 app.get('/', (req, res, next) => {
-  // If dist index.html exists, let static handler serve it; otherwise respond 200 OK
-  if (req.accepts('html') && !req.path.startsWith('/api')) {
+  const accept = req.headers.accept || '';
+  if (accept.includes('text/html') || accept === '*/*' || !accept) {
     return next();
   }
-  res.status(200).json({
+  return res.status(200).json({
     status: 'online',
     message: 'Server is running successfully.',
     health: '/api/health',
   });
 });
 
-// Setup Vite middleware in dev or static files in production
-const startServer = async () => {
-  await setupViteOrStatic();
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`======================================================================`);
-    console.log(`Backend Server listening on http://0.0.0.0:${PORT}`);
-    console.log(`Health check: http://0.0.0.0:${PORT}/api/health`);
-    console.log(`======================================================================`);
-  });
-};
+// Mount dynamic Vite / static handler that awaits Vite init on incoming requests
+// so app.listen binds port 3000 immediately without hitting startup probe timeouts.
+const distDir = path.join(__dirname, 'dist');
+const staticFallback = express.static(distDir);
 
-startServer().catch((err) => {
-  console.error('Server startup error:', err);
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    await viteReadyPromise;
+    if (viteMiddlewareHandler) {
+      return viteMiddlewareHandler(req, res, next);
+    }
+    if (viteSetupError) {
+      return staticFallback(req, res, next);
+    }
+  }
+  return staticFallback(req, res, next);
+});
+
+app.get('*', async (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    await viteReadyPromise;
+    if (viteMiddlewareHandler) {
+      return viteMiddlewareHandler(req, res, next);
+    }
+  }
+  const indexFile = path.join(distDir, 'index.html');
+  if (fs.existsSync(indexFile)) {
+    return res.sendFile(indexFile);
+  }
+  return res.status(503).send('Frontend build not found.');
+});
+
+// Listen immediately on PORT so health checks succeed without waiting for Vite/Mongo cold start
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`======================================================================`);
+  console.log(`Backend Server listening on http://0.0.0.0:${PORT}`);
+  console.log(`Health check: http://0.0.0.0:${PORT}/api/health`);
+  console.log(`======================================================================`);
+});
+
+server.on('error', (err) => {
+  console.error('HTTP Server listen error:', err);
 });
 
 export default app;
