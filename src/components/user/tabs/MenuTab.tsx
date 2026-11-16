@@ -216,9 +216,9 @@ export const MenuTab: React.FC<Props> = ({
     const frozenMoneyStr = `${(currentUser?.frozenBalance ?? 0).toFixed(2)}USDT`;
 
     return (
-      <div className="min-h-full bg-slate-50 flex flex-col pb-20 relative select-none font-sans">
-        {/* 1. Previous Deep Wine / Dark Red Gradient Header matching Screenshot_2026-06-07-12-51-20-33 */}
-        <div className="bg-gradient-to-b from-[#8b0000] via-[#6d1316] to-[#4a0000] text-white px-4 pt-3 pb-12 shadow-md">
+      <div className="min-h-full w-full bg-slate-50 flex flex-col pb-20 relative select-none font-sans">
+        {/* 1. Deep Wine / Dark Red Gradient Header */}
+        <div className="bg-gradient-to-b from-[#8b0000] via-[#6d1316] to-[#4a0000] text-white px-4 md:px-8 pt-3 pb-12 shadow-md w-full">
           {/* Top Bar with Back Arrow and Title */}
           <div className="flex items-center justify-between pb-3">
             <button
@@ -246,9 +246,9 @@ export const MenuTab: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* 2. Floating White Statistical Dashboard Card (2 Columns, 3 Rows) */}
-        <div className="-mt-8 mx-4 bg-white rounded-3xl shadow-md border border-slate-100 p-6">
-          <div className="grid grid-cols-2 gap-y-6 text-center">
+        {/* 2. Floating White Statistical Dashboard Card */}
+        <div className="-mt-8 mx-4 md:mx-8 bg-white rounded-3xl shadow-md border border-slate-100 p-6 md:p-8">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-y-6 gap-x-4 text-center">
             {/* ROW 1: Left - Today's Times */}
             <div className="flex flex-col items-center justify-center">
               <span className="text-base sm:text-lg font-bold text-slate-900 font-mono leading-none">
@@ -311,8 +311,8 @@ export const MenuTab: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* 3. Action Section matching Previous Scheme */}
-        <div className="px-4 mt-6 space-y-4">
+        {/* 3. Action Section */}
+        <div className="px-4 md:px-8 mt-6 space-y-4 w-full">
           {/* Professional Motivational Banner */}
           <div className="p-3 bg-gradient-to-r from-slate-50 via-white to-slate-50 border border-slate-200/90 rounded-2xl flex items-center justify-between gap-2 text-xs text-slate-800 shadow-xs">
             <div className="flex items-center gap-2.5">
@@ -578,20 +578,20 @@ export const MenuTab: React.FC<Props> = ({
 
   // Master Menu List matching VIP Selection Screen
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col pb-20 relative select-none font-sans">
+    <div className="min-h-full w-full bg-slate-50 flex flex-col pb-20 relative select-none font-sans">
       {/* Top Title Bar */}
-      <div className="bg-white sticky top-0 z-20 px-4 py-3.5 border-b border-slate-200 text-center">
+      <div className="bg-white sticky top-0 z-20 px-4 md:px-8 py-3.5 border-b border-slate-200 text-center w-full">
         <h1 className="font-bold text-slate-900 text-base">Menu</h1>
       </div>
 
       {/* Segmented VIP Filter Tabs */}
-      <div className="bg-white p-3 border-b border-slate-200">
+      <div className="bg-white p-3 md:px-8 border-b border-slate-200 w-full">
         <div className="flex gap-2">
           {(['All', 'VIP 1', 'VIP 2', 'VIP 3'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setSelectedVip(tab)}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+              className={`flex-1 py-1.5 md:py-2 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
                 selectedVip === tab
                   ? 'bg-[#694248] text-white shadow-xs'
                   : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
@@ -603,51 +603,53 @@ export const MenuTab: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Platform VIP Cards List */}
-      <div className="p-4 space-y-3.5 flex-1">
-        {filteredPlatforms.map((p) => {
-          const eligibleInfo = currentUser ? getEligiblePlatformForBalance(currentUser.balance) : null;
-          const isCurrentEligible = eligibleInfo?.platform === p.name;
-          return (
-            <div
-              key={p.name}
-              onClick={() => setActivePlatformDetail(p.name)}
-              className={`bg-white rounded-2xl p-4 border shadow-xs cursor-pointer hover:border-amber-400 hover:shadow-md transition-all relative overflow-hidden ${
-                isCurrentEligible ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-slate-200'
-              }`}
-            >
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="inline-block bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-[10px] px-2 py-0.5 rounded-sm shadow-xs">
-                  {p.tier}
-                </span>
-                {isCurrentEligible && (
-                  <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] px-2 py-0.5 rounded-sm">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                    Eligible for Your Balance
+      {/* Platform VIP Cards Grid */}
+      <div className="p-4 md:p-8 flex-1 w-full">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5 w-full">
+          {filteredPlatforms.map((p) => {
+            const eligibleInfo = currentUser ? getEligiblePlatformForBalance(currentUser.balance) : null;
+            const isCurrentEligible = eligibleInfo?.platform === p.name;
+            return (
+              <div
+                key={p.name}
+                onClick={() => setActivePlatformDetail(p.name)}
+                className={`bg-white rounded-2xl p-4 md:p-5 border shadow-xs cursor-pointer hover:border-amber-400 hover:shadow-md transition-all relative overflow-hidden ${
+                  isCurrentEligible ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-slate-200'
+                }`}
+              >
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="inline-block bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-[10px] px-2 py-0.5 rounded-sm shadow-xs">
+                    {p.tier}
                   </span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-4">
-                <div
-                  className={`w-14 h-14 rounded-2xl ${p.bgColor} flex items-center justify-center shrink-0 shadow-xs`}
-                >
-                  {p.icon}
+                  {isCurrentEligible && (
+                    <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] px-2 py-0.5 rounded-sm">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      Eligible for Your Balance
+                    </span>
+                  )}
                 </div>
 
-                <div className="space-y-1 flex-1">
-                  <h3 className="font-bold text-sm text-slate-900">{p.name}</h3>
-                  <p className="text-xs text-slate-600">Available balance: {p.range}</p>
-                  <p className="text-xs text-red-600 font-semibold">
-                    Commissions: <span className="font-bold">{p.rateText}</span>
-                  </p>
+                <div className="flex items-center gap-4">
+                  <div
+                    className={`w-14 h-14 rounded-2xl ${p.bgColor} flex items-center justify-center shrink-0 shadow-xs`}
+                  >
+                    {p.icon}
+                  </div>
+
+                  <div className="space-y-1 flex-1">
+                    <h3 className="font-bold text-sm text-slate-900">{p.name}</h3>
+                    <p className="text-xs text-slate-600">Available balance: {p.range}</p>
+                    <p className="text-xs text-red-600 font-semibold">
+                      Commissions: <span className="font-bold">{p.rateText}</span>
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
 
-        <div className="text-center py-4 text-xs text-slate-400">No more</div>
+        <div className="text-center py-6 text-xs text-slate-400">No more</div>
       </div>
     </div>
   );

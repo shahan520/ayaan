@@ -20,12 +20,12 @@ export const RecordsPage: React.FC<Props> = ({ initialType = 'deposit', onBack }
   );
 
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col">
+    <div className="min-h-full w-full bg-slate-50 flex flex-col">
       {/* Top App Bar */}
-      <div className="bg-white sticky top-0 z-20 flex items-center px-4 py-3 border-b border-slate-200">
+      <div className="bg-white sticky top-0 z-20 flex items-center px-4 md:px-8 py-3 border-b border-slate-200 w-full">
         <button
           onClick={onBack}
-          className="p-1 -ml-1 text-slate-800 hover:text-slate-900 transition-colors"
+          className="p-1 -ml-1 text-slate-800 hover:text-slate-900 transition-colors cursor-pointer"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
@@ -35,7 +35,7 @@ export const RecordsPage: React.FC<Props> = ({ initialType = 'deposit', onBack }
       </div>
 
       {/* Switch between Deposit / Withdrawal records */}
-      <div className="bg-white border-b border-slate-200 flex px-4 pt-2">
+      <div className="bg-white border-b border-slate-200 flex px-4 md:px-8 pt-2 w-full">
         <button
           onClick={() => setRecordType('deposit')}
           className={`flex-1 pb-2.5 text-xs font-bold text-center border-b-2 transition-colors ${
@@ -58,12 +58,13 @@ export const RecordsPage: React.FC<Props> = ({ initialType = 'deposit', onBack }
         </button>
       </div>
 
-      <div className="p-4 flex-1">
+      <div className="p-4 md:p-8 flex-1 w-full">
         {recordType === 'deposit' ? (
           userDeposits.length === 0 ? (
             <div className="py-20 text-center text-slate-400 text-xs">No more</div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start w-full">
               {userDeposits.map((item) => (
                 <div
                   key={item.id}
@@ -114,13 +115,15 @@ export const RecordsPage: React.FC<Props> = ({ initialType = 'deposit', onBack }
                   </div>
                 </div>
               ))}
+              </div>
               <div className="text-center py-4 text-xs text-slate-400">No more</div>
             </div>
           )
         ) : userWithdrawals.length === 0 ? (
           <div className="py-20 text-center text-slate-400 text-xs">No more</div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start w-full">
             {userWithdrawals.map((item) => (
               <div
                 key={item.id}
@@ -177,6 +180,7 @@ export const RecordsPage: React.FC<Props> = ({ initialType = 'deposit', onBack }
                 </div>
               </div>
             ))}
+            </div>
             <div className="text-center py-4 text-xs text-slate-400">No more</div>
           </div>
         )}

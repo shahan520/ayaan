@@ -6,7 +6,6 @@
 import React from 'react';
 import { AdminLoginGate } from './components/admin/AdminLoginGate';
 import { AdminPanel } from './components/admin/AdminPanel';
-import { MobileFrame } from './components/common/MobileFrame';
 import { UserApp } from './components/user/UserApp';
 import { AppProvider, useApp } from './context/AppContext';
 
@@ -34,13 +33,11 @@ const MainLayout: React.FC = () => {
   }
 
   // PUBLIC REGULAR USER VIEW:
-  // - PC/Desktop: Centered realistic Mobile Phone Frame Mockup
-  // - Mobile Devices: 100% full-screen responsive view
-  // - Completely hides Admin Panel, admin links, and developer switcher from regular users
+  // Full-page responsive layout across Desktop, Laptop, Tablet, and Mobile
   return (
-    <MobileFrame>
+    <div className="min-h-screen w-full bg-slate-50 text-slate-900 flex flex-col font-sans overflow-x-hidden">
       <UserApp />
-    </MobileFrame>
+    </div>
   );
 };
 

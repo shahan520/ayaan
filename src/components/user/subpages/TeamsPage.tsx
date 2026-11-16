@@ -211,9 +211,9 @@ export const TeamsPage: React.FC<Props> = ({ onBack }) => {
     activeLevel === '1' ? level1Users : activeLevel === '2' ? level2Users : level3Users;
 
   return (
-    <div className="min-h-full bg-[#f8fafc] flex flex-col font-sans select-none pb-12">
-      {/* Dark Crimson / Maroon Header matching Screenshot reference */}
-      <div className="bg-[#54121e] text-white px-4 pt-3 pb-3 shadow-md">
+    <div className="min-h-full w-full bg-[#f8fafc] flex flex-col font-sans select-none pb-12">
+      {/* Dark Crimson / Maroon Header */}
+      <div className="bg-[#54121e] text-white px-4 md:px-8 pt-3 pb-3 shadow-md w-full">
         {/* Top Header Bar matching screenshot: <  Team */}
         <div className="flex items-center justify-between pb-1">
           <button
@@ -346,8 +346,8 @@ export const TeamsPage: React.FC<Props> = ({ onBack }) => {
         </button>
       </div>
 
-      {/* Level Description Subtitle matching exact screenshot text */}
-      <div className="px-4 pt-3.5 pb-2">
+      {/* Level Description Subtitle */}
+      <div className="px-4 md:px-8 pt-3.5 pb-2 w-full">
         <span className="text-xs text-slate-400 font-normal">
           {activeLevel === '1' && 'People who registered using your invite code'}
           {activeLevel === '2' && "People invited by your Level 1 members' invite codes"}
@@ -355,8 +355,8 @@ export const TeamsPage: React.FC<Props> = ({ onBack }) => {
         </span>
       </div>
 
-      {/* Member Cards List matching screenshots */}
-      <div className="px-3 py-1 flex-1 space-y-2.5">
+      {/* Member Cards Grid */}
+      <div className="px-3 md:px-8 py-2 flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 items-start content-start w-full">
         {currentList.map((member) => {
           const memberDeposit = getUserTotalDeposit(member);
           const memberWithdrawal = getUserTotalWithdrawal(member);

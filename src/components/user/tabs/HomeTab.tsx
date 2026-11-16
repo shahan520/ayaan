@@ -123,9 +123,9 @@ export const HomeTab: React.FC<Props> = ({ onNavigate }) => {
   const currentAnnouncement = payoutFeeds[tickerIndex];
 
   return (
-    <div className="min-h-full bg-slate-50 pb-20 select-none">
-      {/* 1. Header with Colorful 5-Polygon Logo matching Screenshot_2026-06-07-12-48-53-99 */}
-      <div className="bg-white px-4 py-3 sticky top-0 z-20 flex items-center justify-between border-b border-slate-100">
+    <div className="min-h-full w-full bg-slate-50 pb-20 select-none">
+      {/* 1. Header with Colorful 5-Polygon Logo */}
+      <div className="bg-white px-4 md:px-8 py-3.5 sticky top-0 z-20 flex items-center justify-between border-b border-slate-100 w-full">
         <div className="flex items-center gap-2.5">
           <ColorfulPolygonLogo />
         </div>
@@ -138,12 +138,12 @@ export const HomeTab: React.FC<Props> = ({ onNavigate }) => {
         </button>
       </div>
 
-      {/* 2. Quick Action Grid (4 Outline Icons matching Screenshot) */}
-      <div className="bg-white px-4 py-4 grid grid-cols-4 gap-2 text-center border-b border-slate-100">
+      {/* 2. Quick Action Grid (4 Outline Icons) */}
+      <div className="bg-white px-4 md:px-8 py-4 md:py-5 grid grid-cols-4 gap-2 md:gap-6 text-center border-b border-slate-100 w-full">
         {/* Recharge */}
         <button
           onClick={() => onNavigate('deposit')}
-          className="flex flex-col items-center justify-center p-1 rounded-xl transition-transform active:scale-95 cursor-pointer group"
+          className="flex flex-col items-center justify-center p-1 md:p-2 rounded-xl transition-transform active:scale-95 cursor-pointer group"
         >
           <div className="w-12 h-12 rounded-xl border border-slate-700/80 text-slate-900 flex items-center justify-center mb-1.5 group-hover:border-black group-hover:bg-slate-50 transition-colors">
             <TrendingUp className="w-6 h-6 stroke-[1.7]" />
@@ -154,7 +154,7 @@ export const HomeTab: React.FC<Props> = ({ onNavigate }) => {
         {/* Withdrawal */}
         <button
           onClick={() => onNavigate('withdrawal')}
-          className="flex flex-col items-center justify-center p-1 rounded-xl transition-transform active:scale-95 cursor-pointer group"
+          className="flex flex-col items-center justify-center p-1 md:p-2 rounded-xl transition-transform active:scale-95 cursor-pointer group"
         >
           <div className="w-12 h-12 rounded-xl border border-slate-700/80 text-slate-900 flex items-center justify-center mb-1.5 group-hover:border-black group-hover:bg-slate-50 transition-colors">
             <Wallet className="w-6 h-6 stroke-[1.7]" />
@@ -165,7 +165,7 @@ export const HomeTab: React.FC<Props> = ({ onNavigate }) => {
         {/* Teams */}
         <button
           onClick={() => onNavigate('teams')}
-          className="flex flex-col items-center justify-center p-1 rounded-xl transition-transform active:scale-95 cursor-pointer group"
+          className="flex flex-col items-center justify-center p-1 md:p-2 rounded-xl transition-transform active:scale-95 cursor-pointer group"
         >
           <div className="w-12 h-12 rounded-xl border border-slate-700/80 text-slate-900 flex items-center justify-center mb-1.5 group-hover:border-black group-hover:bg-slate-50 transition-colors">
             <Users className="w-6 h-6 stroke-[1.7]" />
@@ -176,7 +176,7 @@ export const HomeTab: React.FC<Props> = ({ onNavigate }) => {
         {/* Invitation */}
         <button
           onClick={() => onNavigate('invite')}
-          className="flex flex-col items-center justify-center p-1 rounded-xl transition-transform active:scale-95 cursor-pointer group"
+          className="flex flex-col items-center justify-center p-1 md:p-2 rounded-xl transition-transform active:scale-95 cursor-pointer group"
         >
           <div className="w-12 h-12 rounded-xl border border-slate-700/80 text-slate-900 flex items-center justify-center mb-1.5 group-hover:border-black group-hover:bg-slate-50 transition-colors">
             <UserPlus className="w-6 h-6 stroke-[1.7]" />
@@ -185,57 +185,59 @@ export const HomeTab: React.FC<Props> = ({ onNavigate }) => {
         </button>
       </div>
 
-      {/* 3. Live Notification Ticker Bar matching Screenshot */}
-      <div className="mx-4 mt-3 bg-white p-3 rounded-xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
-        <div className="flex items-center gap-3 overflow-hidden">
-          {/* Red outlined avatar icon matching screenshot */}
-          <div className="w-8 h-8 rounded-full border border-red-500 text-red-500 flex items-center justify-center shrink-0">
-            <User className="w-4 h-4 stroke-[2]" />
+      {/* 3. Live Notification Ticker Bar & Grab Order shortcut banner */}
+      <div className="px-4 md:px-8 mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4 w-full">
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
+          <div className="flex items-center gap-3 overflow-hidden">
+            {/* Red outlined avatar icon matching screenshot */}
+            <div className="w-8 h-8 rounded-full border border-red-500 text-red-500 flex items-center justify-center shrink-0">
+              <User className="w-4 h-4 stroke-[2]" />
+            </div>
+            <div className="flex flex-col">
+              <span className="font-bold text-xs text-[#000000] font-mono tracking-tight leading-tight">
+                {currentAnnouncement.user}
+              </span>
+              <span className="text-[11px] text-slate-400 font-medium leading-tight mt-0.5">
+                {currentAnnouncement.status}
+              </span>
+            </div>
           </div>
-          <div className="flex flex-col">
-            <span className="font-bold text-xs text-[#000000] font-mono tracking-tight leading-tight">
-              {currentAnnouncement.user}
-            </span>
-            <span className="text-[11px] text-slate-400 font-medium leading-tight mt-0.5">
-              {currentAnnouncement.status}
-            </span>
-          </div>
+          <span className="text-xs font-bold text-slate-700 font-mono shrink-0">
+            {currentAnnouncement.amount}
+          </span>
         </div>
-        <span className="text-xs font-bold text-slate-700 font-mono shrink-0">
-          {currentAnnouncement.amount}
-        </span>
+
+        {/* Quick Start / Grab Order shortcut banner */}
+        <div className="p-3.5 bg-gradient-to-r from-[#6e0a12] via-[#52050b] to-[#380105] rounded-xl text-white shadow-xs flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] font-black bg-amber-400 text-black px-1.5 py-0.2 rounded-xs uppercase">
+                Task System
+              </span>
+              <h3 className="font-bold text-xs text-white">Start Grabbing Orders</h3>
+            </div>
+            <p className="text-[11px] text-white/80 mt-0.5">
+              Earn up to 83% High Reward Commission Today!
+            </p>
+          </div>
+          <button
+            onClick={() => onNavigate('menu')}
+            className="px-3 py-1.5 bg-white hover:bg-slate-100 text-[#6e0a12] font-black text-xs rounded-lg transition-colors flex items-center gap-1 cursor-pointer shrink-0"
+          >
+            <span>Grab</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
-      {/* Quick Start / Grab Order shortcut banner */}
-      <div className="mx-4 mt-3 p-3.5 bg-gradient-to-r from-[#6e0a12] via-[#52050b] to-[#380105] rounded-xl text-white shadow-xs flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[9px] font-black bg-amber-400 text-black px-1.5 py-0.2 rounded-xs uppercase">
-              Task System
-            </span>
-            <h3 className="font-bold text-xs text-white">Start Grabbing Orders</h3>
-          </div>
-          <p className="text-[11px] text-white/80 mt-0.5">
-            Earn up to 83% High Reward Commission Today!
-          </p>
-        </div>
-        <button
-          onClick={() => onNavigate('menu')}
-          className="px-3 py-1.5 bg-white hover:bg-slate-100 text-[#6e0a12] font-black text-xs rounded-lg transition-colors flex items-center gap-1 cursor-pointer shrink-0"
-        >
-          <span>Grab</span>
-          <ArrowUpRight className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
-      {/* 4. Platform Introduction Section (2x2 Grid matching Screenshot) */}
-      <div className="px-4 mt-4 space-y-2.5">
+      {/* 4. Platform Introduction Section */}
+      <div className="px-4 md:px-8 mt-5 space-y-3 w-full">
         <h2 className="text-base font-bold text-[#000000] tracking-tight">
           Platform introduction
         </h2>
 
-        {/* 2x2 Grid with exact 4 attached images */}
-        <div className="grid grid-cols-2 gap-3">
+        {/* Responsive Grid: 2 cols mobile, 4 cols desktop */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-5">
           {platformCards.map((card, idx) => (
             <div
               key={idx}
@@ -251,7 +253,7 @@ export const HomeTab: React.FC<Props> = ({ onNavigate }) => {
               className="bg-white rounded-xl overflow-hidden border border-slate-200/90 shadow-2xs hover:shadow-md transition-all cursor-pointer flex flex-col group active:scale-[0.98]"
             >
               {/* Card Image */}
-              <div className="h-28 w-full bg-slate-100 overflow-hidden relative">
+              <div className="h-28 sm:h-36 md:h-40 w-full bg-slate-100 overflow-hidden relative">
                 <img
                   src={card.image}
                   alt={card.title}
@@ -260,12 +262,12 @@ export const HomeTab: React.FC<Props> = ({ onNavigate }) => {
               </div>
 
               {/* Card Text Content */}
-              <div className="p-2.5 flex-1 flex flex-col justify-between">
+              <div className="p-3 flex-1 flex flex-col justify-between">
                 <div>
-                  <h3 className="font-bold text-xs text-[#000000] mb-0.5 leading-snug">
+                  <h3 className="font-bold text-xs md:text-sm text-[#000000] mb-0.5 leading-snug">
                     {card.title}
                   </h3>
-                  <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
+                  <p className="text-[11px] md:text-xs text-slate-500 line-clamp-2 leading-relaxed">
                     {card.description}
                   </p>
                 </div>

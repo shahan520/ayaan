@@ -172,9 +172,9 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords, navi
   };
 
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col">
+    <div className="min-h-full w-full bg-slate-50 flex flex-col">
       {/* Top App Bar */}
-      <div className="bg-white sticky top-0 z-20 flex items-center px-4 py-3 border-b border-slate-200">
+      <div className="bg-white sticky top-0 z-20 flex items-center px-4 md:px-8 py-3 border-b border-slate-200 w-full">
         <button
           onClick={() => {
             if (step === 2 && !isSubmitted) {
@@ -183,7 +183,7 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords, navi
               onBack();
             }
           }}
-          className="p-1 -ml-1 text-slate-700 hover:text-slate-900 transition-colors"
+          className="p-1 -ml-1 text-slate-700 hover:text-slate-900 transition-colors cursor-pointer"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
@@ -191,8 +191,8 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords, navi
       </div>
 
       {step === 1 ? (
-        /* STEP 1: Amount & Protocol Selection (Matching Screenshot_2026-06-07-12-44-27-67) */
-        <form onSubmit={handleNextStep} className="p-4 flex-1 flex flex-col space-y-5">
+        /* STEP 1: Amount & Protocol Selection */
+        <form onSubmit={handleNextStep} className="p-4 md:p-8 flex-1 flex flex-col space-y-5 w-full">
           {error && (
             <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
               {error}
@@ -316,10 +316,10 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords, navi
           </div>
         </form>
       ) : (
-        /* STEP 2: One-Time TRC-20 Address & Proof Submission (Matching Screenshot_2026-06-07-12-48-41-52) */
-        <div className="p-4 flex-1 flex flex-col items-center space-y-4">
+        /* STEP 2: One-Time TRC-20 Address & Proof Submission */
+        <div className="p-4 md:p-8 flex-1 flex flex-col items-center space-y-4 w-full">
           {isSubmitted ? (
-            <div className="w-full bg-white rounded-2xl p-6 border border-slate-200 text-center space-y-4 shadow-sm my-auto">
+            <div className="w-full bg-white rounded-2xl p-6 md:p-10 border border-slate-200 text-center space-y-4 shadow-sm my-auto">
               <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center">
                 <CheckCircle2 className="w-10 h-10" />
               </div>
@@ -331,20 +331,20 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords, navi
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={onNavigateToRecords}
-                  className="flex-1 py-2.5 bg-slate-900 text-white rounded-lg text-xs font-semibold hover:bg-slate-800 transition-colors"
+                  className="flex-1 py-2.5 bg-slate-900 text-white rounded-lg text-xs font-semibold hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   View Deposit Records
                 </button>
                 <button
                   onClick={onBack}
-                  className="flex-1 py-2.5 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-50 transition-colors"
+                  className="flex-1 py-2.5 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-50 transition-colors cursor-pointer"
                 >
                   Return to Dashboard
                 </button>
               </div>
             </div>
           ) : (
-            <div className="w-full max-w-sm bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4 text-center">
+            <div className="w-full bg-white rounded-2xl p-5 md:p-8 border border-slate-200 shadow-sm space-y-4 text-center">
               <div>
                 <span className="text-3xl font-black text-slate-900 tracking-tight">{amount}</span>
                 <p className="text-xs font-semibold text-slate-600 mt-0.5">

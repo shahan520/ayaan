@@ -163,21 +163,11 @@ export const AuthModal: React.FC<Props> = ({
   };
 
   return (
-    <div className="fixed md:absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-2 sm:p-3 overflow-y-auto">
-      <div className="w-full max-w-[390px] bg-gradient-to-b from-[#4a121e] via-[#380b16] to-[#25050e] rounded-[32px] shadow-2xl overflow-hidden border border-white/10 flex flex-col my-auto relative animate-in fade-in zoom-in-95 duration-200">
-        
-        {/* iOS style Top Status Bar mockup (hidden on desktop PC because MobileFrame already has one) */}
-        <div className="md:hidden flex items-center justify-between px-6 pt-3.5 pb-1 text-white text-[13px] font-semibold tracking-tight">
-          <span>9:41</span>
-          <div className="flex items-center gap-1.5">
-            <span className="w-4 h-2.5 rounded-[2px] border border-white/80 relative flex items-center p-0.5">
-              <span className="w-full h-full bg-white rounded-[1px] block"></span>
-            </span>
-          </div>
-        </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-3 sm:p-6 overflow-y-auto">
+      <div className="w-full max-w-md bg-gradient-to-b from-[#4a121e] via-[#380b16] to-[#25050e] rounded-[32px] shadow-2xl overflow-hidden border border-white/10 flex flex-col my-auto relative animate-in fade-in zoom-in-95 duration-200">
 
         {/* Header Section */}
-        <div className="pt-4 pb-6 px-6 text-center relative">
+        <div className="pt-6 pb-6 px-6 text-center relative">
           {/* Back button (Only in Register mode, matching screenshot) */}
           {mode === 'register' && (
             <button

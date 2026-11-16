@@ -77,9 +77,9 @@ export const ServiceTab: React.FC = () => {
   ];
 
   return (
-    <div className="min-h-full bg-[#fdf2f2] flex flex-col pb-20">
-      {/* Top Header matching Screenshot_2026-06-07-12-50-50-80 */}
-      <div className="pt-8 pb-4 px-6 text-center">
+    <div className="min-h-full w-full bg-[#fdf2f2] flex flex-col pb-20">
+      {/* Top Header */}
+      <div className="pt-8 pb-4 px-6 md:px-10 text-center w-full">
         <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Customer Service Center</h1>
         <p className="text-xs text-slate-500 mt-1">Online customer service time 07:00-23:00 (UK)</p>
       </div>
@@ -95,11 +95,11 @@ export const ServiceTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Navigation Options List matching Screenshot */}
-      <div className="px-4 py-4 space-y-3 flex-1">
+      {/* Navigation Options Grid */}
+      <div className="px-4 md:px-8 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 w-full">
         <button
           onClick={() => setActiveDrawer('chat')}
-          className="w-full bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between hover:bg-slate-50 transition-colors group"
+          className="w-full bg-white p-4 md:p-5 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between hover:bg-slate-50 transition-colors group cursor-pointer"
         >
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-red-50 text-red-700 flex items-center justify-center">
@@ -112,7 +112,7 @@ export const ServiceTab: React.FC = () => {
 
         <button
           onClick={() => setActiveDrawer('help')}
-          className="w-full bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between hover:bg-slate-50 transition-colors group"
+          className="w-full bg-white p-4 md:p-5 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between hover:bg-slate-50 transition-colors group cursor-pointer"
         >
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center">
@@ -126,8 +126,8 @@ export const ServiceTab: React.FC = () => {
 
       {/* LIVE CHAT DRAWER */}
       {activeDrawer === 'chat' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3">
-          <div className="w-full max-w-sm h-[560px] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 md:p-6">
+          <div className="w-full max-w-lg h-[560px] max-h-[88vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
             {/* Chat Header */}
             <div className="bg-[#8b0000] text-white p-3.5 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -199,8 +199,8 @@ export const ServiceTab: React.FC = () => {
 
       {/* HELP DRAWER */}
       {activeDrawer === 'help' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3">
-          <div className="w-full max-w-sm max-h-[560px] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 md:p-6">
+          <div className="w-full max-w-lg max-h-[85vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
             <div className="bg-white p-4 border-b border-slate-200 flex items-center justify-between">
               <h3 className="font-bold text-slate-900 text-sm">Frequently Asked Questions</h3>
               <button

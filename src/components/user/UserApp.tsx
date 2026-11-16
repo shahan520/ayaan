@@ -51,7 +51,7 @@ export const UserApp: React.FC = () => {
 
   if (!currentUser) {
     return (
-      <div className="relative flex-1 h-full w-full bg-gradient-to-b from-[#4a121e] via-[#380b16] to-[#25050e] select-none overflow-hidden font-sans">
+      <div className="relative flex-1 min-h-screen w-full bg-gradient-to-b from-[#4a121e] via-[#380b16] to-[#25050e] select-none font-sans">
         <AuthModal
           isOpen={true}
           onClose={() => {}}
@@ -126,12 +126,12 @@ export const UserApp: React.FC = () => {
   ];
 
   return (
-    <div className="relative flex flex-col h-full bg-slate-100 select-none overflow-hidden font-sans">
-      {/* Scrollable Main Viewport — Primary tabs stay mounted so Menu/Task session never resets on navigation */}
-      <div className="flex-1 overflow-y-auto">
+    <div className="relative flex flex-col min-h-screen w-full bg-slate-100 select-none font-sans">
+      {/* Main Full-Page Viewport — Primary tabs stay mounted so Menu/Task session never resets on navigation */}
+      <div className="flex-1 w-full flex flex-col">
         {activeSubpage ? renderSubpage() : null}
 
-        <div className={!activeSubpage && currentTab === 'home' ? 'h-full' : 'hidden'}>
+        <div className={!activeSubpage && currentTab === 'home' ? 'flex-1 w-full' : 'hidden'}>
           <HomeTab
             onNavigate={(page) => {
               if (page === 'menu') {
@@ -147,11 +147,11 @@ export const UserApp: React.FC = () => {
           />
         </div>
 
-        <div className={!activeSubpage && currentTab === 'service' ? 'h-full' : 'hidden'}>
+        <div className={!activeSubpage && currentTab === 'service' ? 'flex-1 w-full' : 'hidden'}>
           <ServiceTab />
         </div>
 
-        <div className={!activeSubpage && currentTab === 'menu' ? 'h-full' : 'hidden'}>
+        <div className={!activeSubpage && currentTab === 'menu' ? 'flex-1 w-full' : 'hidden'}>
           <MenuTab
             menuVisitKey={menuVisitKey}
             onNavigateToRecord={() => setCurrentTab('record')}
@@ -161,11 +161,11 @@ export const UserApp: React.FC = () => {
           />
         </div>
 
-        <div className={!activeSubpage && currentTab === 'record' ? 'h-full' : 'hidden'}>
+        <div className={!activeSubpage && currentTab === 'record' ? 'flex-1 w-full' : 'hidden'}>
           <RecordTab onNavigateToDeposit={handleNavigateToDeposit} />
         </div>
 
-        <div className={!activeSubpage && currentTab === 'mine' ? 'h-full' : 'hidden'}>
+        <div className={!activeSubpage && currentTab === 'mine' ? 'flex-1 w-full' : 'hidden'}>
           <MineTab
             onNavigate={(page) => {
               if (page === 'menu') {
@@ -183,10 +183,10 @@ export const UserApp: React.FC = () => {
         </div>
       </div>
 
-      {/* Fixed Bottom Navigation Bar */}
+      {/* Responsive Full-Width Bottom Navigation Bar */}
       {!activeSubpage && (
-        <div className="sticky bottom-0 z-40 bg-white border-t border-slate-200/80 px-2 py-1.5 shadow-lg">
-          <div className="grid grid-cols-5 items-center">
+        <div className="sticky bottom-0 z-40 w-full bg-white border-t border-slate-200/80 px-2 md:px-8 py-1.5 shadow-lg">
+          <div className="grid grid-cols-5 items-center w-full">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentTab === item.key;

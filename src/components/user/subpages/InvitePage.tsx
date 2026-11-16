@@ -34,12 +34,12 @@ export const InvitePage: React.FC<Props> = ({ onBack }) => {
   };
 
   return (
-    <div className="min-h-full bg-white flex flex-col">
-      {/* Top App Bar matching Screenshot_2026-06-07-12-45-58-69 */}
-      <div className="bg-white sticky top-0 z-20 flex items-center px-4 py-3 border-b border-slate-100">
+    <div className="min-h-full w-full bg-white flex flex-col">
+      {/* Top App Bar */}
+      <div className="bg-white sticky top-0 z-20 flex items-center px-4 md:px-8 py-3 border-b border-slate-100 w-full">
         <button
           onClick={onBack}
-          className="p-1 -ml-1 text-slate-800 hover:text-slate-900 transition-colors"
+          className="p-1 -ml-1 text-slate-800 hover:text-slate-900 transition-colors cursor-pointer"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
@@ -48,7 +48,7 @@ export const InvitePage: React.FC<Props> = ({ onBack }) => {
         </h1>
       </div>
 
-      <div className="flex-1 p-6 flex flex-col items-center justify-center text-center space-y-6">
+      <div className="flex-1 p-6 md:p-10 flex flex-col items-center justify-center text-center space-y-6 w-full">
         {/* Invitation Code Section */}
         <div className="space-y-1">
           <p className="text-xs text-slate-400 font-medium">My invitation code</p>
@@ -72,13 +72,13 @@ export const InvitePage: React.FC<Props> = ({ onBack }) => {
           </p>
         </div>
 
-        {/* Share Link Card matching screenshot */}
-        <div className="w-full max-w-sm bg-slate-50/70 p-4 rounded-xl border border-slate-100 text-left space-y-2">
+        {/* Share Link Card */}
+        <div className="w-full max-w-2xl bg-slate-50/70 p-4 md:p-6 rounded-xl border border-slate-100 text-left space-y-2">
           <div className="flex items-center justify-between text-xs">
             <span className="font-medium text-slate-700">Share link</span>
             <button
               onClick={() => copyToClipboard(shareUrl, 'link')}
-              className="text-orange-600 hover:text-orange-700 font-bold flex items-center gap-1 transition-colors"
+              className="text-orange-600 hover:text-orange-700 font-bold flex items-center gap-1 transition-colors cursor-pointer"
             >
               {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
               {copiedLink ? 'Copied' : 'Copy'}
@@ -89,7 +89,7 @@ export const InvitePage: React.FC<Props> = ({ onBack }) => {
           </div>
         </div>
 
-        <div className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
+        <div className="text-[11px] text-slate-400 max-w-lg leading-relaxed">
           Friends must register with your unique code to become your downline. You will earn continuous
           commissions on their matched orders!
         </div>

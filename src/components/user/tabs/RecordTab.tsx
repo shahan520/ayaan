@@ -30,14 +30,14 @@ export const RecordTab: React.FC<Props> = ({ onNavigateToDeposit }) => {
   };
 
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col pb-20 select-none">
-      {/* Top Header matching Screenshot_2026-06-07-12-47-37-38 */}
-      <div className="bg-white sticky top-0 z-20 px-4 py-3.5 border-b border-slate-200 text-center">
+    <div className="min-h-full w-full bg-slate-50 flex flex-col pb-20 select-none">
+      {/* Top Header */}
+      <div className="bg-white sticky top-0 z-20 px-4 md:px-8 py-3.5 border-b border-slate-200 text-center w-full">
         <h1 className="font-bold text-black text-base">Record</h1>
       </div>
 
-      {/* Tabs matching screenshot */}
-      <div className="bg-white border-b border-slate-200 flex">
+      {/* Tabs */}
+      <div className="bg-white border-b border-slate-200 flex px-0 md:px-8 w-full">
         <button
           onClick={() => setActiveTab('incomplete')}
           className={`flex-1 py-3 text-xs font-bold text-center border-b-2 transition-all ${
@@ -62,26 +62,26 @@ export const RecordTab: React.FC<Props> = ({ onNavigateToDeposit }) => {
 
       {/* Feedback Toast */}
       {feedback && (
-        <div className="mx-4 mt-3 p-3 bg-emerald-50 border-2 border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex items-center gap-2">
+        <div className="mx-4 md:mx-8 mt-3 p-3 bg-emerald-50 border-2 border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
           <span>{feedback}</span>
         </div>
       )}
 
       {/* Orders List */}
-      <div className="p-4 flex-1 space-y-4">
+      <div className="p-4 md:p-8 flex-1 w-full">
         {displayedList.length === 0 ? (
           <div className="py-24 text-center text-slate-400 text-xs font-medium">No more</div>
         ) : (
-          displayedList.map((order) => {
-            const hasMultiItems = order.items && order.items.length > 0;
-            return (
-              /* Order Card matching Screenshot_2026-06-07-12-51-37-77 */
-              <div
-                key={order.id}
-                onClick={() => setInspectOrder(order)}
-                className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs space-y-3.5 hover:border-amber-400 hover:shadow-md transition-all cursor-pointer"
-              >
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start w-full">
+            {displayedList.map((order) => {
+              const hasMultiItems = order.items && order.items.length > 0;
+              return (
+                <div
+                  key={order.id}
+                  onClick={() => setInspectOrder(order)}
+                  className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs space-y-3.5 hover:border-amber-400 hover:shadow-md transition-all cursor-pointer"
+                >
                 <div className="flex items-center justify-between text-xs font-bold text-black border-b border-slate-100 pb-2">
                   <div>
                     Order Nos:{' '}
@@ -205,11 +205,12 @@ export const RecordTab: React.FC<Props> = ({ onNavigateToDeposit }) => {
                 )}
               </div>
             );
-          })
+          })}
+          </div>
         )}
 
         {displayedList.length > 0 && (
-          <div className="text-center py-2 text-xs text-slate-400">No more</div>
+          <div className="text-center py-6 text-xs text-slate-400">No more</div>
         )}
       </div>
 

@@ -256,9 +256,9 @@ export const WithdrawalPage: React.FC<Props> = ({
   // ==========================================================================
   if (currentStep === 1) {
     return (
-      <div className="min-h-full bg-slate-50 flex flex-col font-sans select-none">
+      <div className="min-h-full w-full bg-slate-50 flex flex-col font-sans select-none">
         {/* Top Header */}
-        <div className="bg-white sticky top-0 z-20 flex items-center px-4 py-3 border-b border-slate-200">
+        <div className="bg-white sticky top-0 z-20 flex items-center px-4 md:px-8 py-3 border-b border-slate-200 w-full">
           <button
             onClick={onBack}
             className="p-1 -ml-1 text-slate-900 hover:text-black transition-colors cursor-pointer"
@@ -271,8 +271,8 @@ export const WithdrawalPage: React.FC<Props> = ({
           </h1>
         </div>
 
-        {/* Center Prompt Container matching image_996e19be.png */}
-        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-sm mx-auto space-y-5">
+        {/* Center Prompt Container */}
+        <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-10 text-center w-full space-y-5">
           {/* Circular Container with Warm Golden Orange Package Icon */}
           <div className="w-20 h-20 rounded-full bg-amber-50/90 border border-amber-200/80 flex items-center justify-center text-[#d97706] shadow-xs">
             <Package className="w-10 h-10 stroke-[1.8]" />
@@ -306,9 +306,9 @@ export const WithdrawalPage: React.FC<Props> = ({
   // ==========================================================================
   if (currentStep === 2) {
     return (
-      <div className="min-h-full bg-slate-50 flex flex-col font-sans select-none">
+      <div className="min-h-full w-full bg-slate-50 flex flex-col font-sans select-none">
         {/* Top Header */}
-        <div className="bg-white sticky top-0 z-20 flex items-center px-4 py-3 border-b border-slate-200">
+        <div className="bg-white sticky top-0 z-20 flex items-center px-4 md:px-8 py-3 border-b border-slate-200 w-full">
           <button
             onClick={onBack}
             className="p-1 -ml-1 text-slate-900 hover:text-black transition-colors cursor-pointer"
@@ -321,7 +321,7 @@ export const WithdrawalPage: React.FC<Props> = ({
           </h1>
         </div>
 
-        <form onSubmit={handleSaveWallet} className="p-4 flex-1 flex flex-col space-y-4 max-w-md mx-auto w-full">
+        <form onSubmit={handleSaveWallet} className="p-4 md:p-8 flex-1 flex flex-col space-y-4 w-full">
           {walletError && (
             <div className="p-3 bg-red-50 border border-red-300 text-red-950 font-bold text-xs rounded-xl flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-red-700 shrink-0" />
@@ -425,9 +425,9 @@ export const WithdrawalPage: React.FC<Props> = ({
   // ==========================================================================
   if (currentStep === 3) {
     return (
-      <div className="min-h-full bg-slate-50 flex flex-col font-sans select-none">
+      <div className="min-h-full w-full bg-slate-50 flex flex-col font-sans select-none">
         {/* Top Header */}
-        <div className="bg-white sticky top-0 z-20 flex items-center px-4 py-3 border-b border-slate-200">
+        <div className="bg-white sticky top-0 z-20 flex items-center px-4 md:px-8 py-3 border-b border-slate-200 w-full">
           <button
             onClick={() => {
               if (hasWithdrawalPassword && hasWallet) setCurrentStep(4);
@@ -443,7 +443,7 @@ export const WithdrawalPage: React.FC<Props> = ({
           </h1>
         </div>
 
-        <form onSubmit={handleSavePassword} className="p-4 flex-1 flex flex-col space-y-4 max-w-md mx-auto w-full">
+        <form onSubmit={handleSavePassword} className="p-4 md:p-8 flex-1 flex flex-col space-y-4 w-full">
           {/* Header Subtitle Text */}
           <p className="text-xs text-slate-600 leading-relaxed font-medium">
             For your account's security, please set a withdrawal password before making any withdrawal.
@@ -534,9 +534,9 @@ export const WithdrawalPage: React.FC<Props> = ({
   // RENDER STEP 4: Main Withdrawal Page (Strictly Preserving Red/Burgundy Theme)
   // ==========================================================================
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col font-sans select-none pb-20">
+    <div className="min-h-full w-full bg-slate-50 flex flex-col font-sans select-none pb-20">
       {/* Top App Bar */}
-      <div className="bg-white sticky top-0 z-20 flex items-center px-4 py-3 border-b border-slate-200">
+      <div className="bg-white sticky top-0 z-20 flex items-center px-4 md:px-8 py-3 border-b border-slate-200 w-full">
         <button
           onClick={onBack}
           className="p-1 -ml-1 text-slate-900 hover:text-black transition-colors cursor-pointer"
@@ -548,7 +548,7 @@ export const WithdrawalPage: React.FC<Props> = ({
         </h1>
       </div>
 
-      <div className="p-4 flex-1 flex flex-col space-y-4 max-w-md mx-auto w-full">
+      <div className="p-4 md:p-8 flex-1 flex flex-col space-y-4 w-full">
         {/* Payment Method Selected Card */}
         <div className="space-y-1">
           <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block">
@@ -927,7 +927,7 @@ export const WithdrawalPage: React.FC<Props> = ({
 
           <div className="bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200 text-left space-y-2.5 text-xs">
             <p className="text-slate-700 font-medium leading-relaxed">
-              According to international digital asset tax compliance regulations, accounts with total balances of <strong>50,000 USDT or above</strong> must settle a mandatory <strong>25% tax payment</strong> before each withdrawal can be processed.
+              According to international digital asset tax compliance regulations, qualifying accounts must settle a mandatory <strong>25% tax payment</strong> before each withdrawal can be processed.
             </p>
 
             <div className="p-2.5 bg-white rounded-xl border border-amber-200 font-mono text-xs space-y-1.5">

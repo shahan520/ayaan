@@ -65,7 +65,7 @@ export const MineTab: React.FC<Props> = ({ onNavigate, onOpenAuth }) => {
     SUPPORTED_LANGUAGES.find((l) => l.code === language)?.label || 'English (UK)';
 
   return (
-    <div className="min-h-full bg-slate-100/70 pb-24 relative select-none font-sans">
+    <div className="min-h-full w-full bg-slate-100/70 pb-24 relative select-none font-sans">
       {/* Toast Notification */}
       {toastMsg && (
         <div className="fixed top-14 inset-x-0 z-50 flex justify-center px-4 pointer-events-none">
@@ -75,8 +75,8 @@ export const MineTab: React.FC<Props> = ({ onNavigate, onOpenAuth }) => {
         </div>
       )}
 
-      {/* Dark Red Gradient Header matching Screenshot_2026-06-07-12-43-57-54 */}
-      <div className="bg-gradient-to-b from-[#8b0000] via-[#6d1316] to-[#4a0000] text-white px-5 pt-7 pb-6 shadow-md">
+      {/* Dark Red Gradient Header */}
+      <div className="bg-gradient-to-b from-[#8b0000] via-[#6d1316] to-[#4a0000] text-white px-5 md:px-8 pt-7 pb-6 shadow-md w-full">
         {currentUser ? (
           <>
             {/* Top row: Avatar + Username + VIP Badge + Invitation Code + Msg Icon */}
@@ -147,7 +147,7 @@ export const MineTab: React.FC<Props> = ({ onNavigate, onOpenAuth }) => {
                 </div>
               </div>
 
-              {/* Deposit and Withdrawal round icon buttons matching screenshot */}
+              {/* Deposit and Withdrawal round icon buttons */}
               <div className="flex items-center gap-4">
                 <button
                   onClick={() => onNavigate('deposit')}
@@ -186,11 +186,11 @@ export const MineTab: React.FC<Props> = ({ onNavigate, onOpenAuth }) => {
         )}
       </div>
 
-      {/* 4 Quick Actions Grid matching Screenshot_2026-06-07-12-43-57-54 */}
-      <div className="bg-white mx-4 mt-3 rounded-2xl p-4 shadow-sm border border-slate-200/80 grid grid-cols-4 gap-2 text-center">
+      {/* 4 Quick Actions Grid */}
+      <div className="bg-white mx-4 md:mx-8 mt-4 rounded-2xl p-4 md:p-6 shadow-sm border border-slate-200/80 grid grid-cols-4 gap-2 md:gap-6 text-center">
         <button
           onClick={() => onNavigate('teams')}
-          className="flex flex-col items-center justify-center p-1 rounded-xl hover:bg-slate-50 transition-colors group cursor-pointer"
+          className="flex flex-col items-center justify-center p-1 md:p-2 rounded-xl hover:bg-slate-50 transition-colors group cursor-pointer"
         >
           <div className="w-10 h-10 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center mb-1.5 shadow-2xs group-hover:scale-105 transition-transform">
             <Users className="w-5 h-5" />
@@ -200,7 +200,7 @@ export const MineTab: React.FC<Props> = ({ onNavigate, onOpenAuth }) => {
 
         <button
           onClick={() => onNavigate('record')}
-          className="flex flex-col items-center justify-center p-1 rounded-xl hover:bg-slate-50 transition-colors group cursor-pointer"
+          className="flex flex-col items-center justify-center p-1 md:p-2 rounded-xl hover:bg-slate-50 transition-colors group cursor-pointer"
         >
           <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center mb-1.5 shadow-2xs group-hover:scale-105 transition-transform">
             <FileText className="w-5 h-5" />
@@ -210,7 +210,7 @@ export const MineTab: React.FC<Props> = ({ onNavigate, onOpenAuth }) => {
 
         <button
           onClick={() => onNavigate('wallet')}
-          className="flex flex-col items-center justify-center p-1 rounded-xl hover:bg-slate-50 transition-colors group cursor-pointer"
+          className="flex flex-col items-center justify-center p-1 md:p-2 rounded-xl hover:bg-slate-50 transition-colors group cursor-pointer"
         >
           <div className="w-10 h-10 rounded-full bg-red-50 text-red-500 flex items-center justify-center mb-1.5 shadow-2xs group-hover:scale-105 transition-transform">
             <Wallet className="w-5 h-5" />
@@ -222,7 +222,7 @@ export const MineTab: React.FC<Props> = ({ onNavigate, onOpenAuth }) => {
 
         <button
           onClick={() => onNavigate('invite')}
-          className="flex flex-col items-center justify-center p-1 rounded-xl hover:bg-slate-50 transition-colors group cursor-pointer"
+          className="flex flex-col items-center justify-center p-1 md:p-2 rounded-xl hover:bg-slate-50 transition-colors group cursor-pointer"
         >
           <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center mb-1.5 shadow-2xs group-hover:scale-105 transition-transform">
             <Zap className="w-5 h-5" />
@@ -233,11 +233,11 @@ export const MineTab: React.FC<Props> = ({ onNavigate, onOpenAuth }) => {
         </button>
       </div>
 
-      {/* Navigation List matching Screenshot_2026-06-07-12-43-57-54 */}
-      <div className="bg-white mx-4 mt-3 rounded-2xl overflow-hidden shadow-sm border border-slate-200/80 divide-y divide-slate-100">
+      {/* Navigation List */}
+      <div className="bg-white mx-4 md:mx-8 mt-4 rounded-2xl overflow-hidden shadow-sm border border-slate-200/80 divide-y divide-slate-100">
         <button
           onClick={() => setShowProfileModal(true)}
-          className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-slate-50 transition-colors cursor-pointer"
+          className="w-full px-4 md:px-6 py-3.5 md:py-4 flex items-center justify-between text-left hover:bg-slate-50 transition-colors cursor-pointer"
         >
           <div className="flex items-center gap-3">
             <UserCheck className="w-5 h-5 text-slate-400" />
