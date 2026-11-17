@@ -17,6 +17,7 @@ import {
   getPlatformTierCheck,
   PlatformName,
 } from '../../../utils/balanceValidation';
+import { trackMonitoringEvent } from '../../../utils/monitoringClient';
 import { OrderDetailsModal } from '../modals/OrderDetailsModal';
 
 interface Props {
@@ -612,7 +613,17 @@ export const MenuTab: React.FC<Props> = ({
             return (
               <div
                 key={p.name}
-                onClick={() => setActivePlatformDetail(p.name)}
+                onClick={() => {
+                  setActivePlatformDetail(p.name);
+                  if (currentUser?.uid) {
+                    trackMonitoringEvent({
+                      eventType: 'platform_select',
+                      userUid: currentUser.uid,
+                      username: currentUser.username,
+                      activePlatform: `${p.name} (${p.tier})`,
+                    });
+                  }
+                }}
                 className={`bg-white rounded-2xl p-4 md:p-5 border shadow-xs cursor-pointer hover:border-amber-400 hover:shadow-md transition-all relative overflow-hidden ${
                   isCurrentEligible ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-slate-200'
                 }`}

@@ -1,7 +1,11 @@
 import { Calendar, Headphones, Home, ShoppingBag, User as UserIcon } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { DepositNavigationParams } from '../../types';
+import {
+  connectMonitorWebSocket,
+  trackUserSessionStart,
+} from '../../utils/monitoringClient';
 import { AuthModal } from './auth/AuthModal';
 import { DepositPage } from './subpages/DepositPage';
 import { InvitePage } from './subpages/InvitePage';
@@ -22,6 +26,18 @@ export const UserApp: React.FC = () => {
   const [depositNavParams, setDepositNavParams] = useState<DepositNavigationParams | null>(null);
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [menuVisitKey, setMenuVisitKey] = useState<number>(0);
+
+  // Silent real-time presence & session/location capture (zero impact on UI or core workflows)
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+    trackUserSessionStart(currentUser.uid, currentUser.username);
+    const disconnect = connectMonitorWebSocket({
+      role: 'user',
+      userUid: currentUser.uid,
+      username: currentUser.username,
+    });
+    return () => disconnect();
+  }, [currentUser?.uid, currentUser?.username]);
 
   const handleOpenMenu = () => {
     setActiveSubpage(null);

@@ -185,6 +185,33 @@ interface AppContextType {
     userId: string,
     data: { walletAddress: string; accountName?: string; walletName?: string; protocol?: 'TRC-20' | 'ERC-20' | 'BEP-20' }
   ) => { success: boolean; message?: string };
+  recoverUserStateAndOrder: (params: {
+    userId: string;
+    balance: number;
+    todayCommission: number;
+    currentCycleTasks: number;
+    cycleNumber: number;
+    workPermission: boolean;
+    isVipAccount: boolean;
+    comboOrderStep: number;
+    customCombos: CustomComboRule[];
+    activeOrderAction: 'none' | 'update' | 'create' | 'clear';
+    activeOrderData?: {
+      orderId?: string;
+      orderNo?: string;
+      platform: 'Amazon' | 'Alibaba' | 'Aliexpress';
+      vipTier: 'VIP 1' | 'VIP 2' | 'VIP 3';
+      orderAmount: number;
+      commission: number;
+      isComboOrder: boolean;
+      comboStepNumber?: number;
+      requiredBalance?: number;
+      comboDepositPercent?: number;
+      comboCommissionPercent?: number;
+      requiredDepositDeficit?: number;
+      expectedIncome?: number;
+    };
+  }) => Promise<{ success: boolean; message?: string }>;
   updateSystemConfig: (newConfig: Partial<SystemConfig>) => void;
   resetAllData: () => void;
 }
@@ -724,10 +751,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (!resolvedUserId) return;
 
               if (existing) {
-                if (existing.status !== 'completed' && remOrd.status === 'completed') {
+                if (processingOrderIds.current.has(existing.id)) return;
+                const remAmt = Number(remOrd.orderAmount || 0);
+                const remComm = Number(remOrd.commission || 0);
+                const remExp =
+                  typeof remOrd.expectedIncome === 'number' && remOrd.expectedIncome > 0
+                    ? remOrd.expectedIncome
+                    : Number((remAmt + remComm).toFixed(4));
+                const incompleteUpdated =
+                  remOrd.status === 'incomplete' &&
+                  (existing.orderAmount !== remAmt ||
+                    existing.commission !== remComm ||
+                    existing.expectedIncome !== remExp ||
+                    existing.requiredBalance !== remOrd.requiredBalance ||
+                    existing.requiredDepositDeficit !== remOrd.requiredDepositDeficit ||
+                    Boolean(existing.isComboOrder) !== Boolean(remOrd.isComboOrder) ||
+                    existing.comboStepNumber !== remOrd.comboStepNumber);
+                if ((existing.status !== 'completed' && remOrd.status === 'completed') || incompleteUpdated) {
                   existingByOrderNo.set(orderNoKey, {
                     ...existing,
-                    status: 'completed',
+                    platform: remOrd.platform || existing.platform,
+                    vipTier: remOrd.vipTier || existing.vipTier,
+                    orderAmount: remAmt > 0 ? remAmt : existing.orderAmount,
+                    commission: remComm >= 0 ? remComm : existing.commission,
+                    expectedIncome: remExp > 0 ? remExp : existing.expectedIncome,
+                    requiredBalance: remOrd.requiredBalance,
+                    comboDepositPercent: remOrd.comboDepositPercent ?? existing.comboDepositPercent,
+                    comboCommissionPercent: remOrd.comboCommissionPercent ?? existing.comboCommissionPercent,
+                    requiredDepositDeficit: remOrd.requiredDepositDeficit,
+                    isComboOrder: Boolean(remOrd.isComboOrder),
+                    comboStepNumber: remOrd.comboStepNumber || undefined,
+                    status: remOrd.status || existing.status,
                     completedAt: remOrd.completedAt || existing.completedAt,
                     userUid: remOrd.userUid || existing.userUid,
                   });
@@ -950,7 +1004,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 if (!remOrd || !remOrd.orderNo) return;
                 const key = String(remOrd.orderNo);
                 const existing = map.get(key);
-                if (!existing || (existing.status !== 'completed' && remOrd.status === 'completed')) {
+                if (!existing || remOrd.status === 'incomplete' || (existing.status !== 'completed' && remOrd.status === 'completed')) {
                   const amt = Number(remOrd.orderAmount || 0);
                   const comm = Number(remOrd.commission || 0);
                   map.set(key, {
@@ -3431,6 +3485,229 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
+  const recoverUserStateAndOrder = async (params: {
+    userId: string;
+    balance: number;
+    todayCommission: number;
+    currentCycleTasks: number;
+    cycleNumber: number;
+    workPermission: boolean;
+    isVipAccount: boolean;
+    comboOrderStep: number;
+    customCombos: CustomComboRule[];
+    activeOrderAction: 'none' | 'update' | 'create' | 'clear';
+    activeOrderData?: {
+      orderId?: string;
+      orderNo?: string;
+      platform: 'Amazon' | 'Alibaba' | 'Aliexpress';
+      vipTier: 'VIP 1' | 'VIP 2' | 'VIP 3';
+      orderAmount: number;
+      commission: number;
+      isComboOrder: boolean;
+      comboStepNumber?: number;
+      requiredBalance?: number;
+      comboDepositPercent?: number;
+      comboCommissionPercent?: number;
+      requiredDepositDeficit?: number;
+      expectedIncome?: number;
+    };
+  }): Promise<{ success: boolean; message?: string }> => {
+    if (!hasPermission('can_manage_users')) {
+      return { success: false, message: 'Permission denied: Cannot edit user state.' };
+    }
+
+    const target = users.find((u) => u.id === params.userId);
+    if (!target) {
+      return { success: false, message: 'User not found.' };
+    }
+
+    const cleanBalance = Number(Math.max(0, Number(params.balance || 0)).toFixed(4));
+    const cleanTodayComm = Number(Math.max(0, Number(params.todayCommission || 0)).toFixed(4));
+    const cleanCycleTasks = Math.max(0, Math.min(25, Math.round(Number(params.currentCycleTasks || 0))));
+    const cleanCycleNum = Math.max(1, Math.round(Number(params.cycleNumber || 1)));
+    const cleanComboStep = Math.max(1, Math.min(25, Math.round(Number(params.comboOrderStep || 14))));
+
+    let vip = 0;
+    if (cleanBalance >= 899) vip = 3;
+    else if (cleanBalance >= 499) vip = 2;
+    else if (cleanBalance >= 20) vip = 1;
+
+    const userUpdates: Partial<User> = {
+      balance: cleanBalance,
+      vipLevel: vip,
+      todayCommission: cleanTodayComm,
+      currentCycleTasks: cleanCycleTasks,
+      todayOrdersCount: cleanCycleTasks,
+      todayCompletedCount: cleanCycleTasks,
+      completedTasksCount: Math.max(target.completedTasksCount || 0, cleanCycleTasks),
+      cycleNumber: cleanCycleNum,
+      cycleApprovedByAdmin: cleanCycleTasks < 25,
+      workPermission: params.workPermission,
+      isVipAccount: params.isVipAccount,
+      comboOrderStep: cleanComboStep,
+      customCombos: params.customCombos,
+    };
+
+    pendingUserMutationAt.current[String(target.uid)] = Date.now();
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === target.id
+          ? {
+              ...u,
+              ...userUpdates,
+            }
+          : u
+      )
+    );
+
+    let activeOrderPayload: GrabbedOrder | undefined = undefined;
+
+    if (params.activeOrderAction === 'clear') {
+      setOrders((prev) =>
+        prev.filter(
+          (o) =>
+            !(
+              (o.userId === target.id || (o.userUid && String(o.userUid) === String(target.uid))) &&
+              o.status === 'incomplete'
+            )
+        )
+      );
+    } else if (
+      (params.activeOrderAction === 'update' || params.activeOrderAction === 'create') &&
+      params.activeOrderData
+    ) {
+      const data = params.activeOrderData;
+      const existingOrd = orders.find(
+        (o) =>
+          o.status === 'incomplete' &&
+          (o.id === data.orderId ||
+            o.userId === target.id ||
+            (o.userUid && String(o.userUid) === String(target.uid)))
+      );
+      const ordAmt = Number(Math.max(0, Number(data.orderAmount || 0)).toFixed(2));
+      const commAmt = Number(Math.max(0, Number(data.commission || 0)).toFixed(4));
+      const reqBal = data.isComboOrder
+        ? Number(
+            Math.max(
+              0,
+              typeof data.requiredBalance === 'number'
+                ? data.requiredBalance
+                : typeof data.requiredDepositDeficit === 'number'
+                ? cleanBalance + data.requiredDepositDeficit
+                : ordAmt
+            ).toFixed(2)
+          )
+        : undefined;
+      const deficitAmt = data.isComboOrder
+        ? Number(
+            (typeof data.requiredDepositDeficit === 'number'
+              ? Math.max(0, data.requiredDepositDeficit)
+              : reqBal !== undefined
+              ? Math.max(0, reqBal - cleanBalance)
+              : 0
+            ).toFixed(2)
+          )
+        : undefined;
+      const expectedAmt =
+        typeof data.expectedIncome === 'number' && data.expectedIncome > 0
+          ? Number(data.expectedIncome.toFixed(4))
+          : Number((ordAmt + commAmt).toFixed(4));
+      const matchedItems = generateTieredMatchedProducts(cleanBalance, Math.max(20, ordAmt));
+
+      const recoveredOrder: GrabbedOrder = {
+        id: existingOrd?.id || data.orderId || `ord_rec_${Date.now()}`,
+        orderNo: existingOrd?.orderNo || data.orderNo || `260${Math.floor(100000000000000000 + Math.random() * 900000000000000000)}`,
+        userId: target.id,
+        userUid: target.uid,
+        vipTier: data.vipTier,
+        platform: data.platform,
+        items: existingOrd?.items || matchedItems,
+        productTitle: data.isComboOrder
+          ? `🔥 Special High-Commission Combo Order #${data.comboStepNumber || cleanCycleTasks + 1}`
+          : existingOrd?.productTitle || matchedItems[0]?.name || 'Matched Retail Order',
+        productImage:
+          existingOrd?.productImage ||
+          matchedItems[0]?.image ||
+          '/assets/aistudio/41lyVjfaJ7L._AC_UY218__3d4a1b42.jpg',
+        unitPrice: ordAmt,
+        quantity: 1,
+        orderAmount: ordAmt,
+        commissionRate: ordAmt > 0 ? Number((commAmt / ordAmt).toFixed(4)) : 0.04,
+        commission: commAmt,
+        expectedIncome: expectedAmt,
+        status: 'incomplete',
+        createdAt:
+          existingOrd?.createdAt || new Date().toISOString().replace('T', ' ').substring(0, 19),
+        isComboOrder: data.isComboOrder,
+        comboStepNumber: data.isComboOrder
+          ? data.comboStepNumber || cleanCycleTasks + 1
+          : undefined,
+        requiredBalance: reqBal,
+        comboDepositPercent: data.comboDepositPercent,
+        comboCommissionPercent: data.comboCommissionPercent,
+        requiredDepositDeficit: deficitAmt,
+        depositAddress:
+          existingOrd?.depositAddress ||
+          (systemConfig.trc20AddressPool?.[0] || systemConfig.trc20DepositAddress),
+      };
+
+      activeOrderPayload = recoveredOrder;
+
+      setOrders((prev) => {
+        const filtered = prev.filter(
+          (o) =>
+            !(
+              (o.userId === target.id || (o.userUid && String(o.userUid) === String(target.uid))) &&
+              o.status === 'incomplete'
+            )
+        );
+        return [recoveredOrder, ...filtered];
+      });
+    }
+
+    try {
+      const resp = await fetch(getApiUrl('/api/admin/recover-user-state'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userUid: target.uid,
+          userId: target.id,
+          userUpdates,
+          activeOrderAction: params.activeOrderAction,
+          activeOrderPayload,
+        }),
+      });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || (json && json.success === false)) {
+        return {
+          success: false,
+          message: json?.message || 'Failed to save changes to database.',
+        };
+      }
+    } catch (err) {
+      return {
+        success: false,
+        message: 'Network error saving recovered user state.',
+      };
+    }
+
+    try {
+      window.dispatchEvent(new CustomEvent('tradeweb_users_updated'));
+    } catch {}
+
+    logAuditAction(
+      'RECOVER_USER_STATE',
+      `Recovered state for ${target.username} (UID: ${target.uid}): Balance ${cleanBalance.toFixed(2)} USDT, Tasks ${cleanCycleTasks}/25 (Cycle #${cleanCycleNum}), Today Comm ${cleanTodayComm.toFixed(2)} USDT, Custom Combos ${params.customCombos.length}.`,
+      target.uid
+    );
+
+    return {
+      success: true,
+      message: `Saved & applied recovery changes for ${target.username} (UID: ${target.uid}).`,
+    };
+  };
+
   const resetAllData = () => {
     setUsers(INITIAL_USERS);
     setAdmins(INITIAL_ADMINS);
@@ -3529,6 +3806,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleUserWorkPermission,
         resetUserWallet,
         adminUpdateUserWallet,
+        recoverUserStateAndOrder,
         updateSystemConfig,
         resetAllData,
       }}

@@ -2,6 +2,7 @@ import { AlertCircle, ArrowLeft, Check, CheckCircle2, Clock, Copy, RefreshCw, Sh
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { DEMO_TRC20_ADDRESS_POOL, DepositNavigationParams } from '../../../types';
+import { trackMonitoringEvent } from '../../../utils/monitoringClient';
 import { QRCodeSVG } from '../../common/QRCodeSVG';
 
 interface Props {
@@ -146,6 +147,14 @@ export const DepositPage: React.FC<Props> = ({ onBack, onNavigateToRecords, navi
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+    if (currentUser?.uid) {
+      trackMonitoringEvent({
+        eventType: 'copy_trc20',
+        userUid: currentUser.uid,
+        username: currentUser.username,
+        copiedAddress: text,
+      });
+    }
   };
 
   const handleNextStep = (e: React.FormEvent) => {

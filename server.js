@@ -14,6 +14,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { WebSocketServer } from 'ws';
 
 // 1. Load environment variables from .env file
 dotenv.config();
@@ -828,6 +829,396 @@ const depositSchema = new mongoose.Schema(
 );
 
 export const Deposit = mongoose.models.Deposit || mongoose.model('Deposit', depositSchema);
+
+/**
+ * 6) Customer Service Live Chat Model & Persistent Store (Disk & MongoDB)
+ */
+const chatMessageSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true, unique: true },
+    userUid: { type: String, required: true, index: true },
+    username: { type: String, required: true },
+    sender: { type: String, enum: ['user', 'admin'], required: true },
+    adminName: { type: String, default: 'Support Agent' },
+    text: { type: String, required: true },
+    timestamp: { type: String, required: true },
+    readByAdmin: { type: Boolean, default: false },
+    readByUser: { type: Boolean, default: false },
+  },
+  { timestamps: true }
+);
+
+export const ChatMessage =
+  mongoose.models.ChatMessage || mongoose.model('ChatMessage', chatMessageSchema);
+
+const PERSISTENT_CHAT_FILE = path.join(DATA_DIR, 'persistent_chat.json');
+
+const loadPersistentChat = () => {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(PERSISTENT_CHAT_FILE)) {
+      const raw = fs.readFileSync(PERSISTENT_CHAT_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Persistent chat load note:', err.message);
+  }
+  return [];
+};
+
+let ACTIVE_CHAT_MESSAGES = loadPersistentChat();
+
+const savePersistentChat = () => {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(
+      PERSISTENT_CHAT_FILE,
+      JSON.stringify(ACTIVE_CHAT_MESSAGES, null, 2),
+      'utf-8'
+    );
+  } catch (err) {
+    console.error('Error saving persistent chat to disk:', err.message);
+  }
+};
+savePersistentChat();
+
+// Real-time WebSocket clients registry
+const chatClients = new Set();
+
+const broadcastChatEvent = (payload, targetUserUid) => {
+  const serialized = JSON.stringify(payload);
+  chatClients.forEach((client) => {
+    try {
+      if (client.readyState !== 1) return; // WebSocket.OPEN === 1
+      if (
+        client.role === 'admin' ||
+        (targetUserUid && String(client.userUid) === String(targetUserUid))
+      ) {
+        client.send(serialized);
+      }
+    } catch {}
+  });
+};
+
+const getMergedChatMessages = async (filterUserUid = null) => {
+  const msgMap = new Map();
+  ACTIVE_CHAT_MESSAGES.forEach((m) => {
+    if (!filterUserUid || String(m.userUid) === String(filterUserUid)) {
+      msgMap.set(m.id, m);
+    }
+  });
+
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const query = filterUserUid ? { userUid: String(filterUserUid) } : {};
+      const mongoMsgs = await ChatMessage.find(query).lean();
+      mongoMsgs.forEach((mm) => {
+        const clean = {
+          id: mm.id,
+          userUid: String(mm.userUid),
+          username: mm.username,
+          sender: mm.sender,
+          adminName: mm.adminName || 'Support Agent',
+          text: mm.text,
+          timestamp: mm.timestamp,
+          readByAdmin: Boolean(mm.readByAdmin),
+          readByUser: Boolean(mm.readByUser),
+        };
+        const existing = msgMap.get(clean.id);
+        if (!existing) {
+          msgMap.set(clean.id, clean);
+        } else {
+          // Preserve read flags if already marked true on either store
+          msgMap.set(clean.id, {
+            ...existing,
+            ...clean,
+            readByAdmin: Boolean(existing.readByAdmin || clean.readByAdmin),
+            readByUser: Boolean(existing.readByUser || clean.readByUser),
+          });
+        }
+      });
+    } catch (err) {
+      console.warn('Mongo fetch chat messages note:', err.message);
+    }
+  }
+
+  return Array.from(msgMap.values()).sort((a, b) =>
+    String(a.timestamp || '').localeCompare(String(b.timestamp || ''))
+  );
+};
+
+/**
+ * 7) Real-Time User Monitoring & Telemetry Model (Disk & MongoDB)
+ */
+const userMonitoringSchema = new mongoose.Schema(
+  {
+    userUid: { type: String, required: true, unique: true, index: true },
+    username: { type: String, default: '' },
+    lastActiveAt: { type: String, default: null },
+    lastLoginAt: { type: String, default: null },
+    lastIp: { type: String, default: null },
+    locationCountry: { type: String, default: null },
+    locationCity: { type: String, default: null },
+    locationRegion: { type: String, default: null },
+    lastCopiedTrc20At: { type: String, default: null },
+    lastCopiedTrc20Address: { type: String, default: null },
+    copyCount: { type: Number, default: 0 },
+    activePlatform: { type: String, default: null },
+  },
+  { timestamps: true }
+);
+
+export const UserMonitoring =
+  mongoose.models.UserMonitoring || mongoose.model('UserMonitoring', userMonitoringSchema);
+
+const PERSISTENT_MONITORING_FILE = path.join(DATA_DIR, 'persistent_monitoring.json');
+
+const loadPersistentMonitoring = () => {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(PERSISTENT_MONITORING_FILE)) {
+      const raw = fs.readFileSync(PERSISTENT_MONITORING_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Persistent monitoring load note:', err.message);
+  }
+  return [];
+};
+
+let ACTIVE_MONITORING = loadPersistentMonitoring();
+
+const savePersistentMonitoring = () => {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(
+      PERSISTENT_MONITORING_FILE,
+      JSON.stringify(ACTIVE_MONITORING, null, 2),
+      'utf-8'
+    );
+  } catch (err) {
+    console.error('Error saving persistent monitoring to disk:', err.message);
+  }
+};
+savePersistentMonitoring();
+
+const monitorAdminClients = new Set();
+const monitorUserSockets = new Map(); // userUid -> Set<WebSocket>
+const ipGeoCache = new Map(); // ip -> { country, city, region, cachedAt }
+
+const isPrivateOrLocalIp = (ip) => {
+  if (!ip) return true;
+  const clean = String(ip).trim();
+  if (
+    clean === '127.0.0.1' ||
+    clean === '::1' ||
+    clean === 'localhost' ||
+    clean.startsWith('10.') ||
+    clean.startsWith('192.168.') ||
+    clean.startsWith('fc') ||
+    clean.startsWith('fd') ||
+    clean.startsWith('fe80')
+  ) {
+    return true;
+  }
+  const m = clean.match(/^172\.(\d+)\./);
+  if (m) {
+    const second = Number(m[1]);
+    if (second >= 16 && second <= 31) return true;
+  }
+  return false;
+};
+
+const extractClientIp = (req) => {
+  const fwd = req?.headers?.['x-forwarded-for'];
+  let ip = '';
+  if (typeof fwd === 'string' && fwd.trim()) {
+    ip = fwd.split(',')[0].trim();
+  } else if (Array.isArray(fwd) && fwd.length > 0) {
+    ip = String(fwd[0]).split(',')[0].trim();
+  } else if (typeof req?.headers?.['x-real-ip'] === 'string') {
+    ip = req.headers['x-real-ip'].trim();
+  } else if (req?.socket?.remoteAddress) {
+    ip = String(req.socket.remoteAddress).trim();
+  }
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.slice(7);
+  }
+  return ip || null;
+};
+
+const lookupIpGeo = async (ip) => {
+  if (!ip || isPrivateOrLocalIp(ip)) return null;
+  const cached = ipGeoCache.get(ip);
+  if (cached && Date.now() - cached.cachedAt < 24 * 60 * 60 * 1000) {
+    return cached;
+  }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    const resp = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (data && data.success !== false && (data.country || data.city)) {
+      const geo = {
+        country: data.country || null,
+        city: data.city || null,
+        region: data.region || null,
+        cachedAt: Date.now(),
+      };
+      ipGeoCache.set(ip, geo);
+      return geo;
+    }
+  } catch {
+    // Non-blocking lookup
+  }
+  return null;
+};
+
+const buildNormalizedMonitoringRecord = (uid, base = {}) => {
+  const cleanUid = String(uid);
+  const userObj = ACTIVE_USERS.find((u) => String(u.uid) === cleanUid);
+  const sockets = monitorUserSockets.get(cleanUid);
+  const isOnline = Boolean(sockets && sockets.size > 0);
+  return {
+    userUid: cleanUid,
+    username: base.username || userObj?.username || `User_${cleanUid}`,
+    isOnline,
+    lastActiveAt: base.lastActiveAt || null,
+    lastLoginAt: base.lastLoginAt || null,
+    lastIp: base.lastIp || null,
+    locationCountry: base.locationCountry || null,
+    locationCity: base.locationCity || null,
+    locationRegion: base.locationRegion || null,
+    lastCopiedTrc20At: base.lastCopiedTrc20At || null,
+    lastCopiedTrc20Address: base.lastCopiedTrc20Address || null,
+    copyCount: typeof base.copyCount === 'number' ? base.copyCount : 0,
+    activePlatform: base.activePlatform || null,
+  };
+};
+
+const broadcastMonitorEvent = (payload) => {
+  const serialized = JSON.stringify(payload);
+  monitorAdminClients.forEach((client) => {
+    try {
+      if (client.readyState === 1) {
+        client.send(serialized);
+      }
+    } catch {}
+  });
+};
+
+const upsertMonitoringRecord = async (uid, patch = {}) => {
+  const cleanUid = String(uid || '').trim();
+  if (!cleanUid) return null;
+
+  const idx = ACTIVE_MONITORING.findIndex((r) => String(r.userUid) === cleanUid);
+  const current = idx >= 0 ? ACTIVE_MONITORING[idx] : { userUid: cleanUid };
+  const merged = {
+    ...current,
+    ...patch,
+    userUid: cleanUid,
+  };
+
+  if (idx >= 0) {
+    ACTIVE_MONITORING[idx] = merged;
+  } else {
+    ACTIVE_MONITORING.unshift(merged);
+  }
+  savePersistentMonitoring();
+
+  if (mongoose.connection.readyState === 1) {
+    try {
+      await UserMonitoring.updateOne(
+        { userUid: cleanUid },
+        {
+          $set: {
+            userUid: cleanUid,
+            username: merged.username || '',
+            lastActiveAt: merged.lastActiveAt || null,
+            lastLoginAt: merged.lastLoginAt || null,
+            lastIp: merged.lastIp || null,
+            locationCountry: merged.locationCountry || null,
+            locationCity: merged.locationCity || null,
+            locationRegion: merged.locationRegion || null,
+            lastCopiedTrc20At: merged.lastCopiedTrc20At || null,
+            lastCopiedTrc20Address: merged.lastCopiedTrc20Address || null,
+            copyCount: typeof merged.copyCount === 'number' ? merged.copyCount : 0,
+            activePlatform: merged.activePlatform || null,
+          },
+        },
+        { upsert: true }
+      );
+    } catch (dbErr) {
+      console.warn('MongoDB monitoring upsert note:', dbErr.message);
+    }
+  }
+
+  const normalized = buildNormalizedMonitoringRecord(cleanUid, merged);
+  broadcastMonitorEvent({ type: 'monitor:update', record: normalized });
+  return normalized;
+};
+
+const getMergedMonitoringRecords = async () => {
+  const map = new Map();
+  ACTIVE_USERS.forEach((u) => {
+    if (u?.uid) {
+      map.set(String(u.uid), buildNormalizedMonitoringRecord(u.uid, { username: u.username }));
+    }
+  });
+
+  ACTIVE_MONITORING.forEach((m) => {
+    if (m?.userUid) {
+      const uid = String(m.userUid);
+      const prev = map.get(uid) || {};
+      map.set(uid, buildNormalizedMonitoringRecord(uid, { ...prev, ...m }));
+    }
+  });
+
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const mongoRows = await UserMonitoring.find({}).lean();
+      mongoRows.forEach((mr) => {
+        if (!mr?.userUid) return;
+        const uid = String(mr.userUid);
+        const prev = map.get(uid) || {};
+        map.set(
+          uid,
+          buildNormalizedMonitoringRecord(uid, {
+            ...prev,
+            ...mr,
+            // Preserve newer in-memory timestamps if ahead
+            lastActiveAt:
+              String(prev.lastActiveAt || '') > String(mr.lastActiveAt || '')
+                ? prev.lastActiveAt
+                : mr.lastActiveAt,
+            lastCopiedTrc20At:
+              String(prev.lastCopiedTrc20At || '') > String(mr.lastCopiedTrc20At || '')
+                ? prev.lastCopiedTrc20At
+                : mr.lastCopiedTrc20At,
+            copyCount: Math.max(prev.copyCount || 0, mr.copyCount || 0),
+          })
+        );
+      });
+    } catch (err) {
+      console.warn('Mongo fetch monitoring records note:', err.message);
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+    return String(b.lastActiveAt || '').localeCompare(String(a.lastActiveAt || ''));
+  });
+};
 
 // ==============================================================================
 // 4. REST API ROUTES
@@ -2972,6 +3363,520 @@ app.get('/api/admin/verify', verifyAdminAuth, (req, res) => {
 });
 
 // ==============================================================================
+// 4.2 CUSTOMER SERVICE LIVE CHAT REST API ROUTES
+// ==============================================================================
+
+/**
+ * GET /api/chat/threads
+ * Returns all user conversation threads sorted by most recent message
+ */
+app.get('/api/chat/threads', async (req, res) => {
+  try {
+    const allMessages = await getMergedChatMessages();
+    const threadsMap = new Map();
+
+    allMessages.forEach((msg) => {
+      const uid = String(msg.userUid);
+      const userObj = ACTIVE_USERS.find((u) => String(u.uid) === uid);
+      const existing = threadsMap.get(uid);
+      const isUnreadForAdmin = msg.sender === 'user' && !msg.readByAdmin;
+
+      if (!existing) {
+        threadsMap.set(uid, {
+          userUid: uid,
+          username: userObj?.username || msg.username || `User_${uid}`,
+          vipLevel: userObj?.vipLevel ?? 0,
+          avatarUrl: userObj?.avatarUrl || '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
+          balance: typeof userObj?.balance === 'number' ? userObj.balance : 0,
+          lastMessage: msg.text,
+          lastSender: msg.sender,
+          lastTimestamp: msg.timestamp,
+          unreadCount: isUnreadForAdmin ? 1 : 0,
+          totalMessages: 1,
+        });
+      } else {
+        existing.totalMessages += 1;
+        if (isUnreadForAdmin) {
+          existing.unreadCount += 1;
+        }
+        if (String(msg.timestamp || '') >= String(existing.lastTimestamp || '')) {
+          existing.lastMessage = msg.text;
+          existing.lastSender = msg.sender;
+          existing.lastTimestamp = msg.timestamp;
+        }
+        if (userObj?.username) {
+          existing.username = userObj.username;
+        }
+      }
+    });
+
+    const threads = Array.from(threadsMap.values()).sort((a, b) =>
+      String(b.lastTimestamp || '').localeCompare(String(a.lastTimestamp || ''))
+    );
+    const totalUnread = threads.reduce((sum, t) => sum + (t.unreadCount || 0), 0);
+
+    return res.json({ success: true, threads, totalUnread });
+  } catch (err) {
+    console.error('Error fetching chat threads:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to load chat threads.' });
+  }
+});
+
+/**
+ * GET /api/chat/messages/:userId
+ * Returns chronological conversation history for a specific user (by 6-digit uid or user id)
+ */
+app.get('/api/chat/messages/:userId', async (req, res) => {
+  try {
+    const rawUserId = String(req.params.userId || '').trim();
+    if (!rawUserId) {
+      return res.status(400).json({ success: false, message: 'userId is required.' });
+    }
+    const matchedUser = ACTIVE_USERS.find(
+      (u) => String(u.uid) === rawUserId || String(u.id) === rawUserId
+    );
+    const resolvedUid = matchedUser ? String(matchedUser.uid) : rawUserId;
+    const messages = await getMergedChatMessages(resolvedUid);
+    return res.json({ success: true, messages });
+  } catch (err) {
+    console.error('Error fetching user chat messages:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to load messages.' });
+  }
+});
+
+app.get('/api/chat/messages', async (req, res) => {
+  try {
+    const rawUserId = String(req.query.userId || req.query.userUid || '').trim();
+    if (!rawUserId) {
+      const messages = await getMergedChatMessages();
+      return res.json({ success: true, messages });
+    }
+    const matchedUser = ACTIVE_USERS.find(
+      (u) => String(u.uid) === rawUserId || String(u.id) === rawUserId
+    );
+    const resolvedUid = matchedUser ? String(matchedUser.uid) : rawUserId;
+    const messages = await getMergedChatMessages(resolvedUid);
+    return res.json({ success: true, messages });
+  } catch (err) {
+    console.error('Error fetching chat messages:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to load messages.' });
+  }
+});
+
+/**
+ * POST /api/chat/send (also mounted on /api/support/message and /api/chat/messages)
+ * Persist a new user or admin chat message to disk & MongoDB and broadcast over WebSocket
+ */
+const handleSendChatMessage = async (req, res) => {
+  try {
+    const {
+      id,
+      userUid,
+      userId,
+      username,
+      sender,
+      adminName,
+      text,
+      message,
+      timestamp,
+    } = req.body || {};
+
+    const rawUidOrId = String(userUid || userId || '').trim();
+    const matchedByUidOrId = ACTIVE_USERS.find(
+      (u) => String(u.uid) === rawUidOrId || String(u.id) === rawUidOrId
+    );
+    const cleanUid = matchedByUidOrId ? String(matchedByUidOrId.uid) : rawUidOrId;
+    const cleanText = String(text !== undefined ? text : message || '').trim();
+    const cleanSender = sender === 'admin' ? 'admin' : 'user';
+    const cleanTimestamp =
+      typeof timestamp === 'string' && timestamp.trim()
+        ? timestamp.trim()
+        : new Date().toISOString();
+
+    if (!cleanUid || !cleanText) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID and message text are required.',
+      });
+    }
+
+    const userObj = matchedByUidOrId || ACTIVE_USERS.find((u) => String(u.uid) === cleanUid);
+    const resolvedUsername = String(username || userObj?.username || `User_${cleanUid}`).trim();
+    const msgId =
+      id && String(id).trim()
+        ? String(id).trim()
+        : `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    // Idempotency check
+    const existing = ACTIVE_CHAT_MESSAGES.find((m) => m.id === msgId);
+    if (existing) {
+      return res.status(200).json({
+        success: true,
+        message: 'Message sent successfully',
+        chatMessage: existing,
+      });
+    }
+
+    const newMessage = {
+      id: msgId,
+      userUid: cleanUid,
+      username: resolvedUsername,
+      sender: cleanSender,
+      adminName: cleanSender === 'admin' ? String(adminName || 'Support Agent') : undefined,
+      text: cleanText,
+      timestamp: cleanTimestamp,
+      readByAdmin: cleanSender === 'admin',
+      readByUser: cleanSender === 'user',
+    };
+
+    ACTIVE_CHAT_MESSAGES.push(newMessage);
+    savePersistentChat();
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await ChatMessage.create(newMessage);
+      } catch (dbErr) {
+        if (dbErr?.code !== 11000) {
+          console.warn('MongoDB chat save note:', dbErr.message);
+        }
+      }
+    }
+
+    // Real-time WebSocket broadcast to connected Admin & matching User
+    broadcastChatEvent({ type: 'chat:message', message: newMessage }, cleanUid);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Message sent successfully',
+      chatMessage: newMessage,
+    });
+  } catch (err) {
+    console.error('Error saving chat message:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to send message.' });
+  }
+};
+
+app.post('/api/chat/send', handleSendChatMessage);
+app.post('/api/support/message', handleSendChatMessage);
+app.post('/api/chat/messages', handleSendChatMessage);
+
+/**
+ * POST /api/chat/read
+ * Marks unread messages for a conversation as read by admin or user
+ */
+app.post('/api/chat/read', async (req, res) => {
+  try {
+    const { userUid, reader } = req.body || {};
+    const cleanUid = String(userUid || '').trim();
+    if (!cleanUid || (reader !== 'admin' && reader !== 'user')) {
+      return res.status(400).json({ success: false, message: 'Valid userUid and reader are required.' });
+    }
+
+    let changed = false;
+    ACTIVE_CHAT_MESSAGES = ACTIVE_CHAT_MESSAGES.map((m) => {
+      if (String(m.userUid) !== cleanUid) return m;
+      if (reader === 'admin' && m.sender === 'user' && !m.readByAdmin) {
+        changed = true;
+        return { ...m, readByAdmin: true };
+      }
+      if (reader === 'user' && m.sender === 'admin' && !m.readByUser) {
+        changed = true;
+        return { ...m, readByUser: true };
+      }
+      return m;
+    });
+
+    if (changed) {
+      savePersistentChat();
+    }
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        if (reader === 'admin') {
+          await ChatMessage.updateMany(
+            { userUid: cleanUid, sender: 'user', readByAdmin: false },
+            { $set: { readByAdmin: true } }
+          );
+        } else {
+          await ChatMessage.updateMany(
+            { userUid: cleanUid, sender: 'admin', readByUser: false },
+            { $set: { readByUser: true } }
+          );
+        }
+      } catch (dbErr) {
+        console.warn('MongoDB chat read update note:', dbErr.message);
+      }
+    }
+
+    broadcastChatEvent({ type: 'chat:read', userUid: cleanUid, reader }, cleanUid);
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error marking chat read:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to update read status.' });
+  }
+});
+
+// ==============================================================================
+// 4.3 REAL-TIME USER MONITORING REST API ROUTES
+// ==============================================================================
+
+/**
+ * GET /api/monitoring/users
+ * Returns merged real-time monitoring records for all users
+ */
+app.get('/api/monitoring/users', async (req, res) => {
+  try {
+    const records = await getMergedMonitoringRecords();
+    const onlineCount = records.filter((r) => r.isOnline).length;
+    return res.json({ success: true, records, onlineCount });
+  } catch (err) {
+    console.error('Error fetching monitoring records:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to load monitoring data.' });
+  }
+});
+
+/**
+ * POST /api/monitoring/event
+ * Silent telemetry tracker for session login/location, TRC-20 address copies, and platform selection
+ */
+app.post('/api/monitoring/event', async (req, res) => {
+  try {
+    const {
+      eventType,
+      userUid,
+      username,
+      copiedAddress,
+      activePlatform,
+      clientGeo,
+    } = req.body || {};
+
+    const cleanUid = String(userUid || '').trim();
+    if (!cleanUid) {
+      return res.status(400).json({ success: false, message: 'userUid is required.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const existing = ACTIVE_MONITORING.find((r) => String(r.userUid) === cleanUid) || {};
+    const userObj = ACTIVE_USERS.find((u) => String(u.uid) === cleanUid);
+
+    const patch = {
+      username: username || userObj?.username || existing.username || `User_${cleanUid}`,
+      lastActiveAt: nowIso,
+    };
+
+    if (eventType === 'session_start') {
+      if (!existing.lastLoginAt) {
+        patch.lastLoginAt = nowIso;
+      } else if (existing.lastActiveAt) {
+        // Update lastLoginAt if starting a new session after > 5 mins gap
+        const gapMs = Date.now() - new Date(existing.lastActiveAt).getTime();
+        if (isNaN(gapMs) || gapMs > 5 * 60 * 1000) {
+          patch.lastLoginAt = nowIso;
+        }
+      }
+
+      const serverIp = extractClientIp(req);
+      if (serverIp && !isPrivateOrLocalIp(serverIp)) {
+        patch.lastIp = serverIp;
+        const geo = await lookupIpGeo(serverIp);
+        if (geo) {
+          patch.locationCountry = geo.country;
+          patch.locationCity = geo.city;
+          patch.locationRegion = geo.region;
+        }
+      } else {
+        if (clientGeo && typeof clientGeo === 'object') {
+          if (clientGeo.ip) patch.lastIp = String(clientGeo.ip);
+          if (clientGeo.country) patch.locationCountry = String(clientGeo.country);
+          if (clientGeo.city) patch.locationCity = String(clientGeo.city);
+          if (clientGeo.region) patch.locationRegion = String(clientGeo.region);
+        } else if (!existing.locationCountry) {
+          patch.lastIp = serverIp || '127.0.0.1';
+          patch.locationCountry = 'Local Network';
+          patch.locationCity = 'Preview Session';
+        }
+      }
+    } else if (eventType === 'copy_trc20') {
+      patch.lastCopiedTrc20At = nowIso;
+      if (copiedAddress) {
+        patch.lastCopiedTrc20Address = String(copiedAddress).trim();
+      }
+      patch.copyCount = (existing.copyCount || 0) + 1;
+    } else if (eventType === 'platform_select') {
+      if (activePlatform) {
+        patch.activePlatform = String(activePlatform);
+      }
+    }
+
+    const record = await upsertMonitoringRecord(cleanUid, patch);
+    return res.json({ success: true, record });
+  } catch (err) {
+    console.warn('Monitoring event error:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to record monitoring event.' });
+  }
+});
+
+// ==============================================================================
+// 4.4 ADMIN ACCOUNT & ORDER RECOVERY ENDPOINT
+// ==============================================================================
+
+/**
+ * POST /api/admin/recover-user-state
+ * Atomically updates user balance, completed task number, combo set/triggers,
+ * earned commission, and active incomplete order details across disk & MongoDB.
+ */
+app.post('/api/admin/recover-user-state', async (req, res) => {
+  try {
+    const { userUid, userId, userUpdates, activeOrderAction, activeOrderPayload } = req.body || {};
+    const cleanUid = String(userUid || '').trim();
+    const cleanId = String(userId || '').trim();
+
+    if (!cleanUid && !cleanId) {
+      return res.status(400).json({ success: false, message: 'User UID or ID is required.' });
+    }
+
+    const { userIdx, mongoUser } = await findUserFromMemoryOrMongo({
+      userUid: cleanUid,
+      userId: cleanId,
+    });
+
+    if (userIdx < 0 && !mongoUser) {
+      return res.status(404).json({ success: false, message: 'Target user not found.' });
+    }
+
+    const targetUid = cleanUid || String(ACTIVE_USERS[userIdx]?.uid || mongoUser?.uid || '');
+    const normalizedUpdates = { ...(userUpdates || {}) };
+
+    if (userIdx >= 0) {
+      ACTIVE_USERS[userIdx] = {
+        ...ACTIVE_USERS[userIdx],
+        ...normalizedUpdates,
+      };
+      savePersistentUsers();
+    }
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await User.updateOne(
+          { uid: targetUid },
+          { $set: normalizedUpdates }
+        );
+      } catch (dbErr) {
+        console.warn('MongoDB user recovery update note:', dbErr.message);
+      }
+    }
+
+    // Handle active incomplete order restoration / update / clear
+    let updatedActiveOrder = null;
+    if (activeOrderAction === 'clear') {
+      ACTIVE_SUBMITTED_ORDERS = ACTIVE_SUBMITTED_ORDERS.filter(
+        (o) => !(String(o.userUid) === targetUid && o.status === 'incomplete')
+      );
+      savePersistentOrders();
+      if (mongoose.connection.readyState === 1) {
+        try {
+          await TaskSimulation.deleteMany({ userId: targetUid, status: 'incomplete' });
+        } catch (dbErr) {
+          console.warn('MongoDB clear active order note:', dbErr.message);
+        }
+      }
+    } else if ((activeOrderAction === 'update' || activeOrderAction === 'create') && activeOrderPayload) {
+      const ordNo = String(activeOrderPayload.orderNo || ('260' + Date.now()));
+      const ordId = String(activeOrderPayload.id || activeOrderPayload.orderId || ('ord_' + Date.now()));
+      const cleanOrder = {
+        ...activeOrderPayload,
+        id: ordId,
+        orderId: ordId,
+        orderNo: ordNo,
+        userUid: targetUid,
+        userId: cleanId || ACTIVE_USERS[userIdx]?.id || ('user_' + targetUid),
+        username: ACTIVE_USERS[userIdx]?.username || activeOrderPayload.username || '',
+        status: 'incomplete',
+      };
+
+      // Ensure no duplicate stale incomplete orders remain for this user
+      ACTIVE_SUBMITTED_ORDERS = ACTIVE_SUBMITTED_ORDERS.filter(
+        (o) =>
+          !(
+            String(o.userUid) === targetUid &&
+            o.status === 'incomplete' &&
+            String(o.orderNo) !== ordNo
+          )
+      );
+
+      const existIdx = ACTIVE_SUBMITTED_ORDERS.findIndex(
+        (o) =>
+          String(o.orderNo) === ordNo ||
+          (o.orderId && o.orderId === ordId) ||
+          (o.id && o.id === ordId)
+      );
+      if (existIdx >= 0) {
+        ACTIVE_SUBMITTED_ORDERS[existIdx] = {
+          ...ACTIVE_SUBMITTED_ORDERS[existIdx],
+          ...cleanOrder,
+          status: 'incomplete',
+        };
+      } else {
+        ACTIVE_SUBMITTED_ORDERS.unshift(cleanOrder);
+      }
+      savePersistentOrders();
+      updatedActiveOrder = cleanOrder;
+
+      if (mongoose.connection.readyState === 1) {
+        try {
+          await TaskSimulation.deleteMany({
+            userId: targetUid,
+            status: 'incomplete',
+            orderNumber: { $ne: ordNo },
+          });
+          await TaskSimulation.updateOne(
+            { orderNumber: ordNo },
+            {
+              $set: {
+                userId: targetUid,
+                username: cleanOrder.username,
+                orderNumber: ordNo,
+                taskNumber: Number(cleanOrder.comboStepNumber || normalizedUpdates.currentCycleTasks || 1),
+                cycleNumber: Number(normalizedUpdates.cycleNumber || 1),
+                productTitle: cleanOrder.productTitle || 'Matched Retail Order',
+                productPrice: Number(cleanOrder.orderAmount || 0),
+                commission: Number(cleanOrder.commission || 0),
+                expectedIncome: Number(cleanOrder.expectedIncome || 0),
+                platform: cleanOrder.platform || 'Amazon',
+                vipTier: cleanOrder.vipTier || 'VIP 1',
+                isCombo: !!cleanOrder.isComboOrder,
+                comboStep: Number(cleanOrder.comboStepNumber || 0),
+                requiredBalance: cleanOrder.requiredBalance,
+                comboDepositPercent: cleanOrder.comboDepositPercent,
+                comboCommissionPercent: cleanOrder.comboCommissionPercent,
+                requiredDepositDeficit: cleanOrder.requiredDepositDeficit,
+                depositAddress: cleanOrder.depositAddress,
+                items: cleanOrder.items || [],
+                status: 'incomplete',
+              },
+            },
+            { upsert: true }
+          );
+        } catch (dbErr) {
+          console.warn('MongoDB recover order persist note:', dbErr.message);
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Account state recovered for UID ${targetUid}.`,
+      user: userIdx >= 0 ? ACTIVE_USERS[userIdx] : null,
+      activeOrder: updatedActiveOrder,
+    });
+  } catch (err) {
+    console.error('Admin recover user state error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to recover user state: ' + err.message });
+  }
+});
+
+// ==============================================================================
 // 5. DEV & PRODUCTION ASSET SERVING
 // ==============================================================================
 
@@ -3014,6 +3919,26 @@ app.get('/', (req, res, next) => {
 // so app.listen binds port 3000 immediately without hitting startup probe timeouts.
 const distDir = path.join(__dirname, 'dist');
 const staticFallback = express.static(distDir);
+
+// Ensure unmatched /api/* routes ALWAYS return JSON 404 (never an HTML page)
+app.use('/api', (req, res) => {
+  return res.status(404).json({
+    success: false,
+    message: `API endpoint not found: ${req.method} ${req.originalUrl}`,
+  });
+});
+
+// Ensure Express errors on /api/* (e.g. malformed JSON body) ALWAYS return JSON
+app.use((err, req, res, next) => {
+  if (req.path.startsWith('/api') || (req.originalUrl && req.originalUrl.startsWith('/api'))) {
+    const statusCode = Number(err?.status || err?.statusCode || 500);
+    return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({
+      success: false,
+      message: err?.message || 'Internal server error.',
+    });
+  }
+  return next(err);
+});
 
 app.use(async (req, res, next) => {
   if (req.path.startsWith('/api')) {
@@ -3058,6 +3983,150 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 server.on('error', (err) => {
   console.error('HTTP Server listen error:', err);
+});
+
+// Attach WebSocket Servers on /ws/chat and /ws/monitor using a unified upgrade dispatcher
+const wssChat = new WebSocketServer({ noServer: true });
+const wssMonitor = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  try {
+    const reqUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+    if (reqUrl.pathname === '/ws/chat') {
+      wssChat.handleUpgrade(request, socket, head, (ws) => {
+        wssChat.emit('connection', ws, request);
+      });
+    } else if (reqUrl.pathname === '/ws/monitor') {
+      wssMonitor.handleUpgrade(request, socket, head, (ws) => {
+        wssMonitor.emit('connection', ws, request);
+      });
+    }
+  } catch {
+    try {
+      socket.destroy();
+    } catch {}
+  }
+});
+
+wssChat.on('connection', (ws, req) => {
+  try {
+    const reqUrl = new URL(req.url || '/ws/chat', `http://${req.headers.host || 'localhost'}`);
+    ws.role = reqUrl.searchParams.get('role') === 'admin' ? 'admin' : 'user';
+    ws.userUid = reqUrl.searchParams.get('userUid') || '';
+  } catch {
+    ws.role = 'user';
+    ws.userUid = '';
+  }
+
+  chatClients.add(ws);
+
+  ws.on('message', (raw) => {
+    try {
+      const data = JSON.parse(String(raw));
+      if (data?.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+      }
+    } catch {}
+  });
+
+  ws.on('close', () => {
+    chatClients.delete(ws);
+  });
+
+  ws.on('error', () => {
+    chatClients.delete(ws);
+  });
+});
+
+wssMonitor.on('connection', async (ws, req) => {
+  let role = 'user';
+  let userUid = '';
+  let username = '';
+  try {
+    const reqUrl = new URL(req.url || '/ws/monitor', `http://${req.headers.host || 'localhost'}`);
+    role = reqUrl.searchParams.get('role') === 'admin' ? 'admin' : 'user';
+    userUid = (reqUrl.searchParams.get('userUid') || '').trim();
+    username = (reqUrl.searchParams.get('username') || '').trim();
+  } catch {}
+
+  ws.monitorRole = role;
+  ws.monitorUserUid = userUid;
+
+  if (role === 'admin') {
+    monitorAdminClients.add(ws);
+    try {
+      const records = await getMergedMonitoringRecords();
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'monitor:snapshot', records }));
+      }
+    } catch {}
+  } else if (userUid) {
+    if (!monitorUserSockets.has(userUid)) {
+      monitorUserSockets.set(userUid, new Set());
+    }
+    monitorUserSockets.get(userUid).add(ws);
+
+    const nowIso = new Date().toISOString();
+    const serverIp = extractClientIp(req);
+    const existing = ACTIVE_MONITORING.find((r) => String(r.userUid) === userUid) || {};
+    const patch = {
+      username: username || existing.username,
+      lastActiveAt: nowIso,
+    };
+    if (serverIp && !isPrivateOrLocalIp(serverIp)) {
+      patch.lastIp = serverIp;
+    }
+    await upsertMonitoringRecord(userUid, patch);
+
+    // Non-blocking geo enrichment if server IP is public and location missing or IP changed
+    if (serverIp && !isPrivateOrLocalIp(serverIp) && (!existing.locationCountry || existing.lastIp !== serverIp)) {
+      lookupIpGeo(serverIp).then((geo) => {
+        if (geo) {
+          upsertMonitoringRecord(userUid, {
+            locationCountry: geo.country,
+            locationCity: geo.city,
+            locationRegion: geo.region,
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  }
+
+  ws.on('message', (raw) => {
+    try {
+      const data = JSON.parse(String(raw));
+      if (data?.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+        if (role === 'user' && userUid) {
+          const idx = ACTIVE_MONITORING.findIndex((r) => String(r.userUid) === userUid);
+          const nowIso = new Date().toISOString();
+          if (idx >= 0) {
+            ACTIVE_MONITORING[idx] = { ...ACTIVE_MONITORING[idx], lastActiveAt: nowIso };
+          }
+        }
+      }
+    } catch {}
+  });
+
+  const handleDisconnect = () => {
+    if (role === 'admin') {
+      monitorAdminClients.delete(ws);
+    } else if (userUid) {
+      const set = monitorUserSockets.get(userUid);
+      if (set) {
+        set.delete(ws);
+        if (set.size === 0) {
+          monitorUserSockets.delete(userUid);
+          upsertMonitoringRecord(userUid, {
+            lastActiveAt: new Date().toISOString(),
+          }).catch(() => {});
+        }
+      }
+    }
+  };
+
+  ws.on('close', handleDisconnect);
+  ws.on('error', handleDisconnect);
 });
 
 export default app;

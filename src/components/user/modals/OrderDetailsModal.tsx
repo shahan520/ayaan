@@ -78,7 +78,10 @@ export const OrderDetailsModal: React.FC<Props> = ({
       : isComboOrder && order.comboCommissionPercent
       ? Number(((order.orderAmount * order.comboCommissionPercent) / 100).toFixed(4))
       : order.commission;
-  const effectiveExpectedIncome = Number((order.orderAmount + effectiveCommission).toFixed(4));
+  const effectiveExpectedIncome =
+    typeof order.expectedIncome === 'number' && order.expectedIncome > 0
+      ? order.expectedIncome
+      : Number((order.orderAmount + effectiveCommission).toFixed(4));
 
   const handleOverlayClick = () => {
     if (onNavigateToDeposit) {

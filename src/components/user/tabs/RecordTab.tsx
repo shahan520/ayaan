@@ -152,10 +152,15 @@ export const RecordTab: React.FC<Props> = ({ onNavigateToDeposit }) => {
                 {/* Transaction Specs */}
                 {(() => {
                   const orderComm =
-                    order.isComboOrder && order.comboCommissionPercent
+                    order.commission > 0
+                      ? order.commission
+                      : order.isComboOrder && order.comboCommissionPercent
                       ? Number(((order.orderAmount * order.comboCommissionPercent) / 100).toFixed(4))
                       : order.commission;
-                  const orderExpected = Number((order.orderAmount + orderComm).toFixed(4));
+                  const orderExpected =
+                    typeof order.expectedIncome === 'number' && order.expectedIncome > 0
+                      ? order.expectedIncome
+                      : Number((order.orderAmount + orderComm).toFixed(4));
 
                   return (
                     <div className="bg-slate-50 p-3 rounded-xl space-y-1.5 text-xs font-semibold text-black border border-slate-100">

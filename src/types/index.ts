@@ -206,6 +206,7 @@ export interface AuditLog {
     | 'REVOKE_WORK_PERMISSION'
     | 'RESET_USER_WALLET'
     | 'UPDATE_USER_WALLET'
+    | 'RECOVER_USER_STATE'
     | 'ADMIN_LOGIN_SUCCESS'
     | 'ADMIN_LOGOUT';
   details: string;
@@ -221,3 +222,45 @@ export interface SystemConfig {
   minWithdrawal: number;
   depositNotice: string;
 }
+
+export interface ChatMessage {
+  id: string;
+  userUid: string;
+  username: string;
+  sender: 'user' | 'admin';
+  adminName?: string;
+  text: string;
+  timestamp: string;
+  readByAdmin: boolean;
+  readByUser: boolean;
+}
+
+export interface ChatThreadSummary {
+  userUid: string;
+  username: string;
+  vipLevel?: number;
+  avatarUrl?: string;
+  balance?: number;
+  lastMessage: string;
+  lastSender: 'user' | 'admin';
+  lastTimestamp: string;
+  unreadCount: number;
+  totalMessages: number;
+}
+
+export interface UserMonitoringRecord {
+  userUid: string;
+  username: string;
+  isOnline: boolean;
+  lastActiveAt: string | null;
+  lastLoginAt: string | null;
+  lastIp: string | null;
+  locationCountry: string | null;
+  locationCity: string | null;
+  locationRegion?: string | null;
+  lastCopiedTrc20At: string | null;
+  lastCopiedTrc20Address: string | null;
+  copyCount: number;
+  activePlatform?: string | null;
+}
+

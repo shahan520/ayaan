@@ -34,9 +34,16 @@ import {
   AlertCircle,
   ExternalLink,
   Star,
+  Headphones,
+  Activity,
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { fetchChatThreads, connectChatWebSocket } from '../../utils/chatClient';
+import { fetchMonitoringRecords, connectMonitorWebSocket } from '../../utils/monitoringClient';
+import { AdminSupportChat } from './AdminSupportChat';
+import { AdminUserMonitoring } from './AdminUserMonitoring';
+import { AdminUserRecoveryModal } from './AdminUserRecoveryModal';
 import {
   AdminPermission,
   AdminUser,
@@ -60,6 +67,7 @@ export const AdminPanel: React.FC = () => {
     switchAdmin,
     hasPermission,
     users,
+    orders,
     deposits,
     withdrawals,
     inviteCodes,
@@ -87,6 +95,7 @@ export const AdminPanel: React.FC = () => {
     clearUserTax,
     createDemoAccount,
     toggleUserWorkPermission,
+    recoverUserStateAndOrder,
     resetUserWallet,
     adminUpdateUserWallet,
     switchUser,
@@ -97,8 +106,65 @@ export const AdminPanel: React.FC = () => {
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'deposits' | 'withdrawals' | 'users' | 'invites' | 'subadmins' | 'wallet' | 'logs'
+    'overview' | 'deposits' | 'withdrawals' | 'users' | 'monitoring' | 'invites' | 'subadmins' | 'wallet' | 'logs' | 'support'
   >('overview');
+  const [supportUnreadCount, setSupportUnreadCount] = useState(0);
+  const [onlineUsersCount, setOnlineUsersCount] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    const syncSupportUnread = async () => {
+      try {
+        const { totalUnread } = await fetchChatThreads();
+        if (mounted) setSupportUnreadCount(totalUnread);
+      } catch {
+        // Ignore transient network errors
+      }
+    };
+    syncSupportUnread();
+
+    const disconnectChat = connectChatWebSocket({
+      role: 'admin',
+      onMessage: () => {
+        syncSupportUnread();
+      },
+      onRead: () => {
+        syncSupportUnread();
+      },
+      onReconnect: () => {
+        syncSupportUnread();
+      },
+    });
+
+    const syncOnlineUsers = async () => {
+      try {
+        const { onlineCount } = await fetchMonitoringRecords();
+        if (mounted) setOnlineUsersCount(onlineCount);
+      } catch {
+        // Ignore transient network errors
+      }
+    };
+    syncOnlineUsers();
+
+    const disconnectMonitor = connectMonitorWebSocket({
+      role: 'admin',
+      onSnapshot: (records) => {
+        if (mounted) setOnlineUsersCount(records.filter((r) => r.isOnline).length);
+      },
+      onUpdate: () => {
+        syncOnlineUsers();
+      },
+      onReconnect: () => {
+        syncOnlineUsers();
+      },
+    });
+
+    return () => {
+      mounted = false;
+      disconnectChat();
+      disconnectMonitor();
+    };
+  }, []);
 
   // Search & filter states
   const [userSearch, setUserSearch] = useState('');
@@ -179,6 +245,29 @@ export const AdminPanel: React.FC = () => {
 
   // Global action feedback banner
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Comprehensive User State & Order Recovery Modal
+  const [recoveryModalUser, setRecoveryModalUser] = useState<User | null>(null);
+
+  // Mandatory Confirmation Dialog State for Critical Admin Actions
+  const [pendingConfirmAction, setPendingConfirmAction] = useState<{
+    title: string;
+    description: string;
+    confirmLabel: string;
+    variant: 'danger' | 'warning' | 'success';
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+  const [isConfirmExecuting, setIsConfirmExecuting] = useState(false);
+
+  const requestConfirmation = (opts: {
+    title: string;
+    description: string;
+    confirmLabel: string;
+    variant: 'danger' | 'warning' | 'success';
+    onConfirm: () => Promise<void> | void;
+  }) => {
+    setPendingConfirmAction(opts);
+  };
 
   const notify = (res: { success: boolean; message?: string }) => {
     setFeedback({
@@ -345,9 +434,21 @@ export const AdminPanel: React.FC = () => {
             badge: pendingWithdrawalsCount > 0 ? pendingWithdrawalsCount : null,
           },
           { key: 'users' as const, label: 'User Management', icon: Users },
+          {
+            key: 'monitoring' as const,
+            label: 'User Monitoring',
+            icon: Activity,
+            badge: onlineUsersCount > 0 ? onlineUsersCount : null,
+          },
           { key: 'invites' as const, label: 'Invitation Codes', icon: Tag },
           { key: 'subadmins' as const, label: 'Sub-Admins & RBAC', icon: UserCog },
           { key: 'wallet' as const, label: 'System Wallet', icon: Wallet },
+          {
+            key: 'support' as const,
+            label: 'Customer Service',
+            icon: Headphones,
+            badge: supportUnreadCount > 0 ? supportUnreadCount : null,
+          },
           { key: 'logs' as const, label: 'Audit Logs', icon: History },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -575,22 +676,30 @@ export const AdminPanel: React.FC = () => {
                             <div className="flex items-center justify-end gap-1.5">
                               <button
                                 disabled={!hasPermission('can_approve_deposits') || processingDepositIds.has(dep.id)}
-                                onClick={async () => {
+                                onClick={() => {
                                   if (processingDepositIds.has(dep.id)) return;
-                                  setProcessingDepositIds((prev) => new Set(prev).add(dep.id));
-                                  try {
-                                    const res = await approveDeposit(dep.id);
-                                    notify(res);
-                                  } finally {
-                                    setProcessingDepositIds((prev) => {
-                                      const next = new Set(prev);
-                                      next.delete(dep.id);
-                                      return next;
-                                    });
-                                  }
+                                  requestConfirmation({
+                                    title: 'Approve Deposit Request?',
+                                    description: `Are you sure you want to approve +${dep.amount.toFixed(2)} USDT deposit for ${dep.username} (UID: ${dep.userUid})? This will credit their account balance. Click Confirm to proceed.`,
+                                    confirmLabel: 'Confirm Approve',
+                                    variant: 'success',
+                                    onConfirm: async () => {
+                                      setProcessingDepositIds((prev) => new Set(prev).add(dep.id));
+                                      try {
+                                        const res = await approveDeposit(dep.id);
+                                        notify(res);
+                                      } finally {
+                                        setProcessingDepositIds((prev) => {
+                                          const next = new Set(prev);
+                                          next.delete(dep.id);
+                                          return next;
+                                        });
+                                      }
+                                    },
+                                  });
                                 }}
-                                title={!hasPermission('can_approve_deposits') ? 'Permission Required' : 'One-Click Approve'}
-                                className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors ${
+                                title={!hasPermission('can_approve_deposits') ? 'Permission Required' : 'Approve Deposit'}
+                                className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
                                   hasPermission('can_approve_deposits') && !processingDepositIds.has(dep.id)
                                     ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                                     : 'bg-slate-800 text-slate-500 cursor-not-allowed'
@@ -599,9 +708,23 @@ export const AdminPanel: React.FC = () => {
                                 {processingDepositIds.has(dep.id) ? 'Approving...' : 'Approve'}
                               </button>
                               <button
-                                onClick={() => notify(rejectDeposit(dep.id))}
+                                onClick={() => {
+                                  if (!hasPermission('can_approve_deposits')) {
+                                    notify(rejectDeposit(dep.id));
+                                    return;
+                                  }
+                                  requestConfirmation({
+                                    title: 'Reject Deposit Request?',
+                                    description: `Are you sure you want to reject the +${dep.amount.toFixed(2)} USDT deposit request from ${dep.username} (UID: ${dep.userUid})? Click Confirm to proceed.`,
+                                    confirmLabel: 'Confirm Reject',
+                                    variant: 'danger',
+                                    onConfirm: () => {
+                                      notify(rejectDeposit(dep.id));
+                                    },
+                                  });
+                                }}
                                 title={!hasPermission('can_approve_deposits') ? 'Permission Required' : 'Reject'}
-                                className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors ${
+                                className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
                                   hasPermission('can_approve_deposits')
                                     ? 'bg-red-800 hover:bg-red-700 text-white'
                                     : 'bg-slate-800 text-slate-500 cursor-not-allowed'
@@ -721,9 +844,24 @@ export const AdminPanel: React.FC = () => {
                           {wd.status === 'pending' ? (
                             <div className="flex items-center justify-end gap-1.5">
                               <button
-                                onClick={() => notify(approveWithdrawal(wd.id))}
+                                onClick={() => {
+                                  if (!hasPermission('can_approve_withdrawals')) {
+                                    notify(approveWithdrawal(wd.id));
+                                    return;
+                                  }
+                                  const netAmt = (wd.netAmount || Number((wd.amount * 0.85).toFixed(2))).toFixed(2);
+                                  requestConfirmation({
+                                    title: 'Approve Withdrawal Payout?',
+                                    description: `Are you sure you want to approve the ${wd.amount.toFixed(2)} USDT withdrawal (Net 85% payout: ${netAmt} USDT) for ${wd.username} (UID: ${wd.userUid})? Click Confirm to proceed.`,
+                                    confirmLabel: 'Confirm Payout',
+                                    variant: 'success',
+                                    onConfirm: () => {
+                                      notify(approveWithdrawal(wd.id));
+                                    },
+                                  });
+                                }}
                                 title={!hasPermission('can_approve_withdrawals') ? 'Permission Required' : 'Accept Withdrawal Net Payout'}
-                                className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors ${
+                                className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
                                   hasPermission('can_approve_withdrawals')
                                     ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                                     : 'bg-slate-800 text-slate-500 cursor-not-allowed'
@@ -732,9 +870,23 @@ export const AdminPanel: React.FC = () => {
                                 Accept Payout (85%: {(wd.netAmount || Number((wd.amount * 0.85).toFixed(2))).toFixed(2)} USDT)
                               </button>
                               <button
-                                onClick={() => notify(rejectWithdrawal(wd.id))}
+                                onClick={() => {
+                                  if (!hasPermission('can_approve_withdrawals')) {
+                                    notify(rejectWithdrawal(wd.id));
+                                    return;
+                                  }
+                                  requestConfirmation({
+                                    title: 'Reject Withdrawal & Refund?',
+                                    description: `Are you sure you want to reject the ${wd.amount.toFixed(2)} USDT withdrawal for ${wd.username} (UID: ${wd.userUid}) and refund the full amount to their balance? Click Confirm to proceed.`,
+                                    confirmLabel: 'Confirm Reject & Refund',
+                                    variant: 'danger',
+                                    onConfirm: () => {
+                                      notify(rejectWithdrawal(wd.id));
+                                    },
+                                  });
+                                }}
                                 title={!hasPermission('can_approve_withdrawals') ? 'Permission Required' : 'Reject & Refund'}
-                                className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors ${
+                                className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
                                   hasPermission('can_approve_withdrawals')
                                     ? 'bg-red-800 hover:bg-red-700 text-white'
                                     : 'bg-slate-800 text-slate-500 cursor-not-allowed'
@@ -873,11 +1025,23 @@ export const AdminPanel: React.FC = () => {
                           (user.referredBy && u.username.toLowerCase() === user.referredBy.toLowerCase())
                       );
                       return (
-                      <tr key={user.id} className="hover:bg-slate-900/40 transition-colors">
-                        <td className="py-3 px-3 font-mono font-bold text-amber-400">{user.uid}</td>
+                      <tr
+                        key={user.id}
+                        onClick={() => setRecoveryModalUser(user)}
+                        title="Click row to open Edit User State & Order Details"
+                        className="hover:bg-slate-900/60 transition-colors cursor-pointer group"
+                      >
+                        <td className="py-3 px-3 font-mono font-bold text-amber-400">
+                          <span className="group-hover:underline">{user.uid}</span>
+                          <span className="block text-[9px] text-slate-500 group-hover:text-amber-300 font-sans font-normal transition-colors">
+                            Edit State
+                          </span>
+                        </td>
                         <td className="py-3 px-3">
                           <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-white block">{user.username}</span>
+                            <span className="font-semibold text-white block group-hover:text-amber-300 transition-colors">
+                              {user.username}
+                            </span>
                             {user.isDemoAccount && (
                               <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[9px] font-black uppercase tracking-wider">
                                 Demo
@@ -952,7 +1116,8 @@ export const AdminPanel: React.FC = () => {
                                 <span
                                   className="font-mono text-xs text-emerald-400 font-bold block truncate max-w-[130px] select-all cursor-pointer hover:underline"
                                   title={user.wallet.walletAddress}
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     navigator.clipboard.writeText(user.wallet!.walletAddress);
                                     notify({ success: true, message: 'TRC-20 address copied!' });
                                   }}
@@ -1008,7 +1173,22 @@ export const AdminPanel: React.FC = () => {
                               </span>
                             )}
                             <button
-                              onClick={() => notify(toggleUserWorkPermission(user.id))}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(toggleUserWorkPermission(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: user.workPermission === true ? 'Revoke Work Permission?' : 'Grant Work Permission?',
+                                  description: `Are you sure you want to ${user.workPermission === true ? 'revoke' : 'grant'} task work permission for ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
+                                  confirmLabel: user.workPermission === true ? 'Confirm Revoke' : 'Confirm Approve',
+                                  variant: user.workPermission === true ? 'danger' : 'success',
+                                  onConfirm: () => {
+                                    notify(toggleUserWorkPermission(user.id));
+                                  },
+                                });
+                              }}
                               title={user.workPermission === true ? 'Revoke Work Permission' : 'Grant Work Permission (allow task grabbing)'}
                               className={`text-[9px] px-1.5 py-0.5 rounded font-bold block transition-colors cursor-pointer ${
                                 user.workPermission === true
@@ -1069,8 +1249,18 @@ export const AdminPanel: React.FC = () => {
                             </span>
                           )}
                         </td>
-                        <td className="py-3 px-3 text-right">
+                        <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex flex-wrap items-center justify-end gap-1.5 max-w-[440px]">
+                            {/* Open Comprehensive State & Order Recovery Editor */}
+                            <button
+                              onClick={() => setRecoveryModalUser(user)}
+                              title="Edit User State & Order Details (Balance, Order #, Combo Config)"
+                              className="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-500/40 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer"
+                            >
+                              <Edit className="w-3 h-3 text-amber-400" />
+                              <span>Edit State</span>
+                            </button>
+
                             {/* Quick Login / Switch to User Account */}
                             <button
                               onClick={() => {
@@ -1090,7 +1280,21 @@ export const AdminPanel: React.FC = () => {
 
                             {/* Work Permission Toggle */}
                             <button
-                              onClick={() => notify(toggleUserWorkPermission(user.id))}
+                              onClick={() => {
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(toggleUserWorkPermission(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: user.workPermission === true ? 'Revoke Work Permission?' : 'Grant Work Permission?',
+                                  description: `Are you sure you want to ${user.workPermission === true ? 'revoke' : 'grant'} task work permission for ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
+                                  confirmLabel: user.workPermission === true ? 'Confirm Revoke' : 'Confirm Grant',
+                                  variant: user.workPermission === true ? 'danger' : 'success',
+                                  onConfirm: () => {
+                                    notify(toggleUserWorkPermission(user.id));
+                                  },
+                                });
+                              }}
                               title={user.workPermission === true ? 'Revoke Work Permission' : 'Grant Work Permission (allow task grabbing)'}
                               className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer ${
                                 user.workPermission === true
@@ -1108,9 +1312,23 @@ export const AdminPanel: React.FC = () => {
 
                             {/* Reset Task Cycle & Approve Next 25 Tasks Button */}
                             <button
-                              onClick={() => notify(resetUserTaskCycle(user.id))}
+                              onClick={() => {
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(resetUserTaskCycle(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: 'Reset Task Cycle & Approve Next 25 Tasks?',
+                                  description: `Are you sure you want to reset completed task progress to 0/25 and advance ${user.username} (UID: ${user.uid}) to Cycle #${(user.cycleNumber || 1) + 1}? Click Confirm to proceed.`,
+                                  confirmLabel: 'Confirm Approve 25 Tasks',
+                                  variant: 'warning',
+                                  onConfirm: () => {
+                                    notify(resetUserTaskCycle(user.id));
+                                  },
+                                });
+                              }}
                               title="Reset Task Cycle & Approve Next 25 Tasks"
-                              className={`px-2 py-1 text-xs font-bold rounded transition-all flex items-center gap-1 ${
+                              className={`px-2 py-1 text-xs font-bold rounded transition-all flex items-center gap-1 cursor-pointer ${
                                 (user.currentCycleTasks || 0) >= 25 || !user.cycleApprovedByAdmin
                                   ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-md ring-2 ring-amber-400/50'
                                   : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30'
@@ -1122,9 +1340,23 @@ export const AdminPanel: React.FC = () => {
 
                             {/* Reset to Fresh Cycle 1 Button */}
                             <button
-                              onClick={() => notify(resetUserToFreshCycle(user.id))}
+                              onClick={() => {
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(resetUserToFreshCycle(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: 'Reset Account to Fresh Cycle 1?',
+                                  description: `Are you sure you want to reset ${user.username} (UID: ${user.uid}) back to Fresh Cycle 1 (0/25 progress and cleared pending order)? Click Confirm to proceed.`,
+                                  confirmLabel: 'Confirm Fresh Cycle 1',
+                                  variant: 'danger',
+                                  onConfirm: () => {
+                                    notify(resetUserToFreshCycle(user.id));
+                                  },
+                                });
+                              }}
                               title="Reset user to Fresh Cycle 1 (Progress 0, 1 Combo planned for Task #14 or #15)"
-                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-cyan-500/20"
+                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-cyan-500/20 cursor-pointer"
                             >
                               <RotateCcw className="w-3 h-3 text-cyan-400" />
                               <span className="whitespace-nowrap">Fresh Cycle 1</span>
@@ -1132,9 +1364,23 @@ export const AdminPanel: React.FC = () => {
 
                             {/* VIP Toggle (5 Combo Orders schedule) */}
                             <button
-                              onClick={() => notify(toggleUserVip(user.id))}
+                              onClick={() => {
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(toggleUserVip(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: user.isVipAccount ? 'Disable VIP 5-Combo Mode?' : 'Enable VIP 5-Combo Mode?',
+                                  description: `Are you sure you want to ${user.isVipAccount ? 'disable VIP 5-Combo mode' : 'mark account as VIP (5 Combos)'} for ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
+                                  confirmLabel: 'Confirm',
+                                  variant: 'warning',
+                                  onConfirm: () => {
+                                    notify(toggleUserVip(user.id));
+                                  },
+                                });
+                              }}
                               title={user.isVipAccount ? 'Disable VIP Account' : 'Mark as VIP Account (Enforces 5 Combos schedule)'}
-                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 ${
+                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer ${
                                 user.isVipAccount
                                   ? 'bg-purple-900/80 text-purple-200 border border-purple-500 hover:bg-purple-800'
                                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -1146,9 +1392,23 @@ export const AdminPanel: React.FC = () => {
 
                             {/* Account Lock Toggle (Tasks work, Withdrawal blocked) */}
                             <button
-                              onClick={() => notify(toggleUserLock(user.id))}
+                              onClick={() => {
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(toggleUserLock(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: user.isLockedAccount ? 'Unlock Account Withdrawal?' : 'Lock Account Withdrawal?',
+                                  description: `Are you sure you want to ${user.isLockedAccount ? 'unlock withdrawals' : 'lock withdrawals (tasks work, withdrawals blocked)'} for ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
+                                  confirmLabel: 'Confirm',
+                                  variant: user.isLockedAccount ? 'success' : 'warning',
+                                  onConfirm: () => {
+                                    notify(toggleUserLock(user.id));
+                                  },
+                                });
+                              }}
                               title={user.isLockedAccount ? 'Unlock Account Withdrawal' : 'Lock Account Withdrawal (Tasks work, WD strictly blocked)'}
-                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 ${
+                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer ${
                                 user.isLockedAccount
                                   ? 'bg-rose-900/80 text-rose-200 border border-rose-500 hover:bg-rose-800'
                                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -1172,7 +1432,7 @@ export const AdminPanel: React.FC = () => {
                                 setNewComboCommPct('20');
                               }}
                               title="Configure Custom Combo Triggers & Percentages"
-                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-amber-500/20"
+                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-amber-500/20 cursor-pointer"
                             >
                               <Layers className="w-3 h-3 text-amber-400" />
                               <span>Custom Combos</span>
@@ -1181,9 +1441,23 @@ export const AdminPanel: React.FC = () => {
                             {/* Clear Tax Button if balance >= 50k and not paid */}
                             {user.balance >= 50000 && !user.taxPaid && (
                               <button
-                                onClick={() => notify(clearUserTax(user.id))}
+                                onClick={() => {
+                                  if (!hasPermission('can_manage_users')) {
+                                    notify(clearUserTax(user.id));
+                                    return;
+                                  }
+                                  requestConfirmation({
+                                    title: 'Clear 25% Tax Requirement?',
+                                    description: `Are you sure you want to mark the 25% tax requirement as cleared for ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
+                                    confirmLabel: 'Confirm Clear Tax',
+                                    variant: 'success',
+                                    onConfirm: () => {
+                                      notify(clearUserTax(user.id));
+                                    },
+                                  });
+                                }}
                                 title="Clear / Approve Recurring 25% Tax Requirement for Current Withdrawal"
-                                className="px-2 py-1 bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-emerald-500"
+                                className="px-2 py-1 bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-emerald-500 cursor-pointer"
                               >
                                 <ShieldCheck className="w-3 h-3 text-emerald-400" />
                                 <span>Clear Tax</span>
@@ -1203,7 +1477,7 @@ export const AdminPanel: React.FC = () => {
                                 setAdjustReason('Manual admin adjustment');
                               }}
                               title="Modify USDT balance"
-                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded transition-colors flex items-center gap-1"
+                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded transition-colors flex items-center gap-1 cursor-pointer"
                             >
                               <DollarSign className="w-3 h-3" />
                               <span>Adjust</span>
@@ -1240,16 +1514,30 @@ export const AdminPanel: React.FC = () => {
                                 setNewPassword('');
                               }}
                               title="Reset Password"
-                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded transition-colors"
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded transition-colors cursor-pointer"
                             >
                               <Key className="w-3.5 h-3.5" />
                             </button>
 
                             {/* Freeze / Unfreeze */}
                             <button
-                              onClick={() => notify(toggleUserStatus(user.id))}
+                              onClick={() => {
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(toggleUserStatus(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: user.status === 'active' ? 'Freeze User Account?' : 'Unfreeze User Account?',
+                                  description: `Are you sure you want to ${user.status === 'active' ? 'freeze' : 'unfreeze'} account ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
+                                  confirmLabel: user.status === 'active' ? 'Confirm Freeze' : 'Confirm Unfreeze',
+                                  variant: user.status === 'active' ? 'danger' : 'success',
+                                  onConfirm: () => {
+                                    notify(toggleUserStatus(user.id));
+                                  },
+                                });
+                              }}
                               title={user.status === 'active' ? 'Freeze User' : 'Unfreeze User'}
-                              className={`p-1.5 rounded transition-colors ${
+                              className={`p-1.5 rounded transition-colors cursor-pointer ${
                                 user.status === 'active'
                                   ? 'bg-rose-950 text-rose-300 hover:bg-rose-900 border border-rose-800/60'
                                   : 'bg-emerald-950 text-emerald-300 hover:bg-emerald-900 border border-emerald-800/60'
@@ -1824,9 +2112,17 @@ export const AdminPanel: React.FC = () => {
                             notify({ success: false, message: 'At least one address must remain in the pool' });
                             return;
                           }
-                          const updated = pool.filter((a) => a !== addr);
-                          updateSystemConfig({ trc20AddressPool: updated, trc20DepositAddress: updated[0] });
-                          notify({ success: true, message: 'Removed address from pool' });
+                          requestConfirmation({
+                            title: 'Remove TRC-20 Address from Pool?',
+                            description: `Are you sure you want to remove ${addr} from the active rotation pool? Click Confirm to proceed.`,
+                            confirmLabel: 'Confirm Delete',
+                            variant: 'danger',
+                            onConfirm: () => {
+                              const updated = pool.filter((a) => a !== addr);
+                              updateSystemConfig({ trc20AddressPool: updated, trc20DepositAddress: updated[0] });
+                              notify({ success: true, message: 'Removed address from pool' });
+                            },
+                          });
                         }}
                         disabled={!hasPermission('can_modify_wallet')}
                         className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-40 cursor-pointer"
@@ -1992,6 +2288,29 @@ export const AdminPanel: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* 9. CUSTOMER SERVICE LIVE CHAT TAB */}
+        {/* ------------------------------------------------------------- */}
+        {activeTab === 'support' && (
+          <AdminSupportChat
+            users={users}
+            adminName={currentAdmin.name}
+            onUnreadCountChange={setSupportUnreadCount}
+          />
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* 10. REAL-TIME USER MONITORING TAB */}
+        {/* ------------------------------------------------------------- */}
+        {activeTab === 'monitoring' && (
+          <AdminUserMonitoring
+            users={users}
+            orders={orders}
+            onOnlineCountChange={setOnlineUsersCount}
+            onSelectUserForRecovery={(u) => setRecoveryModalUser(u)}
+          />
+        )}
       </main>
 
       {/* ------------------------------------------------------------- */}
@@ -2054,12 +2373,20 @@ export const AdminPanel: React.FC = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={async () => {
-                      const res = await recalculateUserBalanceFromDeposits(balanceModalUser.id);
-                      notify(res);
-                      setBalanceModalUser(null);
+                    onClick={() => {
+                      requestConfirmation({
+                        title: 'Recalculate User Balance?',
+                        description: `Are you sure you want to recalculate ${balanceModalUser.username}'s balance from approved deposits (${approvedSum.toFixed(2)}) + commissions (${earnedCommSum.toFixed(2)}) - withdrawals (${wdSum.toFixed(2)}) ≈ ${netTotal.toFixed(2)} USDT? Click Confirm to proceed.`,
+                        confirmLabel: 'Confirm Recalculate',
+                        variant: 'warning',
+                        onConfirm: async () => {
+                          const res = await recalculateUserBalanceFromDeposits(balanceModalUser.id);
+                          notify(res);
+                          setBalanceModalUser(null);
+                        },
+                      });
                     }}
-                    className="w-full py-1.5 bg-emerald-700/80 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
+                    className="w-full py-1.5 bg-emerald-700/80 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors shadow-xs cursor-pointer"
                   >
                     Recalculate Balance (Deposits + Commissions - Withdrawals ≈ {netTotal.toFixed(2)} USDT)
                   </button>
@@ -2152,16 +2479,21 @@ export const AdminPanel: React.FC = () => {
                         return;
                       }
                     }
-                    const res = adjustUserBalance(
-                      balanceModalUser.id,
-                      amt,
-                      adjustType,
-                      adjustReason || (adjustType === 'set' ? 'Balance reset to exact amount' : 'Manual adjustment')
-                    );
-                    notify(res);
-                    if (res.success) setBalanceModalUser(null);
+                    const reason =
+                      adjustReason || (adjustType === 'set' ? 'Balance reset to exact amount' : 'Manual adjustment');
+                    requestConfirmation({
+                      title: 'Confirm Balance Adjustment?',
+                      description: `Are you sure you want to ${adjustType === 'credit' ? `credit +${amt.toFixed(2)}` : adjustType === 'debit' ? `debit -${amt.toFixed(2)}` : `set balance to ${amt.toFixed(2)}`} USDT for ${balanceModalUser.username} (UID: ${balanceModalUser.uid})? Click Confirm to proceed.`,
+                      confirmLabel: 'Confirm Adjustment',
+                      variant: adjustType === 'debit' ? 'danger' : 'warning',
+                      onConfirm: () => {
+                        const res = adjustUserBalance(balanceModalUser.id, amt, adjustType, reason);
+                        notify(res);
+                        if (res.success) setBalanceModalUser(null);
+                      },
+                    });
                   }}
-                  className="flex-1 py-2 bg-red-700 hover:bg-red-600 text-white text-xs font-bold rounded-lg"
+                  className="flex-1 py-2 bg-red-700 hover:bg-red-600 text-white text-xs font-bold rounded-lg cursor-pointer"
                 >
                   Confirm Adjustment
                 </button>
@@ -2675,11 +3007,19 @@ export const AdminPanel: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  const res = setCustomUserCombos(comboModalUser.id, customRulesList);
-                  notify(res);
-                  if (res.success) setComboModalUser(null);
+                  requestConfirmation({
+                    title: 'Save Custom Combo Configuration?',
+                    description: `Are you sure you want to apply ${customRulesList.length} custom combo trigger rule(s) to ${comboModalUser.username} (UID: ${comboModalUser.uid})? Click Confirm to proceed.`,
+                    confirmLabel: 'Confirm Save Combos',
+                    variant: 'warning',
+                    onConfirm: () => {
+                      const res = setCustomUserCombos(comboModalUser.id, customRulesList);
+                      notify(res);
+                      if (res.success) setComboModalUser(null);
+                    },
+                  });
                 }}
-                className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black rounded-lg text-xs transition-colors"
+                className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black rounded-lg text-xs transition-colors cursor-pointer"
               >
                 Save Configuration
               </button>
@@ -3080,9 +3420,17 @@ export const AdminPanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    const res = resetUserWallet(walletModalUser.id);
-                    notify(res);
-                    if (res.success) setWalletModalUser(null);
+                    requestConfirmation({
+                      title: 'Reset & Unlock Bound Wallet?',
+                      description: `Are you sure you want to reset and unlock the bound TRC-20 wallet for ${walletModalUser.username} (UID: ${walletModalUser.uid})? Click Confirm to proceed.`,
+                      confirmLabel: 'Confirm Reset Wallet',
+                      variant: 'danger',
+                      onConfirm: () => {
+                        const res = resetUserWallet(walletModalUser.id);
+                        notify(res);
+                        if (res.success) setWalletModalUser(null);
+                      },
+                    });
                   }}
                   className="w-full mt-1 py-2 px-3 bg-rose-900/80 hover:bg-rose-800 text-rose-100 text-xs font-bold rounded-xl transition-colors border border-rose-700 flex items-center justify-center gap-1.5 cursor-pointer"
                 >
@@ -3369,6 +3717,97 @@ export const AdminPanel: React.FC = () => {
                   Update Sub-Admin Password
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 8: Comprehensive User State & Order Recovery Editor */}
+      {/* ------------------------------------------------------------- */}
+      {recoveryModalUser && (
+        <AdminUserRecoveryModal
+          user={users.find((u) => u.id === recoveryModalUser.id) || recoveryModalUser}
+          orders={orders}
+          onClose={() => setRecoveryModalUser(null)}
+          onSaveRecovery={async (params) => {
+            const res = await recoverUserStateAndOrder(params);
+            notify(res);
+            return res;
+          }}
+          onRequestConfirm={requestConfirmation}
+        />
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 9: Mandatory Confirmation Dialog for Critical Admin Actions */}
+      {/* ------------------------------------------------------------- */}
+      {pendingConfirmAction && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-xs p-4"
+          onClick={() => {
+            if (!isConfirmExecuting) setPendingConfirmAction(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md bg-slate-950 border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                  pendingConfirmAction.variant === 'danger'
+                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                    : pendingConfirmAction.variant === 'success'
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                    : 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                }`}
+              >
+                {pendingConfirmAction.variant === 'success' ? (
+                  <CheckCircle2 className="w-5 h-5" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-extrabold text-white">{pendingConfirmAction.title}</h3>
+                <p className="text-xs text-slate-300 mt-1.5 leading-relaxed">
+                  {pendingConfirmAction.description}
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-slate-800/80">
+              <button
+                type="button"
+                disabled={isConfirmExecuting}
+                onClick={() => setPendingConfirmAction(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isConfirmExecuting}
+                onClick={async () => {
+                  if (isConfirmExecuting) return;
+                  setIsConfirmExecuting(true);
+                  try {
+                    await pendingConfirmAction.onConfirm();
+                    setPendingConfirmAction(null);
+                  } finally {
+                    setIsConfirmExecuting(false);
+                  }
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-colors disabled:opacity-60 cursor-pointer ${
+                  pendingConfirmAction.variant === 'danger'
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                    : pendingConfirmAction.variant === 'success'
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                }`}
+              >
+                {isConfirmExecuting ? 'Executing...' : pendingConfirmAction.confirmLabel || 'Confirm'}
+              </button>
             </div>
           </div>
         </div>

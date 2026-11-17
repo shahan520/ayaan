@@ -1,56 +1,150 @@
-import { ArrowLeft, ChevronRight, HelpCircle, MessageSquare, Send, User } from 'lucide-react';
-import React, { useState } from 'react';
+import { CheckCheck, ChevronRight, HelpCircle, MessageSquare, Send } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
+import { ChatMessage } from '../../../types';
+import {
+  connectChatWebSocket,
+  fetchChatMessages,
+  markChatRead,
+  sendChatMessage,
+} from '../../../utils/chatClient';
+
+const formatMessageTime = (iso?: string): string => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
 
 export const ServiceTab: React.FC = () => {
   const { currentUser, systemConfig } = useApp();
   const [activeDrawer, setActiveDrawer] = useState<'chat' | 'help' | null>(null);
 
-  // Live chat messages state
-  const [messages, setMessages] = useState<Array<{ sender: 'user' | 'agent'; text: string; time: string }>>([
-    {
-      sender: 'agent',
-      text: `Hello ${currentUser?.username || 'Trader'}! Welcome to QuDaizi Official Customer Service. How may I assist you with your TRC-20 deposit, withdrawal, or VIP tasks today?`,
-      time: '12:00',
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
+  const [isLoadingChat, setIsLoadingChat] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputText.trim()) return;
+  const activeDrawerRef = useRef(activeDrawer);
+  activeDrawerRef.current = activeDrawer;
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    const userMsg = inputText.trim();
-    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    setMessages((prev) => [...prev, { sender: 'user', text: userMsg, time: nowTime }]);
-    setInputText('');
-
-    // Simulated authentic support replies
+  const scrollToBottom = useCallback(() => {
     setTimeout(() => {
-      let reply = "Thank you for reaching out. Your request has been queued. Our financial operations team will review your account immediately.";
-      const lower = userMsg.toLowerCase();
-      if (lower.includes('deposit') || lower.includes('recharge')) {
-        reply = `For deposits: please send USDT via TRON TRC-20 only to our official address: ${systemConfig.trc20DepositAddress}. Once sent, submit your TXID for instant credit!`;
-      } else if (lower.includes('wallet') || lower.includes('address') || lower.includes('reset')) {
-        reply = "For security and anti-tamper protection, receiving TRC-20 wallet addresses are locked after initial setup. Our Administrators can manually reset or update your bound address in the Admin Panel if an error was made.";
-      } else if (lower.includes('withdraw') || lower.includes('password')) {
-        reply = "For withdrawals: ensure your electronic wallet is bound and you have set your withdrawal password. Processing time is usually 10-30 minutes.";
-      } else if (lower.includes('code') || lower.includes('invite')) {
-        reply = "Each member can invite friends through their 6-digit invitation code found in the 'Mine' or 'Invitation' section. You earn up to 3 tiers of order commissions!";
-      } else if (lower.includes('vip') || lower.includes('order')) {
-        reply = "VIP 1 (Amazon) requires 20-498 USDT (4% commission). VIP 2 (Alibaba) requires 499-899 USDT (8%). VIP 3 (Aliexpress) requires >=899 USDT (12%).";
-      }
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 50);
+  }, []);
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: 'agent',
-          text: reply,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        },
-      ]);
-    }, 1000);
+  const loadHistory = useCallback(async () => {
+    if (!currentUser?.uid) return;
+    setIsLoadingChat(true);
+    try {
+      const history = await fetchChatMessages(currentUser.uid);
+      setChatError(null);
+      setMessages(history);
+      if (activeDrawerRef.current === 'chat') {
+        const hasUnread = history.some((m) => m.sender === 'admin' && !m.readByUser);
+        if (hasUnread) {
+          await markChatRead(currentUser.uid, 'user');
+          setMessages((prev) =>
+            prev.map((m) => (m.sender === 'admin' ? { ...m, readByUser: true } : m))
+          );
+        }
+        scrollToBottom();
+      }
+    } catch (err) {
+      if (activeDrawerRef.current === 'chat') {
+        setChatError(
+          err instanceof Error
+            ? err.message
+            : 'Unable to load chat history right now. Please try again.'
+        );
+      }
+    } finally {
+      setIsLoadingChat(false);
+    }
+  }, [currentUser?.uid, scrollToBottom]);
+
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+    loadHistory();
+
+    const disconnect = connectChatWebSocket({
+      role: 'user',
+      userUid: currentUser.uid,
+      onMessage: (msg) => {
+        if (String(msg.userUid) !== String(currentUser.uid)) return;
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+
+        if (activeDrawerRef.current === 'chat') {
+          if (msg.sender === 'admin') {
+            markChatRead(currentUser.uid, 'user');
+            setMessages((prev) =>
+              prev.map((m) => (m.id === msg.id ? { ...m, readByUser: true } : m))
+            );
+          }
+          scrollToBottom();
+        }
+      },
+      onRead: (uid, reader) => {
+        if (String(uid) !== String(currentUser.uid)) return;
+        if (reader === 'admin') {
+          setMessages((prev) =>
+            prev.map((m) => (m.sender === 'user' ? { ...m, readByAdmin: true } : m))
+          );
+        }
+      },
+      onReconnect: () => {
+        loadHistory();
+      },
+    });
+
+    return () => disconnect();
+  }, [currentUser?.uid, loadHistory, scrollToBottom]);
+
+  useEffect(() => {
+    if (activeDrawer === 'chat' && currentUser?.uid) {
+      loadHistory();
+    }
+  }, [activeDrawer, currentUser?.uid, loadHistory]);
+
+  const unreadAdminCount = useMemo(
+    () => messages.filter((m) => m.sender === 'admin' && !m.readByUser).length,
+    [messages]
+  );
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = inputText.trim();
+    if (!text || !currentUser || isSending) return;
+
+    setChatError(null);
+    setIsSending(true);
+    const clientMsgId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    try {
+      const saved = await sendChatMessage({
+        id: clientMsgId,
+        userUid: currentUser.uid,
+        username: currentUser.username,
+        sender: 'user',
+        text,
+      });
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === saved.id)) return prev;
+        return [...prev, saved];
+      });
+      setInputText('');
+      scrollToBottom();
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Unable to send message. Please try again.');
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const faqItems = [
@@ -102,10 +196,22 @@ export const ServiceTab: React.FC = () => {
           className="w-full bg-white p-4 md:p-5 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between hover:bg-slate-50 transition-colors group cursor-pointer"
         >
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-red-50 text-red-700 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-full bg-red-50 text-red-700 flex items-center justify-center relative">
               <MessageSquare className="w-5 h-5" />
+              {unreadAdminCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
+                  {unreadAdminCount}
+                </span>
+              )}
             </div>
-            <span className="font-semibold text-slate-800 text-sm">Online customer service</span>
+            <div className="text-left">
+              <span className="font-semibold text-slate-800 text-sm block">Online customer service</span>
+              {unreadAdminCount > 0 && (
+                <span className="text-[11px] font-medium text-red-600">
+                  {unreadAdminCount} new {unreadAdminCount === 1 ? 'reply' : 'replies'} from support
+                </span>
+              )}
+            </div>
           </div>
           <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-slate-700 transition-colors" />
         </button>
@@ -145,7 +251,7 @@ export const ServiceTab: React.FC = () => {
               </div>
               <button
                 onClick={() => setActiveDrawer(null)}
-                className="text-white/80 hover:text-white text-xs px-2 py-1 rounded bg-white/10"
+                className="text-white/80 hover:text-white text-xs px-2 py-1 rounded bg-white/10 cursor-pointer"
               >
                 Close
               </button>
@@ -153,15 +259,35 @@ export const ServiceTab: React.FC = () => {
 
             {/* Chat Body */}
             <div className="flex-1 p-3.5 overflow-y-auto space-y-3 bg-slate-50 text-xs">
-              {messages.map((m, idx) => (
+              {/* Persistent Greeting Card */}
+              <div className="flex flex-col items-start">
+                <div className="max-w-[85%] p-2.5 rounded-xl bg-white text-slate-800 border border-slate-200 rounded-bl-none shadow-xs">
+                  Hello {currentUser?.username || 'Trader'}! Welcome to QuDaizi Official Customer
+                  Service. Send a message below and an administrator will respond directly here.
+                </div>
+                <span className="text-[9px] text-slate-400 mt-1 px-1">Official Support</span>
+              </div>
+
+              {isLoadingChat && messages.length === 0 && (
+                <div className="text-center text-slate-400 py-4 text-[11px]">
+                  Loading conversation history...
+                </div>
+              )}
+
+              {messages.map((m) => (
                 <div
-                  key={idx}
+                  key={m.id}
                   className={`flex flex-col ${
                     m.sender === 'user' ? 'items-end' : 'items-start'
                   }`}
                 >
+                  {m.sender === 'admin' && (
+                    <span className="text-[10px] font-semibold text-slate-500 mb-0.5 px-1">
+                      {m.adminName || 'Customer Support'}
+                    </span>
+                  )}
                   <div
-                    className={`max-w-[82%] p-2.5 rounded-xl ${
+                    className={`max-w-[82%] p-2.5 rounded-xl whitespace-pre-wrap break-words ${
                       m.sender === 'user'
                         ? 'bg-[#8b0000] text-white rounded-br-none'
                         : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none shadow-xs'
@@ -169,10 +295,34 @@ export const ServiceTab: React.FC = () => {
                   >
                     {m.text}
                   </div>
-                  <span className="text-[9px] text-slate-400 mt-1 px-1">{m.time}</span>
+                  <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1 px-1">
+                    <span>{formatMessageTime(m.timestamp)}</span>
+                    {m.sender === 'user' && (
+                      <CheckCheck
+                        className={`w-3 h-3 ${
+                          m.readByAdmin ? 'text-emerald-600' : 'text-slate-300'
+                        }`}
+                      />
+                    )}
+                  </div>
                 </div>
               ))}
+              <div ref={messagesEndRef} />
             </div>
+
+            {chatError && (
+              <div className="px-3 py-2 bg-red-50 border-t border-red-200 text-red-700 text-[11px] font-medium flex items-center justify-between gap-2">
+                <span>{chatError}</span>
+                <button
+                  type="button"
+                  onClick={() => setChatError(null)}
+                  className="text-red-500 hover:text-red-800 font-bold px-1 cursor-pointer"
+                  aria-label="Dismiss error"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* Chat Input */}
             <form
@@ -184,11 +334,13 @@ export const ServiceTab: React.FC = () => {
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder="Ask about deposits, VIP tasks, or withdrawals..."
-                className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-red-700"
+                disabled={!currentUser || isSending}
+                className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-red-700 disabled:opacity-60"
               />
               <button
                 type="submit"
-                className="p-2 bg-[#8b0000] text-white rounded-lg hover:bg-red-900 transition-colors"
+                disabled={!currentUser || !inputText.trim() || isSending}
+                className="p-2 bg-[#8b0000] text-white rounded-lg hover:bg-red-900 transition-colors disabled:opacity-50 cursor-pointer"
               >
                 <Send className="w-4 h-4" />
               </button>
