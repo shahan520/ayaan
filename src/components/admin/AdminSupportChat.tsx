@@ -2,11 +2,14 @@ import {
   CheckCheck,
   Clock,
   Headphones,
+  Loader2,
   MessageSquare,
+  Paperclip,
   RefreshCw,
   Search,
   Send,
   User as UserIcon,
+  X,
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatMessage, ChatThreadSummary, User } from '../../types';
@@ -15,7 +18,9 @@ import {
   fetchChatMessages,
   fetchChatThreads,
   markChatRead,
+  resolveChatMediaUrl,
   sendChatMessage,
+  uploadChatImage,
 } from '../../utils/chatClient';
 
 interface Props {
@@ -57,11 +62,18 @@ export const AdminSupportChat: React.FC<Props> = ({
   const [isLoadingThreads, setIsLoadingThreads] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [pendingAttachment, setPendingAttachment] = useState<{
+    imageUrl: string;
+    fileName: string;
+  } | null>(null);
+  const [previewLightboxUrl, setPreviewLightboxUrl] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
 
   const selectedUidRef = useRef<string | null>(null);
   selectedUidRef.current = selectedUserUid;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -165,13 +177,20 @@ export const AdminSupportChat: React.FC<Props> = ({
           const shouldIncrementUnread =
             incoming.sender === 'user' && !incoming.readByAdmin && !isCurrentlyViewing;
 
+          const previewText =
+            incoming.text && incoming.text.trim()
+              ? incoming.text.trim()
+              : incoming.imageUrl
+              ? '[Photo attachment]'
+              : '';
+
           const updatedThread: ChatThreadSummary = existing
             ? {
                 ...existing,
                 username: userObj?.username || incoming.username || existing.username,
                 vipLevel: userObj?.vipLevel ?? existing.vipLevel,
                 balance: typeof userObj?.balance === 'number' ? userObj.balance : existing.balance,
-                lastMessage: incoming.text,
+                lastMessage: previewText,
                 lastSender: incoming.sender,
                 lastTimestamp: incoming.timestamp,
                 unreadCount: isCurrentlyViewing
@@ -185,7 +204,7 @@ export const AdminSupportChat: React.FC<Props> = ({
                 vipLevel: userObj?.vipLevel ?? 0,
                 avatarUrl: userObj?.avatarUrl || '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
                 balance: typeof userObj?.balance === 'number' ? userObj.balance : 0,
-                lastMessage: incoming.text,
+                lastMessage: previewText,
                 lastSender: incoming.sender,
                 lastTimestamp: incoming.timestamp,
                 unreadCount: shouldIncrementUnread ? 1 : 0,
@@ -251,11 +270,33 @@ export const AdminSupportChat: React.FC<Props> = ({
     [users, selectedUserUid]
   );
 
+  const handleAdminFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !selectedUserUid) return;
+
+    setChatError(null);
+    setIsUploadingImage(true);
+    try {
+      const uploaded = await uploadChatImage(file);
+      setPendingAttachment(uploaded);
+    } catch (err) {
+      setChatError(
+        err instanceof Error ? err.message : 'Unable to upload image. Please try again.'
+      );
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
   const handleSendReply = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanText = replyText.trim();
-    if (!cleanText || !selectedUserUid || isSending) return;
+    if ((!cleanText && !pendingAttachment) || !selectedUserUid || isSending || isUploadingImage) {
+      return;
+    }
 
+    const attachmentSnapshot = pendingAttachment;
     const clientMsgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const targetUsername =
       selectedUserObj?.username || selectedThread?.username || `User_${selectedUserUid}`;
@@ -267,6 +308,8 @@ export const AdminSupportChat: React.FC<Props> = ({
       sender: 'admin',
       adminName,
       text: cleanText,
+      imageUrl: attachmentSnapshot?.imageUrl,
+      imageName: attachmentSnapshot?.fileName,
       timestamp: new Date().toISOString(),
       readByAdmin: true,
       readByUser: false,
@@ -275,6 +318,7 @@ export const AdminSupportChat: React.FC<Props> = ({
     setChatError(null);
     setMessages((prev) => [...prev, optimisticMsg]);
     setReplyText('');
+    setPendingAttachment(null);
     scrollToBottom();
     setIsSending(true);
 
@@ -286,7 +330,16 @@ export const AdminSupportChat: React.FC<Props> = ({
         sender: 'admin',
         adminName,
         text: cleanText,
+        imageUrl: attachmentSnapshot?.imageUrl,
+        imageName: attachmentSnapshot?.fileName,
       });
+
+      const savedPreview =
+        saved.text && saved.text.trim()
+          ? saved.text.trim()
+          : saved.imageUrl
+          ? '[Photo attachment]'
+          : '';
 
       setMessages((prev) => prev.map((m) => (m.id === clientMsgId ? saved : m)));
       setThreads((prev) => {
@@ -294,7 +347,7 @@ export const AdminSupportChat: React.FC<Props> = ({
         const updated: ChatThreadSummary = existing
           ? {
               ...existing,
-              lastMessage: saved.text,
+              lastMessage: savedPreview,
               lastSender: 'admin',
               lastTimestamp: saved.timestamp,
               unreadCount: 0,
@@ -304,7 +357,7 @@ export const AdminSupportChat: React.FC<Props> = ({
               username: targetUsername,
               vipLevel: selectedUserObj?.vipLevel ?? 0,
               balance: selectedUserObj?.balance ?? 0,
-              lastMessage: saved.text,
+              lastMessage: savedPreview,
               lastSender: 'admin',
               lastTimestamp: saved.timestamp,
               unreadCount: 0,
@@ -316,6 +369,7 @@ export const AdminSupportChat: React.FC<Props> = ({
       // Rollback optimistic message on error and show friendly error banner
       setMessages((prev) => prev.filter((m) => m.id !== clientMsgId));
       setReplyText(cleanText);
+      if (attachmentSnapshot) setPendingAttachment(attachmentSnapshot);
       setChatError(
         err instanceof Error
           ? err.message
@@ -583,7 +637,21 @@ export const AdminSupportChat: React.FC<Props> = ({
                               : 'bg-slate-800 text-slate-100 rounded-bl-xs border border-slate-700'
                           }`}
                         >
-                          {msg.text}
+                          {msg.imageUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewLightboxUrl(resolveChatMediaUrl(msg.imageUrl))}
+                              className="block rounded-lg overflow-hidden border border-white/15 hover:opacity-95 transition-opacity cursor-pointer"
+                              title="Click to view full image"
+                            >
+                              <img
+                                src={resolveChatMediaUrl(msg.imageUrl)}
+                                alt={msg.imageName || 'Chat attachment'}
+                                className="max-w-full max-h-60 object-contain bg-black/20"
+                              />
+                            </button>
+                          )}
+                          {msg.text && <div className={msg.imageUrl ? 'mt-1.5' : ''}>{msg.text}</div>}
                         </div>
                         {isAdmin && (
                           <div className="flex items-center gap-1 mt-1 px-1 text-[10px] text-slate-500">
@@ -621,11 +689,73 @@ export const AdminSupportChat: React.FC<Props> = ({
                 </div>
               )}
 
+              {/* Pending Attachment Preview Bar */}
+              {(pendingAttachment || isUploadingImage) && (
+                <div className="px-3.5 py-2.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between gap-2.5">
+                  {isUploadingImage ? (
+                    <div className="flex items-center gap-2 text-xs text-slate-300 font-medium">
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                      <span>Uploading photo attachment...</span>
+                    </div>
+                  ) : (
+                    pendingAttachment && (
+                      <>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <img
+                            src={resolveChatMediaUrl(pendingAttachment.imageUrl)}
+                            alt={pendingAttachment.fileName}
+                            className="w-11 h-11 rounded-lg object-cover border border-slate-700 shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-white truncate">
+                              {pendingAttachment.fileName}
+                            </p>
+                            <p className="text-[11px] text-emerald-400 font-medium">
+                              Photo attached · Click Send to deliver
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPendingAttachment(null)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 cursor-pointer"
+                          title="Remove attachment"
+                          aria-label="Remove attachment"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </>
+                    )
+                  )}
+                </div>
+              )}
+
               {/* Admin Reply Input Box */}
               <form
                 onSubmit={handleSendReply}
                 className="p-3.5 border-t border-slate-800 bg-slate-950 flex items-center gap-2.5"
               >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif,image/*"
+                  onChange={handleAdminFileSelected}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isSending || isUploadingImage}
+                  title="Attach photo or screenshot (JPEG, PNG)"
+                  aria-label="Attach photo or screenshot"
+                  className="p-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 rounded-xl transition-colors disabled:opacity-50 cursor-pointer shrink-0"
+                >
+                  {isUploadingImage ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                  ) : (
+                    <Paperclip className="w-4 h-4" />
+                  )}
+                </button>
                 <input
                   type="text"
                   value={replyText}
@@ -635,7 +765,7 @@ export const AdminSupportChat: React.FC<Props> = ({
                 />
                 <button
                   type="submit"
-                  disabled={!replyText.trim() || isSending}
+                  disabled={(!replyText.trim() && !pendingAttachment) || isSending || isUploadingImage}
                   className="px-4 py-2.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
                 >
                   <Send className="w-3.5 h-3.5" />
@@ -646,6 +776,33 @@ export const AdminSupportChat: React.FC<Props> = ({
           )}
         </div>
       </div>
+
+      {/* FULLSCREEN IMAGE LIGHTBOX */}
+      {previewLightboxUrl && (
+        <div
+          onClick={() => setPreviewLightboxUrl(null)}
+          className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative max-w-4xl max-h-[90vh] flex flex-col items-center gap-3"
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewLightboxUrl(null)}
+              className="self-end p-2 rounded-full bg-white/15 hover:bg-white/25 text-white cursor-pointer"
+              aria-label="Close image preview"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <img
+              src={previewLightboxUrl}
+              alt="Full view"
+              className="max-w-full max-h-[80vh] rounded-xl shadow-2xl object-contain bg-black"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

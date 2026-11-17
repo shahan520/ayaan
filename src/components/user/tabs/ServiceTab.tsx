@@ -1,4 +1,4 @@
-import { CheckCheck, ChevronRight, HelpCircle, MessageSquare, Send } from 'lucide-react';
+import { CheckCheck, ChevronRight, HelpCircle, Loader2, MessageSquare, Paperclip, Send, X } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { ChatMessage } from '../../../types';
@@ -6,7 +6,9 @@ import {
   connectChatWebSocket,
   fetchChatMessages,
   markChatRead,
+  resolveChatMediaUrl,
   sendChatMessage,
+  uploadChatImage,
 } from '../../../utils/chatClient';
 
 const formatMessageTime = (iso?: string): string => {
@@ -24,11 +26,18 @@ export const ServiceTab: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [pendingAttachment, setPendingAttachment] = useState<{
+    imageUrl: string;
+    fileName: string;
+  } | null>(null);
+  const [previewLightboxUrl, setPreviewLightboxUrl] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
 
   const activeDrawerRef = useRef(activeDrawer);
   activeDrawerRef.current = activeDrawer;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
@@ -117,10 +126,29 @@ export const ServiceTab: React.FC = () => {
     [messages]
   );
 
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !currentUser) return;
+
+    setChatError(null);
+    setIsUploadingImage(true);
+    try {
+      const uploaded = await uploadChatImage(file);
+      setPendingAttachment(uploaded);
+    } catch (err) {
+      setChatError(
+        err instanceof Error ? err.message : 'Unable to upload image. Please try again.'
+      );
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = inputText.trim();
-    if (!text || !currentUser || isSending) return;
+    if ((!text && !pendingAttachment) || !currentUser || isSending || isUploadingImage) return;
 
     setChatError(null);
     setIsSending(true);
@@ -133,12 +161,15 @@ export const ServiceTab: React.FC = () => {
         username: currentUser.username,
         sender: 'user',
         text,
+        imageUrl: pendingAttachment?.imageUrl,
+        imageName: pendingAttachment?.fileName,
       });
       setMessages((prev) => {
         if (prev.some((m) => m.id === saved.id)) return prev;
         return [...prev, saved];
       });
       setInputText('');
+      setPendingAttachment(null);
       scrollToBottom();
     } catch (err) {
       setChatError(err instanceof Error ? err.message : 'Unable to send message. Please try again.');
@@ -293,7 +324,21 @@ export const ServiceTab: React.FC = () => {
                         : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none shadow-xs'
                     }`}
                   >
-                    {m.text}
+                    {m.imageUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewLightboxUrl(resolveChatMediaUrl(m.imageUrl))}
+                        className="block rounded-lg overflow-hidden border border-black/15 hover:opacity-95 transition-opacity cursor-pointer"
+                        title="Click to view full image"
+                      >
+                        <img
+                          src={resolveChatMediaUrl(m.imageUrl)}
+                          alt={m.imageName || 'Uploaded screenshot'}
+                          className="max-w-full max-h-56 object-contain bg-black/5"
+                        />
+                      </button>
+                    )}
+                    {m.text && <div className={m.imageUrl ? 'mt-1.5' : ''}>{m.text}</div>}
                   </div>
                   <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1 px-1">
                     <span>{formatMessageTime(m.timestamp)}</span>
@@ -324,11 +369,73 @@ export const ServiceTab: React.FC = () => {
               </div>
             )}
 
+            {/* Pending Attachment Preview Chip */}
+            {(pendingAttachment || isUploadingImage) && (
+              <div className="px-3 py-2 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+                {isUploadingImage ? (
+                  <div className="flex items-center gap-2 text-[11px] text-slate-600 font-medium">
+                    <Loader2 className="w-4 h-4 animate-spin text-[#8b0000]" />
+                    <span>Uploading image...</span>
+                  </div>
+                ) : (
+                  pendingAttachment && (
+                    <>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <img
+                          src={resolveChatMediaUrl(pendingAttachment.imageUrl)}
+                          alt={pendingAttachment.fileName}
+                          className="w-10 h-10 rounded-lg object-cover border border-slate-300 shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold text-slate-800 truncate">
+                            {pendingAttachment.fileName}
+                          </p>
+                          <p className="text-[10px] text-emerald-600 font-medium">
+                            Image attached · Ready to send
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPendingAttachment(null)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                        title="Remove attachment"
+                        aria-label="Remove attachment"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </>
+                  )
+                )}
+              </div>
+            )}
+
             {/* Chat Input */}
             <form
               onSubmit={handleSendMessage}
               className="p-2.5 bg-white border-t border-slate-200 flex items-center gap-2"
             >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,image/*"
+                onChange={handleFileSelected}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!currentUser || isSending || isUploadingImage}
+                title="Attach photo or screenshot (JPEG, PNG)"
+                aria-label="Attach photo or screenshot"
+                className="p-2 text-slate-500 hover:text-[#8b0000] hover:bg-red-50 rounded-lg border border-slate-200 transition-colors disabled:opacity-50 cursor-pointer shrink-0"
+              >
+                {isUploadingImage ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Paperclip className="w-4 h-4" />
+                )}
+              </button>
               <input
                 type="text"
                 value={inputText}
@@ -339,12 +446,44 @@ export const ServiceTab: React.FC = () => {
               />
               <button
                 type="submit"
-                disabled={!currentUser || !inputText.trim() || isSending}
-                className="p-2 bg-[#8b0000] text-white rounded-lg hover:bg-red-900 transition-colors disabled:opacity-50 cursor-pointer"
+                disabled={
+                  !currentUser ||
+                  (!inputText.trim() && !pendingAttachment) ||
+                  isSending ||
+                  isUploadingImage
+                }
+                className="p-2 bg-[#8b0000] text-white rounded-lg hover:bg-red-900 transition-colors disabled:opacity-50 cursor-pointer shrink-0"
               >
                 <Send className="w-4 h-4" />
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* FULLSCREEN IMAGE LIGHTBOX */}
+      {previewLightboxUrl && (
+        <div
+          onClick={() => setPreviewLightboxUrl(null)}
+          className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative max-w-3xl max-h-[90vh] flex flex-col items-center gap-3"
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewLightboxUrl(null)}
+              className="self-end p-2 rounded-full bg-white/15 hover:bg-white/25 text-white cursor-pointer"
+              aria-label="Close image preview"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <img
+              src={previewLightboxUrl}
+              alt="Full view"
+              className="max-w-full max-h-[80vh] rounded-xl shadow-2xl object-contain bg-black"
+            />
           </div>
         </div>
       )}

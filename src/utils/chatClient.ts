@@ -29,6 +29,14 @@ const resolveChatApiUrl = (path: string): string => {
   return base ? `${base}${cleanPath}` : cleanPath;
 };
 
+export const resolveChatMediaUrl = (url?: string): string => {
+  if (!url) return '';
+  if (url.startsWith('data:') || /^https?:\/\//i.test(url) || url.startsWith('blob:')) {
+    return url;
+  }
+  return resolveChatApiUrl(url);
+};
+
 export const getChatWsUrl = (role: 'user' | 'admin', userUid?: string): string => {
   const params = new URLSearchParams({ role });
   if (userUid) {
@@ -135,6 +143,107 @@ export const fetchChatMessages = async (userUid: string): Promise<ChatMessage[]>
   return Array.isArray(data.messages) ? data.messages : [];
 };
 
+const prepareChatImageDataUrl = (file: File): Promise<{ dataUrl: string; fileName: string }> => {
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+  const fileType = (file.type || '').toLowerCase();
+  const isAllowedByExt = /\.(jpe?g|png|webp|gif)$/i.test(file.name || '');
+
+  if (!allowedTypes.includes(fileType) && !isAllowedByExt) {
+    return Promise.reject(new Error('Please select a valid image file (JPEG, PNG, WEBP, or GIF).'));
+  }
+
+  if (file.size > 15 * 1024 * 1024) {
+    return Promise.reject(new Error('Image is too large. Please select an image under 15 MB.'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read the selected image file.'));
+    reader.onload = () => {
+      const rawDataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!rawDataUrl) {
+        reject(new Error('Could not read image contents.'));
+        return;
+      }
+
+      // Preserve animated GIFs or compact files directly
+      if (fileType === 'image/gif' || file.size <= 900 * 1024) {
+        resolve({ dataUrl: rawDataUrl, fileName: file.name || 'image.png' });
+        return;
+      }
+
+      // Downscale large mobile screenshots/photos gently to keep upload crisp and fast
+      const img = new Image();
+      img.onerror = () => resolve({ dataUrl: rawDataUrl, fileName: file.name || 'image.jpg' });
+      img.onload = () => {
+        const maxDim = 1600;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const ratio = Math.min(maxDim / width, maxDim / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve({ dataUrl: rawDataUrl, fileName: file.name || 'image.jpg' });
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const outputMime = fileType === 'image/png' ? 'image/png' : 'image/jpeg';
+          const compressed = canvas.toDataURL(outputMime, 0.85);
+          resolve({
+            dataUrl: compressed.length < rawDataUrl.length ? compressed : rawDataUrl,
+            fileName: file.name || (outputMime === 'image/png' ? 'screenshot.png' : 'photo.jpg'),
+          });
+        } catch {
+          resolve({ dataUrl: rawDataUrl, fileName: file.name || 'image.jpg' });
+        }
+      };
+      img.src = rawDataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
+export const uploadChatImage = async (
+  file: File
+): Promise<{ imageUrl: string; fileName: string }> => {
+  const { dataUrl, fileName } = await prepareChatImageDataUrl(file);
+  const url = resolveChatApiUrl('/api/chat/upload');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      dataUrl,
+      fileName,
+      mimeType: file.type,
+    }),
+  });
+
+  const data = await parseJsonResponse<{
+    success?: boolean;
+    imageUrl?: string;
+    fileName?: string;
+    message?: string;
+  }>(res, 'Failed to upload image', url);
+
+  if (!data.success || !data.imageUrl) {
+    throw new Error(data.message || 'Image upload failed. Please try again.');
+  }
+
+  return {
+    imageUrl: data.imageUrl,
+    fileName: data.fileName || fileName,
+  };
+};
+
 export const sendChatMessage = async (payload: {
   id?: string;
   userUid: string;
@@ -142,6 +251,8 @@ export const sendChatMessage = async (payload: {
   sender: 'user' | 'admin';
   adminName?: string;
   text: string;
+  imageUrl?: string;
+  imageName?: string;
   timestamp?: string;
 }): Promise<ChatMessage> => {
   const url = resolveChatApiUrl('/api/chat/send');
@@ -186,6 +297,8 @@ export const sendChatMessage = async (payload: {
     sender: payload.sender,
     adminName: payload.adminName,
     text: payload.text,
+    imageUrl: payload.imageUrl,
+    imageName: payload.imageName,
     timestamp: clientTimestamp,
     readByAdmin: payload.sender === 'admin',
     readByUser: payload.sender === 'user',

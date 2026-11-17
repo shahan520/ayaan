@@ -230,6 +230,8 @@ export interface ChatMessage {
   sender: 'user' | 'admin';
   adminName?: string;
   text: string;
+  imageUrl?: string;
+  imageName?: string;
   timestamp: string;
   readByAdmin: boolean;
   readByUser: boolean;

@@ -840,7 +840,9 @@ const chatMessageSchema = new mongoose.Schema(
     username: { type: String, required: true },
     sender: { type: String, enum: ['user', 'admin'], required: true },
     adminName: { type: String, default: 'Support Agent' },
-    text: { type: String, required: true },
+    text: { type: String, default: '' },
+    imageUrl: { type: String, default: undefined },
+    imageName: { type: String, default: undefined },
     timestamp: { type: String, required: true },
     readByAdmin: { type: Boolean, default: false },
     readByUser: { type: Boolean, default: false },
@@ -850,6 +852,26 @@ const chatMessageSchema = new mongoose.Schema(
 
 export const ChatMessage =
   mongoose.models.ChatMessage || mongoose.model('ChatMessage', chatMessageSchema);
+
+const chatUploadSchema = new mongoose.Schema(
+  {
+    filename: { type: String, required: true, unique: true },
+    mimeType: { type: String, required: true },
+    dataBase64: { type: String, required: true },
+  },
+  { timestamps: true }
+);
+
+export const ChatUpload =
+  mongoose.models.ChatUpload || mongoose.model('ChatUpload', chatUploadSchema);
+
+const CHAT_UPLOADS_DIR = path.join(DATA_DIR, 'chat_uploads');
+const ensureChatUploadsDir = () => {
+  ensureDataDir();
+  if (!fs.existsSync(CHAT_UPLOADS_DIR)) {
+    fs.mkdirSync(CHAT_UPLOADS_DIR, { recursive: true });
+  }
+};
 
 const PERSISTENT_CHAT_FILE = path.join(DATA_DIR, 'persistent_chat.json');
 
@@ -922,7 +944,9 @@ const getMergedChatMessages = async (filterUserUid = null) => {
           username: mm.username,
           sender: mm.sender,
           adminName: mm.adminName || 'Support Agent',
-          text: mm.text,
+          text: mm.text || '',
+          imageUrl: mm.imageUrl || undefined,
+          imageName: mm.imageName || undefined,
           timestamp: mm.timestamp,
           readByAdmin: Boolean(mm.readByAdmin),
           readByUser: Boolean(mm.readByUser),
@@ -3381,6 +3405,13 @@ app.get('/api/chat/threads', async (req, res) => {
       const existing = threadsMap.get(uid);
       const isUnreadForAdmin = msg.sender === 'user' && !msg.readByAdmin;
 
+      const previewText =
+        msg.text && String(msg.text).trim()
+          ? String(msg.text).trim()
+          : msg.imageUrl
+          ? '[Photo attachment]'
+          : '';
+
       if (!existing) {
         threadsMap.set(uid, {
           userUid: uid,
@@ -3388,7 +3419,7 @@ app.get('/api/chat/threads', async (req, res) => {
           vipLevel: userObj?.vipLevel ?? 0,
           avatarUrl: userObj?.avatarUrl || '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
           balance: typeof userObj?.balance === 'number' ? userObj.balance : 0,
-          lastMessage: msg.text,
+          lastMessage: previewText,
           lastSender: msg.sender,
           lastTimestamp: msg.timestamp,
           unreadCount: isUnreadForAdmin ? 1 : 0,
@@ -3400,7 +3431,7 @@ app.get('/api/chat/threads', async (req, res) => {
           existing.unreadCount += 1;
         }
         if (String(msg.timestamp || '') >= String(existing.lastTimestamp || '')) {
-          existing.lastMessage = msg.text;
+          existing.lastMessage = previewText;
           existing.lastSender = msg.sender;
           existing.lastTimestamp = msg.timestamp;
         }
@@ -3478,6 +3509,8 @@ const handleSendChatMessage = async (req, res) => {
       adminName,
       text,
       message,
+      imageUrl,
+      imageName,
       timestamp,
     } = req.body || {};
 
@@ -3487,16 +3520,27 @@ const handleSendChatMessage = async (req, res) => {
     );
     const cleanUid = matchedByUidOrId ? String(matchedByUidOrId.uid) : rawUidOrId;
     const cleanText = String(text !== undefined ? text : message || '').trim();
+    const rawImageUrl = typeof imageUrl === 'string' ? imageUrl.trim() : '';
+    const isValidImageUrl =
+      !rawImageUrl ||
+      rawImageUrl.startsWith('/api/chat/uploads/') ||
+      rawImageUrl.startsWith('data:image/') ||
+      /^https?:\/\//i.test(rawImageUrl);
+    const cleanImageUrl = isValidImageUrl && rawImageUrl ? rawImageUrl : undefined;
+    const cleanImageName =
+      cleanImageUrl && typeof imageName === 'string' && imageName.trim()
+        ? imageName.trim().slice(0, 120)
+        : undefined;
     const cleanSender = sender === 'admin' ? 'admin' : 'user';
     const cleanTimestamp =
       typeof timestamp === 'string' && timestamp.trim()
         ? timestamp.trim()
         : new Date().toISOString();
 
-    if (!cleanUid || !cleanText) {
+    if (!cleanUid || (!cleanText && !cleanImageUrl)) {
       return res.status(400).json({
         success: false,
-        message: 'User ID and message text are required.',
+        message: 'User ID and either message text or an image attachment are required.',
       });
     }
 
@@ -3524,6 +3568,8 @@ const handleSendChatMessage = async (req, res) => {
       sender: cleanSender,
       adminName: cleanSender === 'admin' ? String(adminName || 'Support Agent') : undefined,
       text: cleanText,
+      imageUrl: cleanImageUrl,
+      imageName: cleanImageName,
       timestamp: cleanTimestamp,
       readByAdmin: cleanSender === 'admin',
       readByUser: cleanSender === 'user',
@@ -3559,6 +3605,127 @@ const handleSendChatMessage = async (req, res) => {
 app.post('/api/chat/send', handleSendChatMessage);
 app.post('/api/support/message', handleSendChatMessage);
 app.post('/api/chat/messages', handleSendChatMessage);
+
+/**
+ * POST /api/chat/upload
+ * Stores an uploaded chat photo/screenshot to disk and MongoDB and returns its viewable URL
+ */
+app.post('/api/chat/upload', async (req, res) => {
+  try {
+    const { dataUrl, fileName } = req.body || {};
+    if (!dataUrl || typeof dataUrl !== 'string') {
+      return res.status(400).json({ success: false, message: 'Image data is required.' });
+    }
+
+    const match = /^data:(image\/(?:png|jpeg|jpg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(
+      dataUrl.trim()
+    );
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        message: 'Only valid JPEG, PNG, WEBP, or GIF images are supported.',
+      });
+    }
+
+    const mimeType = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1].toLowerCase();
+    const base64Data = match[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    if (buffer.length === 0 || buffer.length > 10 * 1024 * 1024) {
+      return res.status(400).json({
+        success: false,
+        message: 'Uploaded image must be between 1 byte and 10 MB.',
+      });
+    }
+
+    const extMap = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+      'image/gif': 'gif',
+    };
+    const ext = extMap[mimeType] || 'png';
+    const safeFilename = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+    ensureChatUploadsDir();
+    fs.writeFileSync(path.join(CHAT_UPLOADS_DIR, safeFilename), buffer);
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await ChatUpload.create({
+          filename: safeFilename,
+          mimeType,
+          dataBase64: base64Data,
+        });
+      } catch (dbErr) {
+        console.warn('MongoDB chat upload store note:', dbErr.message);
+      }
+    }
+
+    const cleanOrigName =
+      typeof fileName === 'string' && fileName.trim()
+        ? path.basename(fileName.trim()).slice(0, 100)
+        : safeFilename;
+
+    return res.status(200).json({
+      success: true,
+      imageUrl: `/api/chat/uploads/${safeFilename}`,
+      fileName: cleanOrigName,
+    });
+  } catch (err) {
+    console.error('Error uploading chat image:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to upload image.' });
+  }
+});
+
+/**
+ * GET /api/chat/uploads/:filename
+ * Serves uploaded chat images from disk or MongoDB fallback
+ */
+app.get('/api/chat/uploads/:filename', async (req, res) => {
+  try {
+    const safeName = path.basename(String(req.params.filename || '').trim());
+    if (!safeName || !/^[A-Za-z0-9_.-]+$/.test(safeName)) {
+      return res.status(400).json({ success: false, message: 'Invalid image filename.' });
+    }
+
+    const ext = path.extname(safeName).toLowerCase();
+    const mimeMap = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp',
+      '.gif': 'image/gif',
+    };
+    const defaultMime = mimeMap[ext] || 'image/png';
+
+    const filePath = path.join(CHAT_UPLOADS_DIR, safeName);
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', defaultMime);
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      return res.sendFile(filePath);
+    }
+
+    if (mongoose.connection.readyState === 1) {
+      const record = await ChatUpload.findOne({ filename: safeName }).lean();
+      if (record && record.dataBase64) {
+        const buffer = Buffer.from(record.dataBase64, 'base64');
+        try {
+          ensureChatUploadsDir();
+          fs.writeFileSync(filePath, buffer);
+        } catch {}
+        res.setHeader('Content-Type', record.mimeType || defaultMime);
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
+        return res.send(buffer);
+      }
+    }
+
+    return res.status(404).json({ success: false, message: 'Chat image not found.' });
+  } catch (err) {
+    console.error('Error serving chat image:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to load chat image.' });
+  }
+});
 
 /**
  * POST /api/chat/read
