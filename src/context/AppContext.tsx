@@ -1399,11 +1399,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Insufficient account balance.' };
     }
 
-    // Step 4: 15% Fee Calculation & Balance Deduction
-    // Apply a mandatory 15% fee on all withdrawals, deducting the full requested amount from balance while processing the net 85% payout.
-    const feePercent = 15;
-    const feeAmount = Number((amount * 0.15).toFixed(4));
-    const netAmount = Number((amount * 0.85).toFixed(4));
+    // Step 4: 5% Fee Calculation & Balance Deduction
+    // Apply a mandatory 5% fee on all withdrawals, deducting the full requested amount from balance while processing the net 95% payout.
+    const feePercent = 5;
+    const feeAmount = Number((amount * 0.05).toFixed(4));
+    const netAmount = Number((amount * 0.95).toFixed(4));
 
     // Full requested amount is immediately deducted from user balance.
     // Reset taxPaid to false so that whenever the user's account balance is 50,000 USDT or above
@@ -1442,7 +1442,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setWithdrawals((prev) => [newWithdrawal, ...prev]);
     return {
       success: true,
-      message: `Withdrawal request for ${amount.toFixed(2)} USDT submitted! (Net payout after 15% fee: ${netAmount.toFixed(2)} USDT). Status: Pending review by Admin.`,
+      message: `Withdrawal request for ${amount.toFixed(2)} USDT submitted! (Net payout after 5% fee: ${netAmount.toFixed(2)} USDT). Status: Pending review by Admin.`,
     };
   };
 
@@ -2703,18 +2703,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
-    const netPayout = wd.netAmount || Number((wd.amount * 0.85).toFixed(4));
-    const fee = wd.feeAmount || Number((wd.amount * 0.15).toFixed(4));
+    const appliedFeePercent = wd.feePercent ?? 5;
+    const appliedNetPercent = 100 - appliedFeePercent;
+    const netPayout = wd.netAmount || Number((wd.amount * (appliedNetPercent / 100)).toFixed(4));
+    const fee = wd.feeAmount || Number((wd.amount * (appliedFeePercent / 100)).toFixed(4));
 
     logAuditAction(
       'APPROVE_WITHDRAWAL',
-      `Accepted payout of ${netPayout} USDT (net 85% after 15% fee of ${fee} USDT on gross ${wd.amount} USDT) to TRC20 address ${wd.walletAddress.substring(0, 12)}... for UID: ${wd.userUid} (Status: Completed)`,
+      `Accepted payout of ${netPayout} USDT (net ${appliedNetPercent}% after ${appliedFeePercent}% fee of ${fee} USDT on gross ${wd.amount} USDT) to TRC20 address ${wd.walletAddress.substring(0, 12)}... for UID: ${wd.userUid} (Status: Completed)`,
       wd.userUid
     );
 
     return {
       success: true,
-      message: `Withdrawal approved! Net payout of ${netPayout} USDT (85% after 15% fee) sent to wallet.`,
+      message: `Withdrawal approved! Net payout of ${netPayout} USDT (${appliedNetPercent}% after ${appliedFeePercent}% fee) sent to wallet.`,
     };
   };
 

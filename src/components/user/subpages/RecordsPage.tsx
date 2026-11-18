@@ -138,9 +138,11 @@ export const RecordsPage: React.FC<Props> = ({ initialType = 'deposit', onBack }
                       Protocol: {item.protocol}
                     </span>
                     <div className="text-[10px] text-slate-600 mt-0.5 space-y-0.5">
-                      <span>Fee (15%): -{(item.feeAmount || Number((item.amount * 0.15).toFixed(2))).toFixed(2)} USDT</span>
+                      <span>
+                        Fee ({item.feePercent ?? 5}%): -{(item.feeAmount ?? Number((item.amount * 0.05).toFixed(2))).toFixed(2)} USDT
+                      </span>
                       <span className="block font-bold text-emerald-700">
-                        Net Payout (85%): +{(item.netAmount || Number((item.amount * 0.85).toFixed(2))).toFixed(2)} USDT
+                        Net Payout ({100 - (item.feePercent ?? 5)}%): +{(item.netAmount ?? Number((item.amount * 0.95).toFixed(2))).toFixed(2)} USDT
                       </span>
                     </div>
                   </div>

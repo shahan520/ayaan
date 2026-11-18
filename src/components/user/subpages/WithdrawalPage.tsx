@@ -637,15 +637,15 @@ export const WithdrawalPage: React.FC<Props> = ({
                 <span className="font-mono font-black text-[#7a0a14] text-sm">{amount} USDT</span>
               </div>
               <div className="flex justify-between items-center text-amber-900">
-                <span className="font-bold">Mandatory Fee (15%):</span>
+                <span className="font-bold">Mandatory Fee (5%):</span>
                 <span className="font-mono font-bold text-amber-800">
-                  -{(parseFloat(amount) * 0.15).toFixed(2)} USDT
+                  -{(parseFloat(amount) * 0.05).toFixed(2)} USDT
                 </span>
               </div>
               <div className="flex justify-between items-center text-emerald-800 border-t border-amber-200 pt-1">
-                <span className="font-black">Net Payout (85%):</span>
+                <span className="font-black">Net Payout (95%):</span>
                 <span className="font-mono font-black text-emerald-700 text-sm">
-                  {(parseFloat(amount) * 0.85).toFixed(2)} USDT
+                  {(parseFloat(amount) * 0.95).toFixed(2)} USDT
                 </span>
               </div>
               <div className="flex justify-between items-center pt-1">
@@ -723,7 +723,7 @@ export const WithdrawalPage: React.FC<Props> = ({
                 </button>
               </div>
 
-              {/* Real-time 15% Fee Breakdown */}
+              {/* Real-time 5% Fee Breakdown */}
               {parseFloat(amount) > 0 && (
                 <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-3 space-y-1.5 text-xs text-slate-800">
                   <div className="flex justify-between items-center text-slate-600">
@@ -733,19 +733,19 @@ export const WithdrawalPage: React.FC<Props> = ({
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-amber-900">
-                    <span>Mandatory Fee (15%):</span>
+                    <span>Mandatory Fee (5%):</span>
                     <span className="font-mono font-bold text-amber-700">
-                      -{(parseFloat(amount) * 0.15).toFixed(2)} USDT
+                      -{(parseFloat(amount) * 0.05).toFixed(2)} USDT
                     </span>
                   </div>
                   <div className="border-t border-amber-200 pt-1 flex justify-between items-center font-bold text-slate-900">
-                    <span>Net Payout to Wallet (85%):</span>
+                    <span>Net Payout to Wallet (95%):</span>
                     <span className="font-mono font-black text-emerald-700 text-sm">
-                      {(parseFloat(amount) * 0.85).toFixed(2)} USDT
+                      {(parseFloat(amount) * 0.95).toFixed(2)} USDT
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-500 pt-0.5">
-                    *The full requested amount is deducted from balance; net 85% is disbursed to your TRC-20 wallet.
+                    *The full requested amount is deducted from balance; net 95% is disbursed to your TRC-20 wallet.
                   </p>
                 </div>
               )}
@@ -793,7 +793,7 @@ export const WithdrawalPage: React.FC<Props> = ({
 
             <div className="bg-slate-50 p-3 rounded-xl text-xs font-semibold text-slate-600 space-y-1 border border-slate-200">
               <p>• Minimum withdrawal: <strong className="text-[#000000]">{systemConfig.minWithdrawal} USDT</strong></p>
-              <p>• Mandatory <strong>15% handling fee</strong>; full amount deducted from balance, net 85% paid out</p>
+              <p>• Mandatory <strong>5% handling fee</strong>; full amount deducted from balance, net 95% paid out</p>
               <p>• Verified payouts processed via TRC-20 payment gateway</p>
               <p>
                 • Active Cycle Orders:{' '}

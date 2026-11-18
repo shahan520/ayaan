@@ -196,11 +196,11 @@ export const AuthModal: React.FC<Props> = ({
           )}
 
           {/* Circular Logo with Soft Glowing Outer Border */}
-          <div className="w-16 h-16 rounded-full bg-white/10 p-2.5 mx-auto mb-3 flex items-center justify-center backdrop-blur-md border border-white/25 shadow-inner">
+          <div className="w-16 h-16 rounded-full bg-white p-2 mx-auto mb-3 flex items-center justify-center border border-white/40 shadow-md overflow-hidden">
             <img
-              src="/assets/aistudio/a3.f53cf407_cf3e68d0.png"
+              src="/assets/aistudio/D217d10797D9867123be63C3807Ab91e33301c2c94448713bfa4b0d9f3e7e32a_75c1958b.jpg"
               alt="Velora Logo"
-              className="w-full h-full object-contain filter drop-shadow-sm"
+              className="w-full h-full object-contain rounded-full"
             />
           </div>
 
