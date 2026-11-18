@@ -18,7 +18,7 @@ export const INITIAL_SYSTEM_CONFIG: SystemConfig = {
     'TM4kXo9Y2Q1bY7k4zGP9sWWcTEd36mDkk1',
     'TP8jW1e4N6qL9mK3zGP7sWWcTEd32mDkt8',
   ],
-  platformName: 'TradeWeb QuDaizi',
+  platformName: 'Global E-commerce',
   minDeposit: 10,
   minWithdrawal: 10,
   depositNotice: 'The recharge address is a one-time address. Minimum recharge is 10 USDT. Confirmation takes 1-2 minutes.',

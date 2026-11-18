@@ -174,7 +174,7 @@ export const MineTab: React.FC<Props> = ({ onNavigate, onOpenAuth }) => {
         ) : (
           /* Guest state */
           <div className="py-4 text-center space-y-3">
-            <h2 className="text-lg font-bold text-white">Welcome to TradeWeb Mall</h2>
+            <h2 className="text-lg font-bold text-white">Welcome to Global E-commerce</h2>
             <p className="text-xs text-white/80">Sign in to manage your USDT portfolio</p>
             <button
               onClick={onOpenAuth}

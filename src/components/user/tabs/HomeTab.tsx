@@ -128,6 +128,9 @@ export const HomeTab: React.FC<Props> = ({ onNavigate }) => {
       <div className="bg-white px-4 md:px-8 py-3.5 sticky top-0 z-20 flex items-center justify-between border-b border-slate-100 w-full">
         <div className="flex items-center gap-2.5">
           <ColorfulPolygonLogo />
+          <span className="font-extrabold text-slate-900 text-sm tracking-tight">
+            Global E-commerce
+          </span>
         </div>
         <button
           onClick={() => onNavigate('support')}

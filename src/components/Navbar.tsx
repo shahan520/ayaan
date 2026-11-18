@@ -37,7 +37,7 @@ export const Navbar: React.FC = () => {
             className="w-7 h-7 object-contain"
           />
           <span className="font-extrabold text-white text-sm tracking-tight whitespace-nowrap">
-            TradeWeb QuDaizi
+            Global E-commerce
           </span>
         </div>
       </div>
