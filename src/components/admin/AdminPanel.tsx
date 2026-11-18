@@ -14,6 +14,7 @@ import {
   Layers,
   Lock,
   LogOut,
+  Menu,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -108,6 +109,7 @@ export const AdminPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<
     'overview' | 'deposits' | 'withdrawals' | 'users' | 'monitoring' | 'invites' | 'subadmins' | 'wallet' | 'logs' | 'support'
   >('overview');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [supportUnreadCount, setSupportUnreadCount] = useState(0);
   const [onlineUsersCount, setOnlineUsersCount] = useState(0);
 
@@ -299,245 +301,368 @@ export const AdminPanel: React.FC = () => {
     { key: 'can_manage_admins', label: 'Manage Sub-Admins', desc: 'Super admin capability to provision sub-admins' },
   ];
 
+  const navSections = [
+    {
+      sectionLabel: 'Operations',
+      items: [
+        { key: 'overview' as const, label: 'Dashboard Overview', icon: Layers, badge: null },
+        {
+          key: 'deposits' as const,
+          label: 'Deposit Approvals',
+          icon: ArrowDownLeft,
+          badge: pendingDepositsCount > 0 ? pendingDepositsCount : null,
+          badgeTone: 'amber' as const,
+        },
+        {
+          key: 'withdrawals' as const,
+          label: 'Withdrawal Payouts',
+          icon: ArrowUpRight,
+          badge: pendingWithdrawalsCount > 0 ? pendingWithdrawalsCount : null,
+          badgeTone: 'amber' as const,
+        },
+        { key: 'users' as const, label: 'User Directory', icon: Users, badge: null },
+        {
+          key: 'monitoring' as const,
+          label: 'Live Activity Monitor',
+          icon: Activity,
+          badge: onlineUsersCount > 0 ? onlineUsersCount : null,
+          badgeTone: 'emerald' as const,
+        },
+      ],
+    },
+    {
+      sectionLabel: 'Platform & Support',
+      items: [
+        { key: 'invites' as const, label: 'Invite Codes', icon: Tag, badge: null },
+        { key: 'subadmins' as const, label: 'Roles & Permissions', icon: UserCog, badge: null },
+        { key: 'wallet' as const, label: 'Treasury Wallet', icon: Wallet, badge: null },
+        {
+          key: 'support' as const,
+          label: 'Live Support Desk',
+          icon: Headphones,
+          badge: supportUnreadCount > 0 ? supportUnreadCount : null,
+          badgeTone: 'red' as const,
+        },
+        { key: 'logs' as const, label: 'Audit Logs', icon: History, badge: null },
+      ],
+    },
+  ];
+
+  const renderSidebarNav = (isMobileDrawer = false) => (
+    <div className="flex flex-col h-full">
+      {/* Sidebar Brand Strip */}
+      <div className="px-5 py-4 border-b border-slate-800/90 flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-red-700 to-amber-600/90 border border-red-500/40 flex items-center justify-center text-white shadow-sm shrink-0">
+            <Shield className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-extrabold text-white tracking-tight truncate">
+              QuDaizi Console
+            </div>
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-amber-400/90">
+              Enterprise Admin
+            </div>
+          </div>
+        </div>
+        {isMobileDrawer && (
+          <button
+            type="button"
+            onClick={() => setIsSidebarOpen(false)}
+            aria-label="Close navigation menu"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
+      {/* Navigation Sections */}
+      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5" aria-label="Admin Navigation">
+        {navSections.map((group) => (
+          <div key={group.sectionLabel} className="space-y-1">
+            <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+              {group.sectionLabel}
+            </div>
+            {group.items.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.key;
+              const badgeClasses =
+                tab.badgeTone === 'emerald'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                  : tab.badgeTone === 'red'
+                  ? 'bg-red-500 text-white'
+                  : 'bg-amber-400 text-slate-950';
+
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(tab.key);
+                    if (isMobileDrawer) setIsSidebarOpen(false);
+                  }}
+                  className={`group relative w-full flex items-center justify-between gap-2.5 pl-3.5 pr-3 py-2.5 rounded-xl text-[13px] transition-all cursor-pointer text-left ${
+                    isActive
+                      ? 'bg-gradient-to-r from-red-950/90 via-red-950/55 to-slate-900/60 text-white font-semibold border border-red-800/60 shadow-xs'
+                      : 'text-slate-400 font-medium hover:text-slate-100 hover:bg-slate-900/90 border border-transparent'
+                  }`}
+                >
+                  {/* Sleek Red/Amber Active Indicator Bar */}
+                  {isActive && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-gradient-to-b from-red-500 via-rose-500 to-amber-400"
+                    />
+                  )}
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <Icon
+                      className={`w-4 h-4 shrink-0 transition-colors ${
+                        isActive
+                          ? 'text-amber-400'
+                          : 'text-slate-500 group-hover:text-slate-300'
+                      }`}
+                    />
+                    <span className="truncate">{tab.label}</span>
+                  </span>
+                  {tab.badge !== null && tab.badge !== undefined && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums shrink-0 leading-none ${badgeClasses}`}
+                    >
+                      {tab.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+
+      {/* Sidebar Operator Footer */}
+      <div className="px-4 py-3 border-t border-[#1b2436] bg-[#080c14]">
+        <div className="flex items-center justify-between gap-2 text-[11px]">
+          <span className="text-slate-400 truncate font-medium">{currentAdmin.name}</span>
+          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#131b2c] border border-[#222f46] text-slate-300 uppercase font-semibold shrink-0">
+            {currentAdmin.role === 'super_admin' ? 'Root' : 'RBAC'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans">
-      {/* Top Admin Header Bar */}
-      <header className="bg-slate-950 border-b border-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-red-900/60 border border-red-700/50 flex items-center justify-center text-red-400 font-bold shadow-md">
-            <Shield className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="font-extrabold text-base text-white tracking-tight">
-                QuDaizi Trading Admin Console
-              </h1>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-red-950 text-red-300 border border-red-800 uppercase font-bold">
-                RBAC Active
-              </span>
-            </div>
-            <p className="text-xs text-slate-400">
-              Role-Based Access Control · Financial Settlements · Audit Trails
-            </p>
-          </div>
-        </div>
+    <div className="min-h-screen bg-[#0a0e17] text-slate-100 flex font-['Plus_Jakarta_Sans',sans-serif]">
+      {/* Fixed Left Vertical Sidebar (Desktop) */}
+      <aside className="hidden lg:flex lg:flex-col w-[250px] shrink-0 bg-[#080c14] border-r border-[#1b2436] sticky top-0 h-screen select-none z-20">
+        {renderSidebarNav(false)}
+      </aside>
 
-        {/* Current Admin Role Switcher & Status */}
-        <div className="flex items-center gap-3 bg-slate-900 border border-slate-800 rounded-xl p-1.5">
-          <div className="px-3 py-1 text-left">
-            <span className="text-[10px] text-slate-400 block uppercase tracking-wider font-semibold">
-              Current Logged Role:
-            </span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-bold text-white">{currentAdmin.name}</span>
-              <span
-                className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
-                  currentAdmin.role === 'super_admin'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                    : 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                }`}
-              >
-                {currentAdmin.role === 'super_admin' ? 'SUPER ADMIN' : 'SUB-ADMIN'}
-              </span>
-            </div>
-          </div>
-
-          <div className="h-7 w-px bg-slate-800" />
-
-          {/* Quick Admin Account Switcher */}
-          <select
-            value={currentAdmin.id}
-            onChange={(e) => switchAdmin(e.target.value)}
-            className="bg-slate-950 border border-slate-700 text-xs text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-hidden focus:ring-1 focus:ring-red-500 font-medium"
-          >
-            {admins.map((adm) => (
-              <option key={adm.id} value={adm.id}>
-                {adm.name} ({adm.role === 'super_admin' ? 'Full Access' : 'Custom Perms'})
-              </option>
-            ))}
-          </select>
-
-          {/* Super Admin Security Settings Button (Only visible for Super Admin) */}
-          {currentAdmin.role === 'super_admin' && (
-            <button
-              onClick={() => {
-                setSuperNewPassword('');
-                setSuperConfirmPassword('');
-                setSuperNewPin('');
-                setSuperConfirmPin('');
-                setShowSuperSecurityModal(true);
-              }}
-              title="Super Admin Password & Master PIN Security Settings"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-xs text-amber-300 font-semibold transition-colors cursor-pointer"
-            >
-              <Key className="w-3.5 h-3.5 text-amber-400" />
-              <span>Security Settings</span>
-            </button>
-          )}
-
-          {/* Secure Exit Admin Button */}
-          <button
-            onClick={() => {
-              if (window.confirm('Log out of Administrator Console and return to public website?')) {
-                adminLogout();
-              }
-            }}
-            title="Log out of Admin Console"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-800 text-xs text-red-200 font-semibold transition-colors cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5 text-red-400" />
-            <span>Exit Admin</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Global Feedback Toast */}
-      {feedback && (
-        <div
-          className={`mx-6 mt-4 p-3.5 rounded-xl border flex items-center justify-between text-xs font-medium animate-in fade-in duration-200 ${
-            feedback.type === 'success'
-              ? 'bg-emerald-950/80 border-emerald-800 text-emerald-200'
-              : 'bg-red-950/80 border-red-800 text-red-200'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {feedback.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            ) : (
-              <AlertTriangle className="w-4 h-4 text-red-400" />
-            )}
-            <span>{feedback.text}</span>
-          </div>
-          <button
-            onClick={() => setFeedback(null)}
-            className="text-slate-400 hover:text-white font-bold ml-4"
-          >
-            ✕
-          </button>
+      {/* Collapsible Drawer Sidebar (Mobile / Tablet) */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden flex">
+          <div
+            className="fixed inset-0 bg-black/75 backdrop-blur-xs"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+          <aside className="relative z-10 w-[250px] max-w-[82vw] h-full bg-[#080c14] border-r border-[#1b2436] flex flex-col shadow-2xl">
+            {renderSidebarNav(true)}
+          </aside>
         </div>
       )}
 
-      {/* Navigation Sub-Header Tabs */}
-      <div className="bg-slate-950/70 border-b border-slate-800 px-6 flex items-center overflow-x-auto gap-2 py-2">
-        {[
-          { key: 'overview' as const, label: 'Overview', icon: Layers },
-          {
-            key: 'deposits' as const,
-            label: 'Deposit Requests',
-            icon: ArrowDownLeft,
-            badge: pendingDepositsCount > 0 ? pendingDepositsCount : null,
-          },
-          {
-            key: 'withdrawals' as const,
-            label: 'Withdrawals',
-            icon: ArrowUpRight,
-            badge: pendingWithdrawalsCount > 0 ? pendingWithdrawalsCount : null,
-          },
-          { key: 'users' as const, label: 'User Management', icon: Users },
-          {
-            key: 'monitoring' as const,
-            label: 'User Monitoring',
-            icon: Activity,
-            badge: onlineUsersCount > 0 ? onlineUsersCount : null,
-          },
-          { key: 'invites' as const, label: 'Invitation Codes', icon: Tag },
-          { key: 'subadmins' as const, label: 'Sub-Admins & RBAC', icon: UserCog },
-          { key: 'wallet' as const, label: 'System Wallet', icon: Wallet },
-          {
-            key: 'support' as const,
-            label: 'Customer Service',
-            icon: Headphones,
-            badge: supportUnreadCount > 0 ? supportUnreadCount : null,
-          },
-          { key: 'logs' as const, label: 'Audit Logs', icon: History },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.key;
-          return (
+      {/* Right Main Workspace Column */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Top Admin Header Bar */}
+        <header className="bg-[#0b0f19]/95 backdrop-blur-sm border-b border-[#1b2436] px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-30">
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Mobile Drawer Trigger */}
             <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                isActive
-                  ? 'bg-red-700 text-white shadow-xs'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-              }`}
+              type="button"
+              onClick={() => setIsSidebarOpen(true)}
+              aria-label="Open navigation menu"
+              className="lg:hidden p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
             >
-              <Icon className="w-4 h-4" />
-              <span>{tab.label}</span>
-              {tab.badge !== null && tab.badge !== undefined && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-amber-400 text-slate-950">
-                  {tab.badge}
-                </span>
-              )}
+              <Menu className="w-5 h-5" />
             </button>
-          );
-        })}
-      </div>
 
-      {/* Main Content Area */}
-      <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
+            <div className="w-9 h-9 rounded-xl bg-red-900/60 border border-red-700/50 hidden sm:flex lg:hidden items-center justify-center text-red-400 font-bold shadow-md shrink-0">
+              <Shield className="w-4 h-4" />
+            </div>
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="font-extrabold text-sm sm:text-base text-white tracking-tight truncate">
+                  QuDaizi Trading Admin Console
+                </h1>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-red-950 text-red-300 border border-red-800 uppercase font-bold shrink-0">
+                  RBAC Active
+                </span>
+              </div>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                Role-Based Access Control · Financial Settlements · Audit Trails
+              </p>
+            </div>
+          </div>
+
+          {/* Current Admin Role Switcher & Actions */}
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 bg-[#111827] border border-[#1e293b] rounded-xl p-1.5">
+            <div className="px-2.5 py-1 text-left hidden xl:block">
+              <span className="text-[10px] text-slate-400 block uppercase tracking-wider font-semibold">
+                Current Logged Role:
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-white">{currentAdmin.name}</span>
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                    currentAdmin.role === 'super_admin'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                  }`}
+                >
+                  {currentAdmin.role === 'super_admin' ? 'SUPER ADMIN' : 'SUB-ADMIN'}
+                </span>
+              </div>
+            </div>
+
+            <div className="h-7 w-px bg-slate-800 hidden xl:block" />
+
+            {/* Quick Admin Account Switcher */}
+            <select
+              value={currentAdmin.id}
+              onChange={(e) => switchAdmin(e.target.value)}
+              className="bg-slate-950 border border-slate-700 text-xs text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-hidden focus:ring-1 focus:ring-red-500 font-medium"
+            >
+              {admins.map((adm) => (
+                <option key={adm.id} value={adm.id}>
+                  {adm.name} ({adm.role === 'super_admin' ? 'Full Access' : 'Custom Perms'})
+                </option>
+              ))}
+            </select>
+
+            {/* Super Admin Security Settings Button (Only visible for Super Admin) */}
+            {currentAdmin.role === 'super_admin' && (
+              <button
+                onClick={() => {
+                  setSuperNewPassword('');
+                  setSuperConfirmPassword('');
+                  setSuperNewPin('');
+                  setSuperConfirmPin('');
+                  setShowSuperSecurityModal(true);
+                }}
+                title="Super Admin Password & Master PIN Security Settings"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-xs text-amber-300 font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <Key className="w-3.5 h-3.5 text-amber-400" />
+                <span>Security Settings</span>
+              </button>
+            )}
+
+            {/* Secure Exit Admin Button */}
+            <button
+              onClick={() => {
+                if (window.confirm('Log out of Administrator Console and return to public website?')) {
+                  adminLogout();
+                }
+              }}
+              title="Log out of Admin Console"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-800 text-xs text-red-200 font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5 text-red-400" />
+              <span>Exit Admin</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Global Feedback Toast */}
+        {feedback && (
+          <div
+            className={`mx-4 sm:mx-6 mt-4 p-3.5 rounded-xl border flex items-center justify-between text-xs font-medium animate-in fade-in duration-200 ${
+              feedback.type === 'success'
+                ? 'bg-emerald-950/80 border-emerald-800 text-emerald-200'
+                : 'bg-red-950/80 border-red-800 text-red-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {feedback.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+              )}
+              <span>{feedback.text}</span>
+            </div>
+            <button
+              onClick={() => setFeedback(null)}
+              className="text-slate-400 hover:text-white font-bold ml-4"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Main Content Area */}
+        <main className="flex-1 p-3 sm:p-5 max-w-[1600px] w-full mx-auto space-y-5">
         {/* ------------------------------------------------------------- */}
         {/* 1. OVERVIEW TAB */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'overview' && (
-          <div className="space-y-6">
+          <div className="space-y-5">
             {/* KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl shadow-xs">
+              <div className="bg-[#0f1523] border border-[#1d273b] p-4 rounded-xl">
                 <div className="flex items-center justify-between text-slate-400 mb-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider">Total Users</span>
-                  <Users className="w-5 h-5 text-blue-400" />
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">Total Users</span>
+                  <Users className="w-4 h-4 text-blue-400" />
                 </div>
-                <div className="text-3xl font-extrabold text-white font-mono">{totalUsersCount}</div>
-                <div className="text-[11px] text-slate-400 mt-1">100% verified by invite codes</div>
+                <div className="text-2xl font-extrabold text-white font-mono tabular-nums">{totalUsersCount}</div>
+                <div className="text-[11px] text-slate-500 mt-1">100% verified by invite codes</div>
               </div>
 
-              <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl shadow-xs">
+              <div className="bg-[#0f1523] border border-[#1d273b] p-4 rounded-xl">
                 <div className="flex items-center justify-between text-slate-400 mb-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">
                     Pending Deposits
                   </span>
-                  <ArrowDownLeft className="w-5 h-5 text-amber-400" />
+                  <ArrowDownLeft className="w-4 h-4 text-amber-400" />
                 </div>
-                <div className="text-3xl font-extrabold text-amber-400 font-mono">
+                <div className="text-2xl font-extrabold text-amber-400 font-mono tabular-nums">
                   {pendingDepositsCount}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1">Requires TXID review</div>
+                <div className="text-[11px] text-slate-500 mt-1">Requires TXID review</div>
               </div>
 
-              <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl shadow-xs">
+              <div className="bg-[#0f1523] border border-[#1d273b] p-4 rounded-xl">
                 <div className="flex items-center justify-between text-slate-400 mb-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">
                     Pending Payouts
                   </span>
-                  <ArrowUpRight className="w-5 h-5 text-rose-400" />
+                  <ArrowUpRight className="w-4 h-4 text-rose-400" />
                 </div>
-                <div className="text-3xl font-extrabold text-rose-400 font-mono">
+                <div className="text-2xl font-extrabold text-rose-400 font-mono tabular-nums">
                   {pendingWithdrawalsCount}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1">Awaiting one-click transfer</div>
+                <div className="text-[11px] text-slate-500 mt-1">Awaiting one-click transfer</div>
               </div>
 
-              <div className="bg-slate-950 border border-slate-800 p-4 rounded-2xl shadow-xs">
+              <div className="bg-[#0f1523] border border-[#1d273b] p-4 rounded-xl">
                 <div className="flex items-center justify-between text-slate-400 mb-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">
                     Total Volume (USDT)
                   </span>
-                  <DollarSign className="w-5 h-5 text-emerald-400" />
+                  <DollarSign className="w-4 h-4 text-emerald-400" />
                 </div>
-                <div className="text-2xl font-extrabold text-emerald-400 font-mono">
+                <div className="text-2xl font-extrabold text-emerald-400 font-mono tabular-nums">
                   +{totalApprovedDepositsAmount.toFixed(2)}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1">
+                <div className="text-[11px] text-slate-500 mt-1 tabular-nums">
                   Settled payouts: -{totalApprovedWithdrawalsAmount.toFixed(2)} USDT
                 </div>
               </div>
             </div>
 
             {/* Quick Actions & System Health */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl space-y-3 md:col-span-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-[#0f1523] border border-[#1d273b] p-5 rounded-xl space-y-3 md:col-span-2">
                 <h3 className="font-bold text-sm text-white flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-red-500" />
                   Active Role Privileges for {currentAdmin.name}
@@ -548,10 +673,10 @@ export const AdminPanel: React.FC = () => {
                     return (
                       <div
                         key={p.key}
-                        className={`p-2.5 rounded-xl border text-xs ${
+                        className={`p-2.5 rounded-lg border text-xs ${
                           granted
-                            ? 'bg-slate-900 border-emerald-900/50 text-emerald-300'
-                            : 'bg-slate-900/40 border-slate-800 text-slate-500 line-through opacity-60'
+                            ? 'bg-[#141c2d] border-emerald-900/60 text-emerald-300'
+                            : 'bg-[#0b101b] border-[#1b2436] text-slate-500 line-through opacity-60'
                         }`}
                       >
                         <span className="font-semibold block">{p.label}</span>
@@ -564,7 +689,7 @@ export const AdminPanel: React.FC = () => {
                 </div>
               </div>
 
-              <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl space-y-3">
+              <div className="bg-[#0f1523] border border-[#1d273b] p-5 rounded-xl space-y-3">
                 <h3 className="font-bold text-sm text-white flex items-center gap-2">
                   <Wallet className="w-4 h-4 text-emerald-400" />
                   Official TRC-20 System Wallet
@@ -572,12 +697,12 @@ export const AdminPanel: React.FC = () => {
                 <p className="text-xs text-slate-400 leading-relaxed">
                   Active one-time receiver address served to users in Deposit QR screen:
                 </p>
-                <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg font-mono text-xs text-slate-200 break-all select-all">
+                <div className="p-2.5 bg-[#0b101b] border border-[#1d273b] rounded-lg font-mono text-xs text-slate-200 break-all select-all">
                   {systemConfig.trc20DepositAddress}
                 </div>
                 <button
                   onClick={() => setActiveTab('wallet')}
-                  className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold transition-colors"
+                  className="w-full py-2 bg-[#141c2d] hover:bg-[#1a2438] text-slate-200 border border-[#222f46] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
                 >
                   Manage Wallet Config
                 </button>
@@ -590,22 +715,22 @@ export const AdminPanel: React.FC = () => {
         {/* 2. DEPOSIT REQUESTS TAB */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'deposits' && (
-          <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-xs space-y-4 p-5">
+          <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl overflow-hidden space-y-4 p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-base font-bold text-white">TRC-20 USDT Deposit Management</h2>
+                <h2 className="text-sm font-bold text-white">TRC-20 USDT Deposit Management</h2>
                 <p className="text-xs text-slate-400">
                   Review transaction hashes (TXIDs) and one-click credit user balances
                 </p>
               </div>
 
               {/* Filter */}
-              <div className="flex gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800">
+              <div className="flex gap-1 bg-[#141c2d] p-1 rounded-lg border border-[#1d273b]">
                 {(['pending', 'approved', 'rejected', 'all'] as const).map((st) => (
                   <button
                     key={st}
                     onClick={() => setDepositFilter(st)}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md uppercase transition-colors ${
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md uppercase transition-colors cursor-pointer ${
                       depositFilter === st
                         ? 'bg-red-700 text-white'
                         : 'text-slate-400 hover:text-slate-200'
@@ -620,22 +745,22 @@ export const AdminPanel: React.FC = () => {
             {/* Deposits Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-300">
-                <thead className="bg-slate-900 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
+                <thead className="bg-[#141c2d] text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-y border-[#1d273b]">
                   <tr>
-                    <th className="py-3 px-3">UID / User</th>
-                    <th className="py-3 px-3">Amount</th>
-                    <th className="py-3 px-3">Network</th>
-                    <th className="py-3 px-3">TXID / Transaction Hash</th>
-                    <th className="py-3 px-3">Status</th>
-                    <th className="py-3 px-3">Submitted</th>
-                    <th className="py-3 px-3 text-right">Actions</th>
+                    <th className="py-2.5 px-3">UID / User</th>
+                    <th className="py-2.5 px-3">Amount</th>
+                    <th className="py-2.5 px-3">Network</th>
+                    <th className="py-2.5 px-3">TXID / Transaction Hash</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3">Submitted</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/80">
+                <tbody className="divide-y divide-[#1a2336]">
                   {deposits
                     .filter((d) => (depositFilter === 'all' ? true : d.status === depositFilter))
                     .map((dep) => (
-                      <tr key={dep.id} className="hover:bg-slate-900/40 transition-colors">
+                      <tr key={dep.id} className="hover:bg-[#141d2f] transition-colors">
                         <td className="py-3 px-3">
                           <span className="font-bold text-white block">{dep.username}</span>
                           <span className="text-[11px] font-mono text-slate-400">UID: {dep.userUid}</span>
@@ -751,22 +876,22 @@ export const AdminPanel: React.FC = () => {
         {/* 3. WITHDRAWAL REQUESTS TAB */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'withdrawals' && (
-          <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-xs space-y-4 p-5">
+          <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl overflow-hidden space-y-4 p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-base font-bold text-white">TRC-20 Withdrawal Requests</h2>
+                <h2 className="text-sm font-bold text-white">TRC-20 Withdrawal Requests</h2>
                 <p className="text-xs text-slate-400">
                   Verify destination wallet addresses and execute or reject payout requests
                 </p>
               </div>
 
               {/* Filter */}
-              <div className="flex gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800">
+              <div className="flex gap-1 bg-[#141c2d] p-1 rounded-lg border border-[#1d273b]">
                 {(['pending', 'completed', 'rejected', 'all'] as const).map((st) => (
                   <button
                     key={st}
                     onClick={() => setWithdrawalFilter(st)}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md uppercase transition-colors ${
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md uppercase transition-colors cursor-pointer ${
                       withdrawalFilter === st
                         ? 'bg-red-700 text-white'
                         : 'text-slate-400 hover:text-slate-200'
@@ -780,17 +905,17 @@ export const AdminPanel: React.FC = () => {
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-300">
-                <thead className="bg-slate-900 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
+                <thead className="bg-[#141c2d] text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-y border-[#1d273b]">
                   <tr>
-                    <th className="py-3 px-3">UID / Member</th>
-                    <th className="py-3 px-3">Withdraw Amount</th>
-                    <th className="py-3 px-3">Destination Wallet (TRC-20)</th>
-                    <th className="py-3 px-3">Status</th>
-                    <th className="py-3 px-3">Requested At</th>
-                    <th className="py-3 px-3 text-right">Actions</th>
+                    <th className="py-2.5 px-3">UID / Member</th>
+                    <th className="py-2.5 px-3">Withdraw Amount</th>
+                    <th className="py-2.5 px-3">Destination Wallet (TRC-20)</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3">Requested At</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/80">
+                <tbody className="divide-y divide-[#1a2336]">
                   {withdrawals
                     .filter((w) => {
                       if (withdrawalFilter === 'all') return true;
@@ -798,7 +923,7 @@ export const AdminPanel: React.FC = () => {
                       return w.status === withdrawalFilter;
                     })
                     .map((wd) => (
-                      <tr key={wd.id} className="hover:bg-slate-900/40 transition-colors">
+                      <tr key={wd.id} className="hover:bg-[#141d2f] transition-colors">
                         <td className="py-3 px-3">
                           <span className="font-bold text-white block">{wd.username}</span>
                           <span className="text-[11px] font-mono text-slate-400">UID: {wd.userUid}</span>
@@ -913,11 +1038,11 @@ export const AdminPanel: React.FC = () => {
         {/* 4. USER MANAGEMENT TAB */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'users' && (
-          <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-xs space-y-4 p-5">
+          <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl overflow-hidden space-y-4 p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-3">
-                  <h2 className="text-base font-bold text-white">Registered User Database</h2>
+                  <h2 className="text-sm font-bold text-white">Registered User Database</h2>
                   <button
                     onClick={() => {
                       setDemoUsername(`demo_${Math.random().toString(36).substring(2, 7)}`);
@@ -927,13 +1052,13 @@ export const AdminPanel: React.FC = () => {
                       setDemoWorkPermission(true);
                       setShowDemoModal(true);
                     }}
-                    className="px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+                    className="px-2.5 py-1 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold text-[11px] rounded-lg shadow-xs flex items-center gap-1 transition-all cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>Create Demo Account</span>
+                    <span>Create Demo</span>
                   </button>
                 </div>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-[11px] text-slate-400 mt-0.5">
                   Track auto-assigned 6-digit UIDs, referral codes, work authorizations, demo accounts, and cycle locks
                 </p>
               </div>
@@ -941,12 +1066,12 @@ export const AdminPanel: React.FC = () => {
               {/* Filters & Search */}
               <div className="flex flex-wrap items-center gap-2">
                 {/* Account Type Filter */}
-                <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-xs">
+                <div className="flex bg-[#141c2d] border border-[#1d273b] rounded-lg p-0.5 text-[11px]">
                   <button
                     onClick={() => setUserAccountTypeFilter('all')}
                     className={`px-2.5 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
                       userAccountTypeFilter === 'all'
-                        ? 'bg-slate-800 text-white shadow-xs'
+                        ? 'bg-[#1e2940] text-white shadow-xs'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
@@ -956,7 +1081,7 @@ export const AdminPanel: React.FC = () => {
                     onClick={() => setUserAccountTypeFilter('real')}
                     className={`px-2.5 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
                       userAccountTypeFilter === 'real'
-                        ? 'bg-slate-800 text-white shadow-xs'
+                        ? 'bg-[#1e2940] text-white shadow-xs'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
@@ -976,36 +1101,34 @@ export const AdminPanel: React.FC = () => {
 
                 {/* Search */}
                 <div className="relative w-56">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                   <input
                     type="text"
                     value={userSearch}
                     onChange={(e) => setUserSearch(e.target.value)}
                     placeholder="Search UID or Username..."
-                    className="w-full bg-slate-900 border border-slate-800 text-xs text-white rounded-lg pl-9 pr-3 py-2 focus:outline-hidden focus:ring-1 focus:ring-red-500"
+                    className="w-full bg-slate-900 border border-[#222f46] text-xs text-white rounded-lg pl-8 pr-3 py-1.5 focus:outline-hidden focus:ring-1 focus:ring-red-500"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-300">
-                <thead className="bg-slate-900 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
+            <div className="overflow-x-auto lg:overflow-x-hidden">
+              <table className="w-full text-left text-[11px] text-slate-300">
+                <thead className="bg-[#141c2d] text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-y border-[#1d273b]">
                   <tr>
-                    <th className="py-3 px-3">UID (6-digit)</th>
-                    <th className="py-3 px-3">Username & Type</th>
-                    <th className="py-3 px-3">Balance (USDT)</th>
-                    <th className="py-3 px-3">VIP Tier</th>
-                    <th className="py-3 px-3">Bound TRC-20 Wallet</th>
-                    <th className="py-3 px-3">Own Code / Referred By</th>
-                    <th className="py-3 px-3">Work Permission</th>
-                    <th className="py-3 px-3">Status</th>
-                    <th className="py-3 px-3">25-Task Cycle</th>
-                    <th className="py-3 px-3">Withdraw Pass</th>
-                    <th className="py-3 px-3 text-right">Admin Actions</th>
+                    <th className="py-2 px-1.5 sm:px-2">User &amp; UID</th>
+                    <th className="py-2 px-1.5 sm:px-2">Balance</th>
+                    <th className="py-2 px-1.5 sm:px-2">VIP</th>
+                    <th className="py-2 px-1.5 sm:px-2">Wallet</th>
+                    <th className="py-2 px-1.5 sm:px-2">Code</th>
+                    <th className="py-2 px-1.5 sm:px-2">Work Auth</th>
+                    <th className="py-2 px-1.5 sm:px-2">Status</th>
+                    <th className="py-2 px-1.5 sm:px-2">Task Cycle</th>
+                    <th className="py-2 px-1.5 sm:px-2 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/80">
+                <tbody className="divide-y divide-[#1a2336]">
                   {users
                     .filter((u) => {
                       if (userAccountTypeFilter === 'real') return !u.isDemoAccount;
@@ -1029,30 +1152,30 @@ export const AdminPanel: React.FC = () => {
                         key={user.id}
                         onClick={() => setRecoveryModalUser(user)}
                         title="Click row to open Edit User State & Order Details"
-                        className="hover:bg-slate-900/60 transition-colors cursor-pointer group"
+                        className="hover:bg-[#141d2f] transition-colors cursor-pointer group align-middle"
                       >
-                        <td className="py-3 px-3 font-mono font-bold text-amber-400">
-                          <span className="group-hover:underline">{user.uid}</span>
-                          <span className="block text-[9px] text-slate-500 group-hover:text-amber-300 font-sans font-normal transition-colors">
-                            Edit State
-                          </span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-white block group-hover:text-amber-300 transition-colors">
+                        <td className="py-2 px-1.5 sm:px-2 max-w-[170px]">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <span className="font-semibold text-white text-xs truncate group-hover:text-amber-300 transition-colors">
                               {user.username}
                             </span>
                             {user.isDemoAccount && (
-                              <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[9px] font-black uppercase tracking-wider">
+                              <span className="px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[9px] font-black uppercase tracking-wider shrink-0">
                                 Demo
                               </span>
                             )}
                           </div>
-                          <span className="text-[10px] text-slate-500">{user.createdAt.substring(0, 10)}</span>
+                          <div className="flex items-center gap-1 mt-0.5 text-[10px] text-slate-400 font-mono tabular-nums">
+                            <span className="group-hover:text-amber-300 transition-colors">
+                              UID: {user.uid}
+                            </span>
+                            <span className="text-slate-600">·</span>
+                            <span className="text-slate-500 font-sans truncate">{user.createdAt.substring(0, 10)}</span>
+                          </div>
                           {user.isDemoAccount && (
-                            <div className="mt-1 space-y-0.5">
-                              <span className="text-[9px] font-mono text-cyan-400 block truncate max-w-[200px]" title={user.demoWalletAddress}>
-                                TRC-20: {user.demoWalletAddress ? `${user.demoWalletAddress.substring(0, 8)}...${user.demoWalletAddress.substring(user.demoWalletAddress.length - 6)}` : 'Pool'}
+                            <div className="mt-0.5 space-y-0.5">
+                              <span className="text-[9px] font-mono text-cyan-400 block truncate max-w-[155px]" title={user.demoWalletAddress}>
+                                {user.demoWalletAddress ? `${user.demoWalletAddress.substring(0, 6)}...${user.demoWalletAddress.substring(user.demoWalletAddress.length - 5)}` : 'Pool'}
                               </span>
                               <span className="text-[9px] text-cyan-300/90 font-bold block">
                                 Combos: #9, #14, #19, #24
@@ -1061,18 +1184,18 @@ export const AdminPanel: React.FC = () => {
                           )}
                           <div className="flex flex-wrap gap-1 mt-1">
                             {user.isVipAccount && (
-                              <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[9px] font-bold">
-                                ★ VIP (5 Combos)
+                              <span className="px-1 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[9px] font-bold">
+                                ★ VIP (5)
                               </span>
                             )}
                             {user.isLockedAccount && (
-                              <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-bold">
+                              <span className="px-1 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-bold">
                                 🔒 WD LOCKED
                               </span>
                             )}
                             {user.customCombos && user.customCombos.length > 0 && !user.isDemoAccount && (
                               <span
-                                className="px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[9px] font-bold"
+                                className="px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[9px] font-bold"
                                 title={
                                   user.customCombos.length < 5
                                     ? `Hybrid active: ${user.customCombos.length} custom triggers + ${5 - user.customCombos.length} auto-filled fallbacks (${Math.max(5, user.customCombos.length)} combos total per cycle)`
@@ -1080,55 +1203,49 @@ export const AdminPanel: React.FC = () => {
                                 }
                               >
                                 ⚡ {user.customCombos.length} Custom
-                                {user.customCombos.length < 5
-                                  ? ` + ${5 - user.customCombos.length} Auto (5 Combos)`
-                                  : ` Combos (${user.customCombos.length} Active)`}
                               </span>
                             )}
                             {user.balance >= 50000 && (
                               user.taxPaid ? (
-                                <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
-                                  ✓ 25% Tax Cleared (Current WD)
+                                <span className="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
+                                  ✓ Tax OK
                                 </span>
                               ) : (
-                                <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold">
-                                  ⚠ Recurring 25% Tax Pending (${(user.balance * 0.25).toFixed(0)})
+                                <span className="px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold">
+                                  ⚠ 25% Tax (${(user.balance * 0.25).toFixed(0)})
                                 </span>
                               )
                             )}
                           </div>
                         </td>
-                        <td className="py-3 px-3 font-mono font-bold text-white text-sm">
-                          {user.balance.toFixed(2)} USDT
+                        <td className="py-2 px-1.5 sm:px-2 font-mono font-bold text-white tabular-nums">
+                          <span className="text-xs block">{user.balance.toFixed(2)}</span>
+                          <span className="text-[9px] text-slate-500 font-semibold">USDT</span>
                         </td>
-                        <td className="py-3 px-3">
-                          <div className="space-y-1">
-                            <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold text-[10px] block w-fit">
-                              VIP {user.vipLevel}
-                            </span>
-                          </div>
+                        <td className="py-2 px-1.5 sm:px-2 whitespace-nowrap">
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/35 font-bold text-[10px] inline-block">
+                            VIP {user.vipLevel}
+                          </span>
                         </td>
                         {/* Bound TRC-20 Wallet Column (Locked) */}
-                        <td className="py-3 px-3">
+                        <td className="py-2 px-1.5 sm:px-2 max-w-[125px]">
                           {user.wallet ? (
-                            <div className="space-y-1">
+                            <div className="space-y-0.5">
                               <div className="flex items-center gap-1">
                                 <span
-                                  className="font-mono text-xs text-emerald-400 font-bold block truncate max-w-[130px] select-all cursor-pointer hover:underline"
-                                  title={user.wallet.walletAddress}
+                                  className="font-mono text-[11px] text-emerald-400 font-bold truncate select-all cursor-pointer hover:underline"
+                                  title={`${user.wallet.walletAddress} (Locked)`}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     navigator.clipboard.writeText(user.wallet!.walletAddress);
                                     notify({ success: true, message: 'TRC-20 address copied!' });
                                   }}
                                 >
-                                  {user.wallet.walletAddress.substring(0, 6)}...{user.wallet.walletAddress.substring(user.wallet.walletAddress.length - 4)}
+                                  {user.wallet.walletAddress.substring(0, 5)}...{user.wallet.walletAddress.substring(user.wallet.walletAddress.length - 4)}
                                 </span>
-                                <span className="px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold flex items-center gap-0.5">
-                                  <Lock className="w-2.5 h-2.5 text-amber-400" /> Locked
-                                </span>
+                                <Lock className="w-2.5 h-2.5 text-amber-400 shrink-0" aria-label="Wallet Locked" />
                               </div>
-                              <span className="text-[10px] text-slate-400 block truncate max-w-[130px]">
+                              <span className="text-[10px] text-slate-400 block truncate">
                                 {user.wallet.accountName}
                               </span>
                             </div>
@@ -1136,40 +1253,37 @@ export const AdminPanel: React.FC = () => {
                             <span className="text-slate-500 text-[10px] italic">Not Bound</span>
                           )}
                         </td>
-                        <td className="py-3 px-3">
-                          <div className="space-y-1">
-                            <span className="font-mono text-emerald-400 font-bold block text-xs">
-                              Code: {user.inviteCode || user.uid}
+                        <td className="py-2 px-1.5 sm:px-2 max-w-[130px]">
+                          <div className="space-y-0.5">
+                            <span className="font-mono text-emerald-400 font-bold block text-[11px] truncate">
+                              {user.inviteCode || user.uid}
                             </span>
-                            <div className="flex items-center gap-1 flex-wrap">
-                              <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
-                                REFERRED BY:
-                              </span>
+                            <div className="text-[10px] text-slate-400 truncate" title={user.referredBy ? `Referred by: ${user.referredBy}${referrerUser ? ` (${referrerUser.username})` : ''}` : 'Direct / None'}>
                               {user.referredBy ? (
-                                <span className="font-mono text-xs text-slate-200 font-semibold">
-                                  {user.referredBy}
+                                <span className="font-mono text-slate-300">
+                                  Ref: {user.referredBy}
                                   {referrerUser && (
-                                    <span className="text-emerald-400 ml-1 font-sans font-medium text-[11px]">
+                                    <span className="text-emerald-400 ml-1 font-sans">
                                       ({referrerUser.username})
                                     </span>
                                   )}
                                 </span>
                               ) : (
-                                <span className="text-slate-500 text-[10px] italic">Direct / None</span>
+                                <span className="text-slate-500 italic">Direct</span>
                               )}
                             </div>
                           </div>
                         </td>
                         {/* Work Permission Column */}
-                        <td className="py-3 px-3">
+                        <td className="py-2 px-1.5 sm:px-2 whitespace-nowrap">
                           <div className="space-y-1">
                             {user.workPermission === true ? (
-                              <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-[10px] inline-flex items-center gap-1">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Granted
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/35 font-bold text-[10px] inline-flex items-center gap-1">
+                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" /> Granted
                               </span>
                             ) : (
-                              <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold text-[10px] inline-flex items-center gap-1">
-                                <Lock className="w-3 h-3 text-rose-400" /> Pending
+                              <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/35 font-bold text-[10px] inline-flex items-center gap-1">
+                                <Lock className="w-2.5 h-2.5 text-rose-400" /> Pending
                               </span>
                             )}
                             <button
@@ -1200,34 +1314,47 @@ export const AdminPanel: React.FC = () => {
                             </button>
                           </div>
                         </td>
-                        <td className="py-3 px-3">
-                          {user.status === 'active' ? (
-                            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold text-[10px]">
-                              ACTIVE
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold text-[10px]">
-                              FROZEN
-                            </span>
-                          )}
+                        <td className="py-2 px-1.5 sm:px-2 whitespace-nowrap">
+                          <div className="space-y-1">
+                            {user.status === 'active' ? (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-semibold text-[10px] inline-block">
+                                ACTIVE
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 font-semibold text-[10px] inline-block">
+                                FROZEN
+                              </span>
+                            )}
+                            <div className="text-[9px] flex items-center gap-1">
+                              {user.withdrawalPassword ? (
+                                <span className="text-emerald-400/90 flex items-center gap-0.5" title="Withdrawal Password Set">
+                                  <CheckCircle2 className="w-2.5 h-2.5" /> Pass Set
+                                </span>
+                              ) : (
+                                <span className="text-amber-400/90 flex items-center gap-0.5" title="Withdrawal Password Not Set">
+                                  <Clock className="w-2.5 h-2.5" /> No Pass
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </td>
                         {/* 25-Task Work Cycle Progress */}
-                        <td className="py-3 px-3">
+                        <td className="py-2 px-1.5 sm:px-2 whitespace-nowrap">
                           <div className="space-y-1">
-                            <div className="flex items-center gap-1.5 font-bold text-xs">
+                            <div className="flex items-center gap-1 font-bold text-[11px] tabular-nums">
                               <span className="text-white">
-                                {user.currentCycleTasks || 0} / 25 Tasks
+                                {user.currentCycleTasks || 0}/25
                               </span>
-                              <span className="text-[10px] text-slate-400 font-normal">
-                                (Cycle #{user.cycleNumber || 1})
+                              <span className="text-[9px] text-slate-400 font-normal">
+                                · C#{user.cycleNumber || 1}
                               </span>
                             </div>
                             {(user.currentCycleTasks || 0) >= 25 || !user.cycleApprovedByAdmin ? (
-                              <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold text-[10px] inline-flex items-center gap-1">
-                                <Lock className="w-3 h-3 text-rose-400" /> Locked (Cycle Done)
+                              <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/35 font-bold text-[9px] inline-flex items-center gap-0.5">
+                                <Lock className="w-2.5 h-2.5 text-rose-400" /> Locked
                               </span>
                             ) : (
-                              <div className="w-28 bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                              <div className="w-16 bg-slate-800 rounded-full h-1.5 overflow-hidden">
                                 <div
                                   className="bg-emerald-500 h-full rounded-full transition-all"
                                   style={{
@@ -1238,27 +1365,16 @@ export const AdminPanel: React.FC = () => {
                             )}
                           </div>
                         </td>
-                        <td className="py-3 px-3">
-                          {user.withdrawalPassword ? (
-                            <span className="text-emerald-400 text-[11px] flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> Set
-                            </span>
-                          ) : (
-                            <span className="text-amber-400 text-[11px] flex items-center gap-1">
-                              <Clock className="w-3 h-3" /> Not Set
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex flex-wrap items-center justify-end gap-1.5 max-w-[440px]">
+                        <td className="py-2 px-1.5 sm:px-2 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="inline-flex flex-wrap items-center justify-end gap-1 max-w-[186px]">
                             {/* Open Comprehensive State & Order Recovery Editor */}
                             <button
                               onClick={() => setRecoveryModalUser(user)}
                               title="Edit User State & Order Details (Balance, Order #, Combo Config)"
-                              className="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-500/40 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer"
+                              className="h-6 px-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-semibold rounded-md transition-colors inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
                             >
                               <Edit className="w-3 h-3 text-amber-400" />
-                              <span>Edit State</span>
+                              <span>Edit</span>
                             </button>
 
                             {/* Quick Login / Switch to User Account */}
@@ -1268,17 +1384,17 @@ export const AdminPanel: React.FC = () => {
                                 setActiveView('user');
                               }}
                               title={`Switch to ${user.username}'s account and open user app / teams`}
-                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer shadow-xs border ${
+                              className={`h-6 px-2 text-[11px] font-semibold rounded-md transition-colors inline-flex items-center gap-1 cursor-pointer border whitespace-nowrap ${
                                 user.isDemoAccount
-                                  ? 'bg-cyan-900/80 hover:bg-cyan-800 text-cyan-200 border-cyan-500/40'
-                                  : 'bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 border-indigo-500/40'
+                                  ? 'bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                                  : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
                               }`}
                             >
-                              <ExternalLink className="w-3 h-3 text-indigo-300" />
-                              <span>{user.isDemoAccount ? 'Login Demo' : 'Login User'}</span>
+                              <ExternalLink className="w-3 h-3" />
+                              <span>{user.isDemoAccount ? 'Demo' : 'Login'}</span>
                             </button>
 
-                            {/* Work Permission Toggle */}
+                            {/* Work Permission Toggle (Expanded micro-pill if pending, compact icon if granted) */}
                             <button
                               onClick={() => {
                                 if (!hasPermission('can_manage_users')) {
@@ -1295,19 +1411,22 @@ export const AdminPanel: React.FC = () => {
                                   },
                                 });
                               }}
-                              title={user.workPermission === true ? 'Revoke Work Permission' : 'Grant Work Permission (allow task grabbing)'}
-                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer ${
+                              title={user.workPermission === true ? 'Work Permission Granted — Click to Revoke' : 'Grant Work Permission (allow task grabbing)'}
+                              aria-label={user.workPermission === true ? 'Revoke Work Permission' : 'Grant Work Permission'}
+                              className={`h-6 rounded-md transition-colors inline-flex items-center justify-center cursor-pointer border whitespace-nowrap ${
                                 user.workPermission === true
-                                  ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                  : 'bg-emerald-600 hover:bg-emerald-500 text-white font-black shadow-xs ring-1 ring-emerald-400/50'
+                                  ? 'w-6 bg-[#141c2d] hover:bg-rose-950/60 text-emerald-400 hover:text-rose-300 border-[#222f46] hover:border-rose-700/50'
+                                  : 'px-2 gap-1 bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 text-[11px] font-semibold shadow-xs'
                               }`}
                             >
                               {user.workPermission === true ? (
-                                <UserCheck className="w-3 h-3 text-emerald-400" />
+                                <UserCheck className="w-3 h-3" />
                               ) : (
-                                <ShieldAlert className="w-3 h-3 text-white" />
+                                <>
+                                  <ShieldAlert className="w-3 h-3 text-white" />
+                                  <span>Grant</span>
+                                </>
                               )}
-                              <span>{user.workPermission === true ? 'Work OK' : 'Grant Work'}</span>
                             </button>
 
                             {/* Reset Task Cycle & Approve Next 25 Tasks Button */}
@@ -1328,114 +1447,17 @@ export const AdminPanel: React.FC = () => {
                                 });
                               }}
                               title="Reset Task Cycle & Approve Next 25 Tasks"
-                              className={`px-2 py-1 text-xs font-bold rounded transition-all flex items-center gap-1 cursor-pointer ${
+                              aria-label="Reset Task Cycle & Approve Next 25 Tasks"
+                              className={`h-6 rounded-md transition-all inline-flex items-center justify-center cursor-pointer border whitespace-nowrap ${
                                 (user.currentCycleTasks || 0) >= 25 || !user.cycleApprovedByAdmin
-                                  ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-md ring-2 ring-amber-400/50'
-                                  : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30'
+                                  ? 'px-2 gap-1 bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-400 text-[11px] font-bold shadow-xs'
+                                  : 'w-6 bg-[#141c2d] hover:bg-[#1c273d] text-amber-300 border-amber-500/25'
                               }`}
                             >
                               <RefreshCw className="w-3 h-3 shrink-0" />
-                              <span className="whitespace-nowrap">Approve 25 Tasks</span>
-                            </button>
-
-                            {/* Reset to Fresh Cycle 1 Button */}
-                            <button
-                              onClick={() => {
-                                if (!hasPermission('can_manage_users')) {
-                                  notify(resetUserToFreshCycle(user.id));
-                                  return;
-                                }
-                                requestConfirmation({
-                                  title: 'Reset Account to Fresh Cycle 1?',
-                                  description: `Are you sure you want to reset ${user.username} (UID: ${user.uid}) back to Fresh Cycle 1 (0/25 progress and cleared pending order)? Click Confirm to proceed.`,
-                                  confirmLabel: 'Confirm Fresh Cycle 1',
-                                  variant: 'danger',
-                                  onConfirm: () => {
-                                    notify(resetUserToFreshCycle(user.id));
-                                  },
-                                });
-                              }}
-                              title="Reset user to Fresh Cycle 1 (Progress 0, 1 Combo planned for Task #14 or #15)"
-                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-cyan-500/20 cursor-pointer"
-                            >
-                              <RotateCcw className="w-3 h-3 text-cyan-400" />
-                              <span className="whitespace-nowrap">Fresh Cycle 1</span>
-                            </button>
-
-                            {/* VIP Toggle (5 Combo Orders schedule) */}
-                            <button
-                              onClick={() => {
-                                if (!hasPermission('can_manage_users')) {
-                                  notify(toggleUserVip(user.id));
-                                  return;
-                                }
-                                requestConfirmation({
-                                  title: user.isVipAccount ? 'Disable VIP 5-Combo Mode?' : 'Enable VIP 5-Combo Mode?',
-                                  description: `Are you sure you want to ${user.isVipAccount ? 'disable VIP 5-Combo mode' : 'mark account as VIP (5 Combos)'} for ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
-                                  confirmLabel: 'Confirm',
-                                  variant: 'warning',
-                                  onConfirm: () => {
-                                    notify(toggleUserVip(user.id));
-                                  },
-                                });
-                              }}
-                              title={user.isVipAccount ? 'Disable VIP Account' : 'Mark as VIP Account (Enforces 5 Combos schedule)'}
-                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer ${
-                                user.isVipAccount
-                                  ? 'bg-purple-900/80 text-purple-200 border border-purple-500 hover:bg-purple-800'
-                                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                              }`}
-                            >
-                              <Sparkles className="w-3 h-3 text-purple-400" />
-                              <span>{user.isVipAccount ? 'VIP (5 Combos)' : 'Set VIP'}</span>
-                            </button>
-
-                            {/* Account Lock Toggle (Tasks work, Withdrawal blocked) */}
-                            <button
-                              onClick={() => {
-                                if (!hasPermission('can_manage_users')) {
-                                  notify(toggleUserLock(user.id));
-                                  return;
-                                }
-                                requestConfirmation({
-                                  title: user.isLockedAccount ? 'Unlock Account Withdrawal?' : 'Lock Account Withdrawal?',
-                                  description: `Are you sure you want to ${user.isLockedAccount ? 'unlock withdrawals' : 'lock withdrawals (tasks work, withdrawals blocked)'} for ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
-                                  confirmLabel: 'Confirm',
-                                  variant: user.isLockedAccount ? 'success' : 'warning',
-                                  onConfirm: () => {
-                                    notify(toggleUserLock(user.id));
-                                  },
-                                });
-                              }}
-                              title={user.isLockedAccount ? 'Unlock Account Withdrawal' : 'Lock Account Withdrawal (Tasks work, WD strictly blocked)'}
-                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 cursor-pointer ${
-                                user.isLockedAccount
-                                  ? 'bg-rose-900/80 text-rose-200 border border-rose-500 hover:bg-rose-800'
-                                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                              }`}
-                            >
-                              {user.isLockedAccount ? (
-                                <Lock className="w-3 h-3 text-rose-400" />
-                              ) : (
-                                <Unlock className="w-3 h-3 text-slate-400" />
+                              {((user.currentCycleTasks || 0) >= 25 || !user.cycleApprovedByAdmin) && (
+                                <span>25 Tasks</span>
                               )}
-                              <span>{user.isLockedAccount ? 'WD Locked' : 'Lock WD'}</span>
-                            </button>
-
-                            {/* Custom Combos Config Button */}
-                            <button
-                              onClick={() => {
-                                setComboModalUser(user);
-                                setCustomRulesList(user.customCombos || []);
-                                setNewComboStep('14');
-                                setNewComboDepositPct('36');
-                                setNewComboCommPct('20');
-                              }}
-                              title="Configure Custom Combo Triggers & Percentages"
-                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-amber-500/20 cursor-pointer"
-                            >
-                              <Layers className="w-3 h-3 text-amber-400" />
-                              <span>Custom Combos</span>
                             </button>
 
                             {/* Clear Tax Button if balance >= 50k and not paid */}
@@ -1457,12 +1479,112 @@ export const AdminPanel: React.FC = () => {
                                   });
                                 }}
                                 title="Clear / Approve Recurring 25% Tax Requirement for Current Withdrawal"
-                                className="px-2 py-1 bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 text-xs font-bold rounded transition-colors flex items-center gap-1 border border-emerald-500 cursor-pointer"
+                                className="h-6 px-2 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 text-[11px] font-semibold rounded-md transition-colors inline-flex items-center gap-1 border border-emerald-500/40 cursor-pointer whitespace-nowrap"
                               >
                                 <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                                <span>Clear Tax</span>
+                                <span>Tax</span>
                               </button>
                             )}
+
+                            {/* Reset to Fresh Cycle 1 Button */}
+                            <button
+                              onClick={() => {
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(resetUserToFreshCycle(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: 'Reset Account to Fresh Cycle 1?',
+                                  description: `Are you sure you want to reset ${user.username} (UID: ${user.uid}) back to Fresh Cycle 1 (0/25 progress and cleared pending order)? Click Confirm to proceed.`,
+                                  confirmLabel: 'Confirm Fresh Cycle 1',
+                                  variant: 'danger',
+                                  onConfirm: () => {
+                                    notify(resetUserToFreshCycle(user.id));
+                                  },
+                                });
+                              }}
+                              title="Reset user to Fresh Cycle 1 (Progress 0, 1 Combo planned for Task #14 or #15)"
+                              aria-label="Reset to Fresh Cycle 1"
+                              className="w-6 h-6 bg-[#141c2d] hover:bg-[#1c273d] text-cyan-300 rounded-md transition-colors inline-flex items-center justify-center border border-[#222f46] hover:border-cyan-500/40 cursor-pointer"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                            </button>
+
+                            {/* VIP Toggle (5 Combo Orders schedule) */}
+                            <button
+                              onClick={() => {
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(toggleUserVip(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: user.isVipAccount ? 'Disable VIP 5-Combo Mode?' : 'Enable VIP 5-Combo Mode?',
+                                  description: `Are you sure you want to ${user.isVipAccount ? 'disable VIP 5-Combo mode' : 'mark account as VIP (5 Combos)'} for ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
+                                  confirmLabel: 'Confirm',
+                                  variant: 'warning',
+                                  onConfirm: () => {
+                                    notify(toggleUserVip(user.id));
+                                  },
+                                });
+                              }}
+                              title={user.isVipAccount ? 'VIP Active (5 Combos) — Click to Disable' : 'Mark as VIP Account (Enforces 5 Combos schedule)'}
+                              aria-label={user.isVipAccount ? 'Disable VIP Account' : 'Enable VIP Account'}
+                              className={`w-6 h-6 rounded-md transition-colors inline-flex items-center justify-center border cursor-pointer ${
+                                user.isVipAccount
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 hover:bg-purple-500/30'
+                                  : 'bg-[#141c2d] text-slate-400 border-[#222f46] hover:text-purple-300 hover:bg-[#1c273d]'
+                              }`}
+                            >
+                              <Sparkles className="w-3 h-3" />
+                            </button>
+
+                            {/* Account Lock Toggle (Tasks work, Withdrawal blocked) */}
+                            <button
+                              onClick={() => {
+                                if (!hasPermission('can_manage_users')) {
+                                  notify(toggleUserLock(user.id));
+                                  return;
+                                }
+                                requestConfirmation({
+                                  title: user.isLockedAccount ? 'Unlock Account Withdrawal?' : 'Lock Account Withdrawal?',
+                                  description: `Are you sure you want to ${user.isLockedAccount ? 'unlock withdrawals' : 'lock withdrawals (tasks work, withdrawals blocked)'} for ${user.username} (UID: ${user.uid})? Click Confirm to proceed.`,
+                                  confirmLabel: 'Confirm',
+                                  variant: user.isLockedAccount ? 'success' : 'warning',
+                                  onConfirm: () => {
+                                    notify(toggleUserLock(user.id));
+                                  },
+                                });
+                              }}
+                              title={user.isLockedAccount ? 'Withdrawals Locked — Click to Unlock' : 'Lock Account Withdrawals (Tasks work, WD blocked)'}
+                              aria-label={user.isLockedAccount ? 'Unlock Account Withdrawal' : 'Lock Account Withdrawal'}
+                              className={`w-6 h-6 rounded-md transition-colors inline-flex items-center justify-center border cursor-pointer ${
+                                user.isLockedAccount
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 hover:bg-rose-500/30'
+                                  : 'bg-[#141c2d] text-slate-400 border-[#222f46] hover:text-rose-300 hover:bg-[#1c273d]'
+                              }`}
+                            >
+                              {user.isLockedAccount ? (
+                                <Lock className="w-3 h-3" />
+                              ) : (
+                                <Unlock className="w-3 h-3" />
+                              )}
+                            </button>
+
+                            {/* Custom Combos Config Button */}
+                            <button
+                              onClick={() => {
+                                setComboModalUser(user);
+                                setCustomRulesList(user.customCombos || []);
+                                setNewComboStep('14');
+                                setNewComboDepositPct('36');
+                                setNewComboCommPct('20');
+                              }}
+                              title="Configure Custom Combo Triggers & Percentages"
+                              aria-label="Configure Custom Combos"
+                              className="w-6 h-6 bg-[#141c2d] hover:bg-[#1c273d] text-amber-300 rounded-md transition-colors inline-flex items-center justify-center border border-[#222f46] hover:border-amber-500/40 cursor-pointer"
+                            >
+                              <Layers className="w-3 h-3" />
+                            </button>
 
                             {/* Adjust balance */}
                             <button
@@ -1476,11 +1598,11 @@ export const AdminPanel: React.FC = () => {
                                 setAdjustAmount('');
                                 setAdjustReason('Manual admin adjustment');
                               }}
-                              title="Modify USDT balance"
-                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded transition-colors flex items-center gap-1 cursor-pointer"
+                              title="Adjust USDT Balance"
+                              aria-label="Adjust USDT Balance"
+                              className="w-6 h-6 bg-[#141c2d] hover:bg-[#1c273d] text-emerald-300 rounded-md transition-colors inline-flex items-center justify-center border border-[#222f46] hover:border-emerald-500/40 cursor-pointer"
                             >
                               <DollarSign className="w-3 h-3" />
-                              <span>Adjust</span>
                             </button>
 
                             {/* Reset / Unlock Bound TRC-20 Wallet Address */}
@@ -1493,14 +1615,14 @@ export const AdminPanel: React.FC = () => {
                                 setAdminWalletError('');
                               }}
                               title={user.wallet ? "Reset or Unlock user's bound TRC-20 wallet address" : "Bind / Setup user's TRC-20 wallet address"}
-                              className={`px-2 py-1 text-xs font-bold rounded transition-colors flex items-center gap-1 border cursor-pointer ${
+                              aria-label={user.wallet ? 'Reset Wallet' : 'Bind Wallet'}
+                              className={`w-6 h-6 rounded-md transition-colors inline-flex items-center justify-center border cursor-pointer ${
                                 user.wallet
-                                  ? 'bg-amber-950/80 hover:bg-amber-900 text-amber-300 border-amber-600/60'
-                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-400 border-slate-700'
+                                  ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/40'
+                                  : 'bg-[#141c2d] hover:bg-[#1c273d] text-slate-400 border-[#222f46]'
                               }`}
                             >
-                              <Wallet className="w-3 h-3 text-amber-400" />
-                              <span>{user.wallet ? 'Reset Wallet' : 'Bind Wallet'}</span>
+                              <Wallet className="w-3 h-3" />
                             </button>
 
                             {/* Reset Password */}
@@ -1513,10 +1635,11 @@ export const AdminPanel: React.FC = () => {
                                 });
                                 setNewPassword('');
                               }}
-                              title="Reset Password"
-                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded transition-colors cursor-pointer"
+                              title="Reset Login / Withdrawal Password"
+                              aria-label="Reset Password"
+                              className="w-6 h-6 bg-[#141c2d] hover:bg-[#1c273d] text-slate-300 rounded-md transition-colors inline-flex items-center justify-center border border-[#222f46] cursor-pointer"
                             >
-                              <Key className="w-3.5 h-3.5" />
+                              <Key className="w-3 h-3" />
                             </button>
 
                             {/* Freeze / Unfreeze */}
@@ -1536,17 +1659,18 @@ export const AdminPanel: React.FC = () => {
                                   },
                                 });
                               }}
-                              title={user.status === 'active' ? 'Freeze User' : 'Unfreeze User'}
-                              className={`p-1.5 rounded transition-colors cursor-pointer ${
+                              title={user.status === 'active' ? 'Freeze User Account' : 'Unfreeze User Account'}
+                              aria-label={user.status === 'active' ? 'Freeze User Account' : 'Unfreeze User Account'}
+                              className={`w-6 h-6 rounded-md transition-colors inline-flex items-center justify-center border cursor-pointer ${
                                 user.status === 'active'
-                                  ? 'bg-rose-950 text-rose-300 hover:bg-rose-900 border border-rose-800/60'
-                                  : 'bg-emerald-950 text-emerald-300 hover:bg-emerald-900 border border-emerald-800/60'
+                                  ? 'bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border-rose-500/30'
+                                  : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border-emerald-500/40'
                               }`}
                             >
                               {user.status === 'active' ? (
-                                <Lock className="w-3.5 h-3.5" />
+                                <XCircle className="w-3 h-3" />
                               ) : (
-                                <Unlock className="w-3.5 h-3.5" />
+                                <CheckCircle2 className="w-3 h-3" />
                               )}
                             </button>
                           </div>
@@ -1564,11 +1688,11 @@ export const AdminPanel: React.FC = () => {
         {/* 5. INVITATION CODE GENERATOR TAB */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'invites' && (
-          <div className="space-y-6">
+          <div className="space-y-5">
             {/* Generator Form Card */}
-            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 shadow-xs grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Single custom invite generator */}
-              <div className="space-y-3 pr-0 md:pr-4 md:border-r border-slate-800">
+              <div className="space-y-3 pr-0 md:pr-4 md:border-r border-[#1d273b]">
                 <h3 className="font-bold text-sm text-white flex items-center gap-2">
                   <Plus className="w-4 h-4 text-emerald-400" />
                   Generate Custom System Invite Code
@@ -1671,7 +1795,7 @@ export const AdminPanel: React.FC = () => {
             </div>
 
             {/* Master Tracking Table */}
-            <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-xs p-5 space-y-4">
+            <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl overflow-hidden p-4 sm:p-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-sm text-white">
@@ -1682,12 +1806,12 @@ export const AdminPanel: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="flex gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800">
+                <div className="flex gap-1 bg-[#141c2d] p-1 rounded-lg border border-[#1d273b]">
                   {(['all', 'system', 'user'] as const).map((filter) => (
                     <button
                       key={filter}
                       onClick={() => setInviteFilter(filter)}
-                      className={`px-3 py-1 text-xs font-semibold rounded-md uppercase transition-colors ${
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-md uppercase transition-colors cursor-pointer ${
                         inviteFilter === filter
                           ? 'bg-red-700 text-white'
                           : 'text-slate-400 hover:text-slate-200'
@@ -1701,23 +1825,23 @@ export const AdminPanel: React.FC = () => {
 
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-slate-900 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
+                  <thead className="bg-[#141c2d] text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-y border-[#1d273b]">
                     <tr>
-                      <th className="py-3 px-3">Code</th>
-                      <th className="py-3 px-3">Origin Type</th>
-                      <th className="py-3 px-3">Created By</th>
-                      <th className="py-3 px-3">Usage Count</th>
-                      <th className="py-3 px-3">Limit</th>
-                      <th className="py-3 px-3">Status</th>
-                      <th className="py-3 px-3">Created Date</th>
-                      <th className="py-3 px-3 text-right">Toggle</th>
+                      <th className="py-2.5 px-3">Code</th>
+                      <th className="py-2.5 px-3">Origin Type</th>
+                      <th className="py-2.5 px-3">Created By</th>
+                      <th className="py-2.5 px-3">Usage Count</th>
+                      <th className="py-2.5 px-3">Limit</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Created Date</th>
+                      <th className="py-2.5 px-3 text-right">Toggle</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/80">
+                  <tbody className="divide-y divide-[#1a2336]">
                     {inviteCodes
                       .filter((c) => (inviteFilter === 'all' ? true : c.type === inviteFilter))
                       .map((c) => (
-                        <tr key={c.id} className="hover:bg-slate-900/40 transition-colors">
+                        <tr key={c.id} className="hover:bg-[#141d2f] transition-colors">
                           <td className="py-3 px-3 font-mono font-bold text-amber-400 text-sm">
                             {c.code}
                           </td>
@@ -1778,10 +1902,10 @@ export const AdminPanel: React.FC = () => {
         {/* 6. SUB-ADMIN MANAGEMENT & RBAC TAB */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'subadmins' && (
-          <div className="space-y-6">
-            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 shadow-xs flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-5">
+            <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-base font-bold text-white">Sub-Admin Role & Permission Engine</h2>
+                <h2 className="text-sm font-bold text-white">Sub-Admin Role &amp; Permission Engine</h2>
                 <p className="text-xs text-slate-400">
                   Super Admin can create unlimited Sub-Admins with granular, toggleable permissions
                 </p>
@@ -1790,7 +1914,7 @@ export const AdminPanel: React.FC = () => {
               {currentAdmin.role === 'super_admin' ? (
                 <button
                   onClick={() => setShowAddSubAdminModal(true)}
-                  className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm"
+                  className="px-3.5 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Create Sub-Admin Account</span>
@@ -1820,7 +1944,7 @@ export const AdminPanel: React.FC = () => {
                 return (
                   <div
                     key={adm.id}
-                    className="bg-slate-950 border border-slate-800 rounded-2xl p-5 shadow-xs space-y-4"
+                    className="bg-[#0f1523] border border-[#1d273b] rounded-xl p-5 space-y-4"
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-3">
@@ -1928,8 +2052,8 @@ export const AdminPanel: React.FC = () => {
         {/* 7. SYSTEM WALLET CONFIG TAB & ROTATING POOL */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'wallet' && (
-          <div className="max-w-3xl mx-auto bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-xs space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
+          <div className="max-w-3xl mx-auto bg-[#0f1523] border border-[#1d273b] rounded-xl p-5 sm:p-6 space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1d273b] pb-4">
               <div>
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
                   <Wallet className="w-5 h-5 text-emerald-400" />
@@ -2244,10 +2368,10 @@ export const AdminPanel: React.FC = () => {
         {/* 8. AUDIT LOGS TAB */}
         {/* ------------------------------------------------------------- */}
         {activeTab === 'logs' && (
-          <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-xs p-5 space-y-4">
+          <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl overflow-hidden p-4 sm:p-5 space-y-4">
             <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <History className="w-5 h-5 text-amber-400" />
+              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <History className="w-4 h-4 text-amber-400" />
                 Immutable System Audit Logs ({auditLogs.length})
               </h2>
               <p className="text-xs text-slate-400">
@@ -2257,18 +2381,18 @@ export const AdminPanel: React.FC = () => {
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-300">
-                <thead className="bg-slate-900 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
+                <thead className="bg-[#141c2d] text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-y border-[#1d273b]">
                   <tr>
-                    <th className="py-3 px-3">Timestamp</th>
-                    <th className="py-3 px-3">Admin</th>
-                    <th className="py-3 px-3">Action Type</th>
-                    <th className="py-3 px-3">Target UID</th>
-                    <th className="py-3 px-3">Log Details</th>
+                    <th className="py-2.5 px-3">Timestamp</th>
+                    <th className="py-2.5 px-3">Admin</th>
+                    <th className="py-2.5 px-3">Action Type</th>
+                    <th className="py-2.5 px-3">Target UID</th>
+                    <th className="py-2.5 px-3">Log Details</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/80">
+                <tbody className="divide-y divide-[#1a2336]">
                   {auditLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-900/40 transition-colors font-mono text-[11px]">
+                    <tr key={log.id} className="hover:bg-[#141d2f] transition-colors font-mono text-[11px]">
                       <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">{log.timestamp}</td>
                       <td className="py-2.5 px-3">
                         <span className="font-bold text-white">@{log.adminUsername}</span>
@@ -2311,7 +2435,8 @@ export const AdminPanel: React.FC = () => {
             onSelectUserForRecovery={(u) => setRecoveryModalUser(u)}
           />
         )}
-      </main>
+        </main>
+      </div>
 
       {/* ------------------------------------------------------------- */}
       {/* MODAL 1: Adjust User Balance Modal */}

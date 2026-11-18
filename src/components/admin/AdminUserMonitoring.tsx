@@ -261,72 +261,72 @@ export const AdminUserMonitoring: React.FC<Props> = ({
     <div className="space-y-5">
       {/* KPI Overview Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+        <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl p-4 flex items-center justify-between">
           <div>
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
               Tracked Users
             </span>
-            <span className="text-2xl font-black text-white font-mono mt-1 block">
+            <span className="text-2xl font-black text-white font-mono tabular-nums mt-1 block">
               {summaryStats.total}
             </span>
             <span className="text-[11px] text-slate-500 mt-0.5 block">Registered accounts</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 flex items-center justify-center">
-            <Users className="w-5 h-5" />
+          <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-400 flex items-center justify-center">
+            <Users className="w-4 h-4" />
           </div>
         </div>
 
-        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+        <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl p-4 flex items-center justify-between">
           <div>
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
               Live Online Now
             </span>
             <div className="flex items-center gap-2 mt-1">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-2xl font-black text-emerald-400 font-mono">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-2xl font-black text-emerald-400 font-mono tabular-nums">
                 {summaryStats.online}
               </span>
             </div>
             <span className="text-[11px] text-slate-500 mt-0.5 block">Active user sessions</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
-            <Wifi className="w-5 h-5" />
+          <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
+            <Wifi className="w-4 h-4" />
           </div>
         </div>
 
-        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+        <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl p-4 flex items-center justify-between">
           <div>
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
               TRC-20 Address Copied
             </span>
-            <span className="text-2xl font-black text-amber-400 font-mono mt-1 block">
+            <span className="text-2xl font-black text-amber-400 font-mono tabular-nums mt-1 block">
               {summaryStats.copied}
             </span>
             <span className="text-[11px] text-slate-500 mt-0.5 block">Users copied deposit wallet</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center">
-            <Copy className="w-5 h-5" />
+          <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center">
+            <Copy className="w-4 h-4" />
           </div>
         </div>
 
-        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+        <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl p-4 flex items-center justify-between">
           <div>
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
               Active Pending Orders
             </span>
-            <span className="text-2xl font-black text-rose-400 font-mono mt-1 block">
+            <span className="text-2xl font-black text-rose-400 font-mono tabular-nums mt-1 block">
               {summaryStats.activeOrders}
             </span>
             <span className="text-[11px] text-slate-500 mt-0.5 block">Currently on order / combo stage</span>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center">
-            <Layers className="w-5 h-5" />
+          <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center">
+            <Layers className="w-4 h-4" />
           </div>
         </div>
       </div>
 
       {/* Main Monitoring Table Container */}
-      <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-xs p-5 space-y-4">
+      <div className="bg-[#0f1523] border border-[#1d273b] rounded-xl overflow-hidden p-4 sm:p-5 space-y-4">
         {/* Header & Search Bar */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -405,16 +405,16 @@ export const AdminUserMonitoring: React.FC<Props> = ({
         {/* Monitoring Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-300">
-            <thead className="bg-slate-900 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
+            <thead className="bg-[#141c2d] text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-y border-[#1d273b]">
               <tr>
-                <th className="py-3 px-3">User & Online Status</th>
-                <th className="py-3 px-3">Balance & VIP Tier</th>
-                <th className="py-3 px-3">Task & Combo Progress</th>
-                <th className="py-3 px-3">TRC-20 Copy Log</th>
-                <th className="py-3 px-3">Location & Session</th>
+                <th className="py-2.5 px-3">User &amp; Online Status</th>
+                <th className="py-2.5 px-3">Balance &amp; VIP Tier</th>
+                <th className="py-2.5 px-3">Task &amp; Combo Progress</th>
+                <th className="py-2.5 px-3">TRC-20 Copy Log</th>
+                <th className="py-2.5 px-3">Location &amp; Session</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/80">
+            <tbody className="divide-y divide-[#1a2336]">
               {filteredRows.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-10 text-center text-slate-500 text-xs">
@@ -445,7 +445,7 @@ export const AdminUserMonitoring: React.FC<Props> = ({
                         key={user.uid}
                         onClick={() => onSelectUserForRecovery?.(user)}
                         title="Click to Edit User State & Order Details"
-                        className={`hover:bg-slate-900/70 transition-colors align-top ${
+                        className={`hover:bg-[#141d2f] transition-colors align-top ${
                           onSelectUserForRecovery ? 'cursor-pointer' : ''
                         }`}
                       >
