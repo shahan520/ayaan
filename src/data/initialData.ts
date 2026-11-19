@@ -1010,7 +1010,7 @@ export const INITIAL_ORDERS: GrabbedOrder[] = [
     vipTier: 'VIP 1',
     platform: 'Amazon',
     productTitle: 'Wireless Noise Canceling Earbuds Pro Edition',
-    productImage: '/assets/aistudio/a1.3f945898_a31a0efe.png',
+    productImage: '/assets/aistudio/wireless_earbuds_pro_product.jpg',
     unitPrice: 45.0,
     quantity: 2,
     orderAmount: 90.0,

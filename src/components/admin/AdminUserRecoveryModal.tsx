@@ -17,8 +17,13 @@ import React, { useMemo, useState } from 'react';
 import { CustomComboRule, GrabbedOrder, User } from '../../types';
 import { getEligiblePlatformForBalance } from '../../utils/balanceValidation';
 import {
+  DEFAULT_CYCLE_COMBO_SCHEDULES,
   DEFAULT_VIP_COMBO_SCHEDULE,
+  EffectiveComboRule,
+  extractCustomOverridesToSave,
   generateHybridComboSchedule,
+  getBaselineComboSchedule,
+  resolveComboDollarAmounts,
 } from '../../utils/comboGenerator';
 
 interface Props {
@@ -96,12 +101,8 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
   const [cycleNumberStr, setCycleNumberStr] = useState(String(user.cycleNumber || 1));
   const [workPerm, setWorkPerm] = useState(user.workPermission === true);
   const [comboSetMode, setComboSetMode] = useState<'1' | '3' | '5' | 'custom'>(initialPreset);
-  const [comboRules, setComboRules] = useState<CustomComboRule[]>(() =>
-    initialSchedule.map((r) => ({
-      stepNumber: r.stepNumber,
-      requiredPercent: r.requiredPercent,
-      commissionPercent: r.commissionPercent,
-    }))
+  const [comboRules, setComboRules] = useState<EffectiveComboRule[]>(() =>
+    initialSchedule.map((r) => ({ ...r }))
   );
 
   // Primary Combo Trigger & Amount helper synced to next/first combo rule
@@ -119,7 +120,7 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
     commissionPercent: 20,
   };
 
-  // Combo Total Order Amount (USDT) = balance * (1 + requiredPercent / 100)
+  // Combo Total Order Amount (USDT)
   const [primaryComboAmountStr, setPrimaryComboAmountStr] = useState<string>(() => {
     if (existingIncomplete?.isComboOrder && (existingIncomplete.requiredBalance || existingIncomplete.orderAmount)) {
       return String(
@@ -127,8 +128,8 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
       );
     }
     const baseBal = Number(user.balance || 0);
-    const pct = primaryCombo.requiredPercent || 36;
-    return String(Number((baseBal + (baseBal * pct) / 100).toFixed(2)));
+    const resolved = resolveComboDollarAmounts(baseBal, primaryCombo);
+    return String(Number(resolved.totalOrderAmount.toFixed(2)));
   });
 
   // Active Incomplete Order recovery controls
@@ -224,8 +225,18 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
 
   const handleSelectComboPreset = (mode: '1' | '3' | '5' | 'custom') => {
     setComboSetMode(mode);
+    const cycNum = Math.max(1, parseInt(cycleNumberStr, 10) || user.cycleNumber || 1);
     if (mode === '1') {
-      const rule = { stepNumber: 14, requiredPercent: 36, commissionPercent: 20 };
+      const differsFromCycle = cycNum !== 1;
+      const rule: EffectiveComboRule = {
+        slotIndex: 0,
+        stepNumber: 14,
+        requiredPercent: 36,
+        commissionPercent: 20,
+        isAutoFallback: !differsFromCycle,
+        isCustomOverride: differsFromCycle,
+        sourceLabel: differsFromCycle ? 'Preset 1-Combo Override' : 'Default Cycle #1 Rule',
+      };
       setComboRules([rule]);
       const nextAmtStr = String(Number((parsedBalance * 1.36).toFixed(2)));
       setPrimaryComboAmountStr(nextAmtStr);
@@ -234,11 +245,14 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
         setComboDepositMoneyStr(String(Number((parsedBalance * 0.36).toFixed(2))));
       }
     } else if (mode === '3') {
-      const rules = [
-        { stepNumber: 7, requiredPercent: 55, commissionPercent: 26 },
-        { stepNumber: 15, requiredPercent: 50, commissionPercent: 18 },
-        { stepNumber: 23, requiredPercent: 50, commissionPercent: 18 },
-      ];
+      const differsFromCycle = cycNum < 2;
+      const rules: EffectiveComboRule[] = DEFAULT_CYCLE_COMBO_SCHEDULES[2].map((r, idx) => ({
+        ...r,
+        slotIndex: idx,
+        isAutoFallback: !differsFromCycle,
+        isCustomOverride: differsFromCycle,
+        sourceLabel: differsFromCycle ? 'Preset 3-Combo Override' : 'Default Cycle #2 Rule',
+      }));
       setComboRules(rules);
       const nextAmtStr = String(Number((parsedBalance * 1.55).toFixed(2)));
       setPrimaryComboAmountStr(nextAmtStr);
@@ -247,7 +261,13 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
         setComboDepositMoneyStr(String(Number((parsedBalance * 0.55).toFixed(2))));
       }
     } else if (mode === '5') {
-      const rules = DEFAULT_VIP_COMBO_SCHEDULE.map((r) => ({ ...r }));
+      const rules: EffectiveComboRule[] = DEFAULT_VIP_COMBO_SCHEDULE.map((r, idx) => ({
+        ...r,
+        slotIndex: idx,
+        isAutoFallback: true,
+        isCustomOverride: false,
+        sourceLabel: 'Default VIP Rule (5 Combos)',
+      }));
       setComboRules(rules);
       const nextAmtStr = String(
         Number((parsedBalance * (1 + rules[0].requiredPercent / 100)).toFixed(2))
@@ -266,9 +286,13 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
     const step = Math.max(1, Math.min(25, Math.round(newStep || 1)));
     setComboRules((prev) => {
       if (prev.length === 0) {
-        return [{ stepNumber: step, requiredPercent: 36, commissionPercent: 20 }];
+        return [{ slotIndex: 0, stepNumber: step, requiredPercent: 36, commissionPercent: 20, isCustomOverride: true, isAutoFallback: false, sourceLabel: 'Custom Admin Rule' }];
       }
-      return prev.map((r, i) => (i === primaryComboIdx ? { ...r, stepNumber: step } : r));
+      return prev.map((r, i) =>
+        i === primaryComboIdx
+          ? { ...r, stepNumber: step, isCustomOverride: true, isAutoFallback: false, sourceLabel: 'Custom Admin Rule' }
+          : r
+      );
     });
     if (activeOrderIsCombo) {
       setActiveOrderStepStr(String(step));
@@ -279,13 +303,25 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
     setPrimaryComboAmountStr(amountText);
     setComboOrderAmountStr(amountText);
     const amt = parseFloat(amountText);
-    if (!isNaN(amt) && amt > 0 && parsedBalance > 0) {
-      const pct = Math.max(1, Number((((amt - parsedBalance) / parsedBalance) * 100).toFixed(2)));
+    if (!isNaN(amt) && amt >= 0) {
+      const exactDeposit = Math.max(0, Number((amt - parsedBalance).toFixed(2)));
+      setComboDepositMoneyStr(String(exactDeposit));
       setComboRules((prev) => {
         if (prev.length === 0) {
-          return [{ stepNumber: primaryCombo.stepNumber || 14, requiredPercent: pct, commissionPercent: 20 }];
+          return [{ slotIndex: 0, stepNumber: primaryCombo.stepNumber || 14, requiredPercent: 36, commissionPercent: 20, customDepositAmount: exactDeposit, isCustomOverride: true, isAutoFallback: false, sourceLabel: `Fixed $${exactDeposit.toFixed(2)} Recharge` }];
         }
-        return prev.map((r, i) => (i === primaryComboIdx ? { ...r, requiredPercent: pct } : r));
+        return prev.map((r, i) =>
+          i === primaryComboIdx
+            ? {
+                ...r,
+                customDepositAmount: exactDeposit,
+                customOrderAmount: undefined,
+                isCustomOverride: true,
+                isAutoFallback: false,
+                sourceLabel: `Fixed $${exactDeposit.toFixed(2)} Recharge`,
+              }
+            : r
+        );
       });
     }
     if (activeOrderIsCombo) {
@@ -387,14 +423,27 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
       return;
     }
 
-    const sanitizedRules = [...comboRules]
-      .filter((r) => r.stepNumber >= 1 && r.stepNumber <= 25 && r.requiredPercent > 0 && r.commissionPercent > 0)
+    const sanitizedRows = [...comboRules]
+      .filter(
+        (r) =>
+          r.stepNumber >= 1 &&
+          r.stepNumber <= 25 &&
+          (r.requiredPercent >= 0 || typeof r.customDepositAmount === 'number') &&
+          (r.commissionPercent > 0 || typeof r.customCommissionAmount === 'number')
+      )
       .sort((a, b) => a.stepNumber - b.stepNumber);
 
-    if (sanitizedRules.length === 0) {
-      setFormError('At least one valid combo rule (Step 1–25, Deposit % > 0, Commission % > 0) is required.');
+    if (sanitizedRows.length === 0) {
+      setFormError('At least one valid combo rule (Step 1–25, Deposit % >= 0, Commission % > 0) is required.');
       return;
     }
+
+    const simulatedTargetUser: User = {
+      ...user,
+      cycleNumber: cycNum,
+      isVipAccount: comboSetMode === '5' || (comboSetMode === 'custom' && user.isVipAccount === true),
+    };
+    const sanitizedRules = extractCustomOverridesToSave(sanitizedRows, simulatedTargetUser);
 
     const activeOrdAmt = parseFloat(activeOrderAmountStr);
     const activeOrdComm = parseFloat(activeOrderCommStr);
@@ -456,13 +505,14 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
         ? 'VIP 2'
         : 'VIP 1';
 
-    const targetRule = sanitizedRules[primaryComboIdx] || sanitizedRules[0];
+    const targetRule = sanitizedRows[primaryComboIdx] || sanitizedRows[0];
     const effectiveComboStep = targetRule?.stepNumber || 14;
+    const isNextVip = comboSetMode === '5' || (comboSetMode === 'custom' && user.isVipAccount === true);
 
     const summaryLines = [
       `Balance: ${bal.toFixed(2)} USDT`,
       `Completed Orders: ${completedTasks}/25 (Cycle #${cycNum})`,
-      `Combo Set: ${sanitizedRules.length} combo(s) (Primary trigger #${effectiveComboStep})`,
+      `Combo Schedule: ${sanitizedRows.length} total (${sanitizedRules.length} custom override(s), Primary trigger #${effectiveComboStep})`,
       `Today's Commission: ${comm.toFixed(2)} USDT`,
       effectiveOrderAction === 'clear'
         ? 'Pending Order: Clear active pending order'
@@ -484,7 +534,7 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
           currentCycleTasks: completedTasks,
           cycleNumber: cycNum,
           workPermission: workPerm,
-          isVipAccount: comboSetMode === '5',
+          isVipAccount: isNextVip,
           comboOrderStep: effectiveComboStep,
           customCombos: sanitizedRules,
           activeOrderAction: effectiveOrderAction,
@@ -842,9 +892,17 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono font-bold text-rose-300 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
                 />
                 <span className="text-[10px] text-slate-400 mt-1 block">
-                  Deposit %: +{primaryCombo.requiredPercent}% (Deficit:{' '}
-                  {Math.max(0, (parseFloat(primaryComboAmountStr) || 0) - parsedBalance).toFixed(2)}{' '}
-                  USDT)
+                  {typeof primaryCombo.customDepositAmount === 'number' ? (
+                    <>
+                      Fixed Recharge: +{primaryCombo.customDepositAmount.toFixed(2)} USDT (% bypassed)
+                    </>
+                  ) : (
+                    <>
+                      Deposit %: +{primaryCombo.requiredPercent}% (Deficit:{' '}
+                      {Math.max(0, (parseFloat(primaryComboAmountStr) || 0) - parsedBalance).toFixed(2)}{' '}
+                      USDT)
+                    </>
+                  )}
                 </span>
               </div>
             </div>
@@ -853,7 +911,7 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-slate-400">
-                  Combo Schedule Table (Step #, Required Deposit %, Commission %)
+                  Combo Schedule Table (Per-Row Custom $ Override + Auto Default Siblings)
                 </span>
                 <button
                   type="button"
@@ -861,7 +919,15 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
                     setComboSetMode('custom');
                     setComboRules((prev) => [
                       ...prev,
-                      { stepNumber: Math.min(25, (prev[prev.length - 1]?.stepNumber || 10) + 3), requiredPercent: 45, commissionPercent: 20 },
+                      {
+                        slotIndex: prev.reduce((max, r) => Math.max(max, r.slotIndex), -1) + 1,
+                        stepNumber: Math.min(25, (prev[prev.length - 1]?.stepNumber || 10) + 3),
+                        requiredPercent: 45,
+                        commissionPercent: 20,
+                        isCustomOverride: true,
+                        isAutoFallback: false,
+                        sourceLabel: 'Custom Admin Rule',
+                      },
                     ]);
                   }}
                   className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg text-[11px] font-bold border border-amber-500/30 flex items-center gap-1 cursor-pointer"
@@ -874,89 +940,286 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-950 text-slate-400 text-[10px] uppercase border-b border-slate-800">
                     <tr>
-                      <th className="py-2 px-3">Combo #</th>
-                      <th className="py-2 px-3">Trigger Order #</th>
-                      <th className="py-2 px-3">Deposit %</th>
-                      <th className="py-2 px-3">Est. Combo Amt</th>
-                      <th className="py-2 px-3">Comm %</th>
-                      <th className="py-2 px-3 text-right">Remove</th>
+                      <th className="py-2 px-2">Combo #</th>
+                      <th className="py-2 px-2">Order #</th>
+                      <th className="py-2 px-2 text-rose-300">Custom Deposit $</th>
+                      <th className="py-2 px-2">Deposit %</th>
+                      <th className="py-2 px-2">Comm %</th>
+                      <th className="py-2 px-2 text-emerald-300">Custom Comm $</th>
+                      <th className="py-2 px-2">Est. Order / Recharge</th>
+                      <th className="py-2 px-2 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/80 bg-slate-950/60">
-                    {comboRules.map((rule, idx) => {
-                      const estComboAmt = parsedBalance + (parsedBalance * (rule.requiredPercent || 0)) / 100;
-                      return (
-                        <tr key={idx}>
-                          <td className="py-2 px-3 font-mono font-bold text-amber-400">
-                            Combo #{idx + 1}
-                          </td>
-                          <td className="py-2 px-3">
-                            <input
-                              type="number"
-                              min="1"
-                              max="25"
-                              value={rule.stepNumber}
-                              onChange={(e) => {
-                                const v = parseInt(e.target.value, 10) || 1;
-                                setComboSetMode('custom');
-                                setComboRules((prev) =>
-                                  prev.map((r, i) => (i === idx ? { ...r, stepNumber: v } : r))
-                                );
-                              }}
-                              className="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono font-bold"
-                            />
-                          </td>
-                          <td className="py-2 px-3">
-                            <input
-                              type="number"
-                              step="any"
-                              min="1"
-                              value={rule.requiredPercent}
-                              onChange={(e) => {
-                                const v = parseFloat(e.target.value) || 0;
-                                setComboSetMode('custom');
-                                setComboRules((prev) =>
-                                  prev.map((r, i) => (i === idx ? { ...r, requiredPercent: v } : r))
-                                );
-                              }}
-                              className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-rose-300 font-mono font-bold"
-                            />
-                          </td>
-                          <td className="py-2 px-3 font-mono text-slate-300">
-                            {estComboAmt.toFixed(2)} USDT
-                          </td>
-                          <td className="py-2 px-3">
-                            <input
-                              type="number"
-                              step="any"
-                              min="1"
-                              value={rule.commissionPercent}
-                              onChange={(e) => {
-                                const v = parseFloat(e.target.value) || 0;
-                                setComboSetMode('custom');
-                                setComboRules((prev) =>
-                                  prev.map((r, i) => (i === idx ? { ...r, commissionPercent: v } : r))
-                                );
-                              }}
-                              className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-emerald-300 font-mono font-bold"
-                            />
-                          </td>
-                          <td className="py-2 px-3 text-right">
-                            <button
-                              type="button"
-                              disabled={comboRules.length <= 1}
-                              onClick={() => {
-                                setComboSetMode('custom');
-                                setComboRules((prev) => prev.filter((_, i) => i !== idx));
-                              }}
-                              className="p-1 text-slate-400 hover:text-rose-400 disabled:opacity-30 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {(() => {
+                      const baseList = getBaselineComboSchedule({
+                        ...user,
+                        cycleNumber: parseInt(cycleNumberStr, 10) || user.cycleNumber || 1,
+                        isVipAccount: comboSetMode === '5' || (comboSetMode === 'custom' && user.isVipAccount === true),
+                      });
+                      return comboRules.map((rule, idx) => {
+                        const resolved = resolveComboDollarAmounts(parsedBalance, rule);
+                        const isDone = rule.stepNumber <= parsedCompletedTasks;
+                        const isBaseSlot = rule.slotIndex < baseList.length;
+                        const customDepositInputValue =
+                          typeof rule.customDepositAmount === 'number'
+                            ? String(rule.customDepositAmount)
+                            : typeof rule.customOrderAmount === 'number'
+                            ? String(Math.max(0, Number((rule.customOrderAmount - parsedBalance).toFixed(2))))
+                            : '';
+                        return (
+                          <tr key={idx} className={isDone ? 'opacity-60' : ''}>
+                            <td className="py-2 px-2.5">
+                              <div className="font-mono font-bold text-amber-400">Combo #{idx + 1}</div>
+                              <div className="flex items-center gap-1 mt-0.5">
+                                {isDone && (
+                                  <span className="text-[9px] px-1 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                                    DONE
+                                  </span>
+                                )}
+                                <span
+                                  className={`text-[9px] px-1 rounded font-bold ${
+                                    rule.isAutoFallback
+                                      ? 'bg-cyan-950 text-cyan-300'
+                                      : 'bg-amber-500/20 text-amber-300'
+                                  }`}
+                                >
+                                  {rule.isAutoFallback ? 'Auto' : 'Custom'}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-2 px-2.5">
+                              <input
+                                type="number"
+                                min="1"
+                                max="25"
+                                value={rule.stepNumber}
+                                onChange={(e) => {
+                                  const v = Math.max(1, Math.min(25, parseInt(e.target.value, 10) || 1));
+                                  setComboSetMode('custom');
+                                  setComboRules((prev) =>
+                                    prev.map((r, i) =>
+                                      i === idx
+                                        ? { ...r, stepNumber: v, isCustomOverride: true, isAutoFallback: false, sourceLabel: 'Custom Admin Rule' }
+                                        : r
+                                    )
+                                  );
+                                }}
+                                className="w-14 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono font-bold"
+                              />
+                            </td>
+                            <td className="py-2 px-2.5">
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                value={customDepositInputValue}
+                                placeholder={`Auto (${resolved.deficit.toFixed(2)})`}
+                                onChange={(e) => {
+                                  const raw = e.target.value.trim();
+                                  setComboSetMode('custom');
+                                  if (!raw) {
+                                    const baseRow = baseList.find((b) => b.slotIndex === rule.slotIndex);
+                                    setComboRules((prev) =>
+                                      prev.map((r, i) => {
+                                        if (i !== idx) return r;
+                                        const revertedReq = baseRow ? baseRow.requiredPercent : r.requiredPercent;
+                                        const hasCommDollar = typeof r.customCommissionAmount === 'number';
+                                        const matchesBase =
+                                          Boolean(baseRow) &&
+                                          !hasCommDollar &&
+                                          r.stepNumber === baseRow!.stepNumber &&
+                                          r.commissionPercent === baseRow!.commissionPercent;
+                                        return {
+                                          ...r,
+                                          requiredPercent: revertedReq,
+                                          customOrderAmount: undefined,
+                                          customDepositAmount: undefined,
+                                          isCustomOverride: !matchesBase,
+                                          isAutoFallback: matchesBase,
+                                          sourceLabel: matchesBase
+                                            ? baseRow!.sourceLabel
+                                            : 'Custom Admin Rule',
+                                        };
+                                      })
+                                    );
+                                    return;
+                                  }
+                                  const depDollar = Math.max(0, parseFloat(raw) || 0);
+                                  setComboRules((prev) =>
+                                    prev.map((r, i) =>
+                                      i === idx
+                                        ? {
+                                            ...r,
+                                            customOrderAmount: undefined,
+                                            customDepositAmount: depDollar,
+                                            isCustomOverride: true,
+                                            isAutoFallback: false,
+                                            sourceLabel: `Fixed $${depDollar.toFixed(2)} Recharge`,
+                                          }
+                                        : r
+                                    )
+                                  );
+                                }}
+                                className="w-24 bg-slate-900 border border-rose-500/40 rounded px-2 py-1 text-rose-300 font-mono font-bold placeholder:text-slate-600"
+                              />
+                            </td>
+                            <td className="py-2 px-2.5">
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                value={resolved.hasCustomDollar ? '' : rule.requiredPercent}
+                                placeholder={resolved.hasCustomDollar ? 'Fixed $' : 'Auto %'}
+                                onChange={(e) => {
+                                  const v = Math.max(0, parseFloat(e.target.value) || 0);
+                                  setComboSetMode('custom');
+                                  setComboRules((prev) =>
+                                    prev.map((r, i) =>
+                                      i === idx
+                                        ? {
+                                            ...r,
+                                            requiredPercent: v,
+                                            customOrderAmount: undefined,
+                                            customDepositAmount: undefined,
+                                            isCustomOverride: true,
+                                            isAutoFallback: false,
+                                            sourceLabel: 'Custom Admin Rule',
+                                          }
+                                        : r
+                                    )
+                                  );
+                                }}
+                                className="w-18 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-rose-300 font-mono font-bold placeholder:text-amber-400/70"
+                              />
+                            </td>
+                            <td className="py-2 px-2.5">
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.1"
+                                value={resolved.hasCustomCommission ? '' : rule.commissionPercent}
+                                placeholder={resolved.hasCustomCommission ? 'Fixed $' : 'Auto %'}
+                                onChange={(e) => {
+                                  const v = Math.max(0.1, parseFloat(e.target.value) || 0.1);
+                                  setComboSetMode('custom');
+                                  setComboRules((prev) =>
+                                    prev.map((r, i) =>
+                                      i === idx
+                                        ? {
+                                            ...r,
+                                            commissionPercent: v,
+                                            customCommissionAmount: undefined,
+                                            isCustomOverride: true,
+                                            isAutoFallback: false,
+                                            sourceLabel: 'Custom Admin Rule',
+                                          }
+                                        : r
+                                    )
+                                  );
+                                }}
+                                className="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-emerald-300 font-mono font-bold placeholder:text-amber-400/70"
+                              />
+                            </td>
+                            <td className="py-2 px-2.5">
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                value={
+                                  typeof rule.customCommissionAmount === 'number'
+                                    ? String(rule.customCommissionAmount)
+                                    : ''
+                                }
+                                placeholder={`Auto (${resolved.commission.toFixed(2)})`}
+                                onChange={(e) => {
+                                  const raw = e.target.value.trim();
+                                  setComboSetMode('custom');
+                                  if (!raw) {
+                                    const baseRow = baseList.find((b) => b.slotIndex === rule.slotIndex);
+                                    setComboRules((prev) =>
+                                      prev.map((r, i) => {
+                                        if (i !== idx) return r;
+                                        const revertedComm = baseRow ? baseRow.commissionPercent : r.commissionPercent;
+                                        const hasOrdDollar =
+                                          typeof r.customOrderAmount === 'number' ||
+                                          typeof r.customDepositAmount === 'number';
+                                        const matchesBase =
+                                          Boolean(baseRow) &&
+                                          !hasOrdDollar &&
+                                          r.stepNumber === baseRow!.stepNumber &&
+                                          r.requiredPercent === baseRow!.requiredPercent;
+                                        return {
+                                          ...r,
+                                          commissionPercent: revertedComm,
+                                          customCommissionAmount: undefined,
+                                          isCustomOverride: !matchesBase,
+                                          isAutoFallback: matchesBase,
+                                          sourceLabel: matchesBase
+                                            ? baseRow!.sourceLabel
+                                            : 'Custom Admin Rule',
+                                        };
+                                      })
+                                    );
+                                    return;
+                                  }
+                                  const commDollar = Math.max(0, parseFloat(raw) || 0);
+                                  setComboRules((prev) =>
+                                    prev.map((r, i) =>
+                                      i === idx
+                                        ? {
+                                            ...r,
+                                            customCommissionAmount: commDollar,
+                                            isCustomOverride: true,
+                                            isAutoFallback: false,
+                                            sourceLabel: `Fixed $${commDollar.toFixed(2)} Comm`,
+                                          }
+                                        : r
+                                    )
+                                  );
+                                }}
+                                className="w-24 bg-slate-900 border border-emerald-500/40 rounded px-2 py-1 text-emerald-200 font-mono font-bold placeholder:text-slate-600"
+                              />
+                            </td>
+                            <td className="py-2 px-2.5 font-mono text-slate-300 whitespace-nowrap">
+                              <div className="text-white font-bold">{resolved.totalOrderAmount.toFixed(2)} USDT</div>
+                              <div className="text-[10px] text-rose-300">+{resolved.deficit.toFixed(2)} Recharge</div>
+                            </td>
+                            <td className="py-2 px-2.5 text-right whitespace-nowrap">
+                              {isBaseSlot && (!rule.isAutoFallback || rule.isCustomOverride) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const baseRow = baseList.find((b) => b.slotIndex === rule.slotIndex);
+                                    if (!baseRow) return;
+                                    setComboRules((prev) =>
+                                      prev.map((r, i) => (i === idx ? { ...baseRow } : r))
+                                    );
+                                  }}
+                                  title="Reset only this row back to automatic default"
+                                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-cyan-950 text-cyan-300 text-[10px] font-bold cursor-pointer inline-flex items-center gap-0.5"
+                                >
+                                  <RotateCcw className="w-3 h-3" /> Auto
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={comboRules.length <= 1 || isBaseSlot}
+                                  onClick={() => {
+                                    setComboSetMode('custom');
+                                    setComboRules((prev) => prev.filter((_, i) => i !== idx));
+                                  }}
+                                  title={isBaseSlot ? 'Required baseline combo slot' : 'Remove extra trigger'}
+                                  className="p-1 text-slate-400 hover:text-rose-400 disabled:opacity-30 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>

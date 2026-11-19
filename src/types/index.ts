@@ -38,9 +38,14 @@ export const DEMO_TRC20_ADDRESS_POOL = [
 ] as const;
 
 export interface CustomComboRule {
+  slotIndex?: number; // 0-based baseline slot index so editing one combo leaves unedited default combos intact
   stepNumber: number;
   requiredPercent: number; // e.g. 36 means 36% of user's balance
-  commissionPercent: number; // e.g. 20 means 20% of user's balance
+  commissionPercent: number; // e.g. 20 means 20% of combo order amount
+  customOrderAmount?: number; // Optional custom total combo order amount in USDT
+  customDepositAmount?: number; // Optional custom deposit shortage amount in USDT
+  customCommissionAmount?: number; // Optional custom commission amount in USDT
+  isCustomOverride?: boolean; // Explicit flag indicating whether this slot uses custom override vs auto default
 }
 
 export interface User {

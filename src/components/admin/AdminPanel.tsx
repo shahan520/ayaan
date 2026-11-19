@@ -37,11 +37,13 @@ import {
   Star,
   Headphones,
   Activity,
+  Package,
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { fetchChatThreads, connectChatWebSocket } from '../../utils/chatClient';
 import { fetchMonitoringRecords, connectMonitorWebSocket } from '../../utils/monitoringClient';
+import { AdminProductCatalog } from './AdminProductCatalog';
 import { AdminSupportChat } from './AdminSupportChat';
 import { AdminUserMonitoring } from './AdminUserMonitoring';
 import { AdminUserRecoveryModal } from './AdminUserRecoveryModal';
@@ -53,8 +55,11 @@ import {
   User,
 } from '../../types';
 import {
+  EffectiveComboRule,
+  extractCustomOverridesToSave,
   generateHybridComboSchedule,
-  TARGET_CYCLE_COMBO_COUNT,
+  getBaselineComboSchedule,
+  resolveComboDollarAmounts,
   DEFAULT_VIP_COMBO_SCHEDULE,
   PRESET_6_COMBO_SCHEDULE,
   PRESET_7_COMBO_SCHEDULE,
@@ -107,7 +112,7 @@ export const AdminPanel: React.FC = () => {
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'deposits' | 'withdrawals' | 'users' | 'monitoring' | 'invites' | 'subadmins' | 'wallet' | 'logs' | 'support'
+    'overview' | 'deposits' | 'withdrawals' | 'users' | 'monitoring' | 'invites' | 'subadmins' | 'wallet' | 'catalog' | 'logs' | 'support'
   >('overview');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [supportUnreadCount, setSupportUnreadCount] = useState(0);
@@ -198,10 +203,12 @@ export const AdminPanel: React.FC = () => {
 
   // Custom Combo Configuration modal state
   const [comboModalUser, setComboModalUser] = useState<User | null>(null);
-  const [customRulesList, setCustomRulesList] = useState<CustomComboRule[]>([]);
+  const [comboScheduleRows, setComboScheduleRows] = useState<EffectiveComboRule[]>([]);
+  const [comboDollarInputModes, setComboDollarInputModes] = useState<Record<number, 'order' | 'deposit'>>({});
   const [newComboStep, setNewComboStep] = useState<string>('14');
   const [newComboDepositPct, setNewComboDepositPct] = useState<string>('36');
   const [newComboCommPct, setNewComboCommPct] = useState<string>('20');
+  const [newComboCustomOrderAmt, setNewComboCustomOrderAmt] = useState<string>('');
 
   // Wallet Reset / Correction Modal State (Admin-Only TRC-20 Address Reset)
   const [walletModalUser, setWalletModalUser] = useState<User | null>(null);
@@ -336,6 +343,7 @@ export const AdminPanel: React.FC = () => {
         { key: 'invites' as const, label: 'Invite Codes', icon: Tag, badge: null },
         { key: 'subadmins' as const, label: 'Roles & Permissions', icon: UserCog, badge: null },
         { key: 'wallet' as const, label: 'Treasury Wallet', icon: Wallet, badge: null },
+        { key: 'catalog' as const, label: 'Product Catalog', icon: Package, badge: null },
         {
           key: 'support' as const,
           label: 'Live Support Desk',
@@ -1193,18 +1201,19 @@ export const AdminPanel: React.FC = () => {
                                 🔒 WD LOCKED
                               </span>
                             )}
-                            {user.customCombos && user.customCombos.length > 0 && !user.isDemoAccount && (
-                              <span
-                                className="px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[9px] font-bold"
-                                title={
-                                  user.customCombos.length < 5
-                                    ? `Hybrid active: ${user.customCombos.length} custom triggers + ${5 - user.customCombos.length} auto-filled fallbacks (${Math.max(5, user.customCombos.length)} combos total per cycle)`
-                                    : `Dynamic custom schedule: ${user.customCombos.length} custom combos configured (all ${user.customCombos.length} will trigger without limits)`
-                                }
-                              >
-                                ⚡ {user.customCombos.length} Custom
-                              </span>
-                            )}
+                            {user.customCombos && user.customCombos.length > 0 && !user.isDemoAccount && (() => {
+                              const fullRows = generateHybridComboSchedule(user);
+                              const customOverrideCount = fullRows.filter((r) => !r.isAutoFallback).length;
+                              const autoFallbackCount = fullRows.length - customOverrideCount;
+                              return (
+                                <span
+                                  className="px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[9px] font-bold"
+                                  title={`Hybrid combo schedule: ${customOverrideCount} custom override(s) + ${autoFallbackCount} automatic default(s) = ${fullRows.length} total combos per cycle`}
+                                >
+                                  ⚡ {customOverrideCount} Custom / {fullRows.length} Total
+                                </span>
+                              );
+                            })()}
                             {user.balance >= 50000 && (
                               user.taxPaid ? (
                                 <span className="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
@@ -1573,11 +1582,22 @@ export const AdminPanel: React.FC = () => {
                             {/* Custom Combos Config Button */}
                             <button
                               onClick={() => {
+                                const hybridRows = generateHybridComboSchedule(user);
+                                const initModes: Record<number, 'order' | 'deposit'> = {};
+                                hybridRows.forEach((r) => {
+                                  initModes[r.slotIndex] =
+                                    typeof r.customOrderAmount === 'number' &&
+                                    typeof r.customDepositAmount !== 'number'
+                                      ? 'order'
+                                      : 'deposit';
+                                });
                                 setComboModalUser(user);
-                                setCustomRulesList(user.customCombos || []);
-                                setNewComboStep('14');
-                                setNewComboDepositPct('36');
+                                setComboScheduleRows(hybridRows);
+                                setComboDollarInputModes(initModes);
+                                setNewComboStep(String(Math.min(25, (user.currentCycleTasks ?? 0) + 2)));
+                                setNewComboDepositPct('45');
                                 setNewComboCommPct('20');
+                                setNewComboCustomOrderAmt('');
                               }}
                               title="Configure Custom Combo Triggers & Percentages"
                               aria-label="Configure Custom Combos"
@@ -2435,6 +2455,11 @@ export const AdminPanel: React.FC = () => {
             onSelectUserForRecovery={(u) => setRecoveryModalUser(u)}
           />
         )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* 11. PRODUCT CATALOG & AUTO-GENERATOR TAB */}
+        {/* ------------------------------------------------------------- */}
+        {activeTab === 'catalog' && <AdminProductCatalog onNotify={notify} />}
         </main>
       </div>
 
@@ -2852,306 +2877,626 @@ export const AdminPanel: React.FC = () => {
       )}
 
       {/* ------------------------------------------------------------- */}
-      {/* MODAL 4: Custom Combo Configuration Modal */}
+      {/* MODAL 4: Per-Combo Custom Dollar Override & Live Schedule Modal */}
       {/* ------------------------------------------------------------- */}
-      {comboModalUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
-          <div className="w-full max-w-lg bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div>
-                <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-amber-500" />
-                  Custom Combo Orders: {comboModalUser.username}
-                </h3>
-                <p className="text-[11px] text-slate-400">
-                  UID: <span className="font-mono text-amber-400 font-bold">{comboModalUser.uid}</span> · Balance: {comboModalUser.balance.toFixed(2)} USDT
+      {comboModalUser && (() => {
+        const baselineSchedule = getBaselineComboSchedule(comboModalUser);
+        const sortedSchedule = [...comboScheduleRows].sort((a, b) => a.stepNumber - b.stepNumber);
+        const completedCount = comboModalUser.currentCycleTasks ?? 0;
+        const customCount = sortedSchedule.filter((r) => !r.isAutoFallback || r.isCustomOverride).length;
+        const autoCount = sortedSchedule.length - customCount;
+        const firstUpcomingIdx = sortedSchedule.findIndex((r) => r.stepNumber > completedCount);
+
+        const updateSlotRule = (slotIdx: number, updater: (prev: EffectiveComboRule) => EffectiveComboRule) => {
+          setComboScheduleRows((prev) =>
+            prev.map((r) => (r.slotIndex === slotIdx ? updater(r) : r))
+          );
+        };
+
+        const resetSlotToAuto = (slotIdx: number) => {
+          const baseRow = baselineSchedule.find((b) => b.slotIndex === slotIdx);
+          if (!baseRow) return;
+          setComboScheduleRows((prev) =>
+            prev.map((r) => (r.slotIndex === slotIdx ? { ...baseRow } : r))
+          );
+          setComboDollarInputModes((prev) => ({ ...prev, [slotIdx]: 'deposit' }));
+        };
+
+        const applyPresetSchedule = (rules: CustomComboRule[], label: string) => {
+          const nextRows: EffectiveComboRule[] = rules.map((r, idx) => ({
+            slotIndex: idx,
+            stepNumber: r.stepNumber,
+            requiredPercent: r.requiredPercent,
+            commissionPercent: r.commissionPercent,
+            isCustomOverride: true,
+            isAutoFallback: false,
+            sourceLabel: label,
+          }));
+          setComboScheduleRows(nextRows);
+          setComboDollarInputModes({});
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+            <div className="w-full max-w-3xl bg-slate-950 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div>
+                  <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-amber-500" />
+                    Combo Schedule &amp; Live Dollar Overrides: {comboModalUser.username}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    UID: <span className="font-mono text-amber-400 font-bold">{comboModalUser.uid}</span>
+                    {' · '}Balance: <strong className="text-emerald-400 font-mono">{comboModalUser.balance.toFixed(2)} USDT</strong>
+                    {' · '}Progress: <strong className="text-cyan-300 font-mono">{completedCount}/25</strong> (Cycle #{comboModalUser.cycleNumber || 1})
+                  </p>
+                </div>
+                <button
+                  onClick={() => setComboModalUser(null)}
+                  className="text-slate-400 hover:text-white text-base p-1 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Hybrid Live-Edit Explanation */}
+              <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-[11px] text-slate-300 space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-amber-400 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    Per-Combo Custom $ Override + Automatic Sibling Defaults
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      {customCount} Custom
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                      {autoCount} Auto
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      {sortedSchedule.length} Required Total
+                    </span>
+                  </div>
+                </div>
+                <p className="text-slate-400 leading-relaxed">
+                  Edit any upcoming combo below—even between a completed combo and the next trigger—by setting a custom dollar amount (Total Order $ or Deposit Shortage $) and/or custom Commission $. Unedited combos stay <strong className="text-cyan-300">Auto Default</strong> and all <strong className="text-white">{sortedSchedule.length}</strong> required combos remain active without resetting task progress.
                 </p>
               </div>
-              <button
-                onClick={() => setComboModalUser(null)}
-                className="text-slate-400 hover:text-white text-base p-1"
-              >
-                ✕
-              </button>
-            </div>
 
-            {/* Explanatory note with Dynamic Multi-Combo / Hybrid indicator */}
-            <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-[11px] text-slate-300 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-amber-400 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                  {customRulesList.length >= 5
-                    ? 'Dynamic Custom Multi-Combo Mode'
-                    : 'Hybrid Combo Generation (Custom + Auto Fallback)'}
-                </span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  {customRulesList.length < 5
-                    ? `${customRulesList.length} Custom + ${5 - customRulesList.length} Auto = 5 Total`
-                    : `${customRulesList.length} Custom Combos (Dynamic)`}
-                </span>
-              </div>
-              <p className="text-slate-400 leading-relaxed">
-                {customRulesList.length >= 5
-                  ? `Dynamic combo count active: You have configured ${customRulesList.length} custom combo triggers (e.g., 6 or 7 combos). The system dynamically triggers and generates all ${customRulesList.length} custom combos across this user's 25 tasks without upper limit restrictions.`
-                  : `When you configure partial custom combos (${customRulesList.length} triggers), missing slots are automatically filled from the system/VIP rule to maintain the baseline 5 combos. You can configure any arbitrary count (e.g., 6 or 7 combos) with no upper limit.`}
-              </p>
-            </div>
-
-            {/* Quick Presets for 5, 6, 7 Combos */}
-            <div className="p-2.5 bg-slate-900/70 border border-slate-800 rounded-xl space-y-1.5">
-              <div className="flex items-center justify-between">
+              {/* Quick Presets */}
+              <div className="p-2.5 bg-slate-900/70 border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Quick Presets:</span>
-                <span className="text-[10px] text-slate-400">Arbitrary count supported (5, 6, 7+ combos)</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setCustomRulesList([...DEFAULT_VIP_COMBO_SCHEDULE])}
-                  className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                  title="Default 5-Combo Schedule (Tasks #8, #15, #19, #23, #25)"
-                >
-                  5-Combo Preset (#8, #15, #19, #23, #25)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCustomRulesList([...PRESET_6_COMBO_SCHEDULE])}
-                  className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                  title="6-Combo Dynamic Schedule (Tasks #5, #9, #13, #17, #21, #25)"
-                >
-                  6-Combo Preset (#5, #9, #13, #17, #21, #25)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCustomRulesList([...PRESET_7_COMBO_SCHEDULE])}
-                  className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                  title="7-Combo Dynamic Schedule (Tasks #4, #8, #12, #15, #18, #22, #25)"
-                >
-                  7-Combo Preset (#4, #8, #12, #15, #18, #22, #25)
-                </button>
-              </div>
-            </div>
-
-            {/* Current Active Rules */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white block">Active Custom Combo Triggers ({customRulesList.length})</span>
-                {customRulesList.length > 0 && (
-                  <span className="text-[10px] text-amber-400 font-semibold">
-                    Admin specified · No upper limit
-                  </span>
-                )}
-              </div>
-              {customRulesList.length === 0 ? (
-                <div className="p-3 bg-slate-900/50 border border-dashed border-slate-800 rounded-xl text-center text-xs text-slate-500">
-                  No custom triggers configured. Default cycle/VIP rules apply.
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setComboScheduleRows(getBaselineComboSchedule(comboModalUser));
+                      setComboDollarInputModes({});
+                    }}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                    title="Revert all slots to automatic Cycle/VIP default rules"
+                  >
+                    Auto Cycle Default ({baselineSchedule.length} Combos)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPresetSchedule(DEFAULT_VIP_COMBO_SCHEDULE, '5-Combo VIP Preset')}
+                    className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                  >
+                    5-Combo Preset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPresetSchedule(PRESET_6_COMBO_SCHEDULE, '6-Combo Preset')}
+                    className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                  >
+                    6-Combo Preset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPresetSchedule(PRESET_7_COMBO_SCHEDULE, '7-Combo Preset')}
+                    className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                  >
+                    7-Combo Preset
+                  </button>
                 </div>
-              ) : (
-                <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {customRulesList
-                    .sort((a, b) => a.stepNumber - b.stepNumber)
-                    .map((r, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between p-2.5 bg-slate-900 border border-amber-500/30 rounded-xl text-xs"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-black font-mono text-xs border border-amber-500/40">
-                            Task #{r.stepNumber}
+              </div>
+
+              {/* Per-Combo Inline Live Editor */}
+              <div className="space-y-2">
+                {sortedSchedule.map((row, displayIdx) => {
+                  const isCompleted = row.stepNumber <= completedCount;
+                  const isNextUpcoming = displayIdx === firstUpcomingIdx;
+                  const isExtraSlot = row.slotIndex >= baselineSchedule.length;
+                  const inputMode =
+                    comboDollarInputModes[row.slotIndex] ||
+                    (typeof row.customOrderAmount === 'number' &&
+                    typeof row.customDepositAmount !== 'number'
+                      ? 'order'
+                      : 'deposit');
+                  const resolved = resolveComboDollarAmounts(comboModalUser.balance, row);
+                  const customDollarValue =
+                    inputMode === 'deposit'
+                      ? typeof row.customDepositAmount === 'number'
+                        ? String(row.customDepositAmount)
+                        : ''
+                      : typeof row.customOrderAmount === 'number'
+                      ? String(row.customOrderAmount)
+                      : '';
+                  const customCommValue =
+                    typeof row.customCommissionAmount === 'number'
+                      ? String(row.customCommissionAmount)
+                      : '';
+
+                  return (
+                    <div
+                      key={`${row.slotIndex}-${displayIdx}`}
+                      className={`p-3 rounded-xl border space-y-2 transition-colors ${
+                        isCompleted
+                          ? 'bg-slate-900/40 border-slate-800/80 opacity-75'
+                          : isNextUpcoming
+                          ? 'bg-amber-950/20 border-amber-500/50'
+                          : !row.isAutoFallback
+                          ? 'bg-slate-900 border-amber-500/30'
+                          : 'bg-slate-900/70 border-slate-800'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono font-bold text-xs text-white">
+                            Combo #{displayIdx + 1}
                           </span>
-                          <span className="text-slate-300">
-                            Deposit: <strong className="text-rose-400 font-mono">+{r.requiredPercent}%</strong> of balance
-                          </span>
-                          <span className="text-slate-300">
-                            Commission: <strong className="text-emerald-400 font-mono">+{r.commissionPercent}%</strong>
+                          {isCompleted ? (
+                            <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold">
+                              ✓ COMPLETED (Task #{row.stepNumber})
+                            </span>
+                          ) : isNextUpcoming ? (
+                            <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold">
+                              ▶ NEXT UPCOMING (Live Editable)
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold">
+                              UPCOMING
+                            </span>
+                          )}
+                          <span
+                            className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                              row.isAutoFallback
+                                ? 'bg-cyan-950 text-cyan-300 border border-cyan-800/60'
+                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                            }`}
+                          >
+                            {row.isAutoFallback
+                              ? 'Auto %'
+                              : resolved.hasCustomDollar || resolved.hasCustomCommission
+                              ? 'Fixed Custom $'
+                              : 'Custom %'}
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCustomRulesList((prev) => prev.filter((_, i) => i !== idx));
-                          }}
-                          className="text-rose-400 hover:text-rose-300 p-1"
-                          title="Remove Rule"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+
+                        <div className="flex items-center gap-1.5">
+                          {!isCompleted && !isExtraSlot && (!row.isAutoFallback || row.isCustomOverride) && (
+                            <button
+                              type="button"
+                              onClick={() => resetSlotToAuto(row.slotIndex)}
+                              className="px-2 py-1 rounded bg-slate-800 hover:bg-cyan-950 text-cyan-300 border border-slate-700 hover:border-cyan-700 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                              title="Clear custom override for this combo slot and revert to automatic default"
+                            >
+                              <RotateCcw className="w-3 h-3" /> Reset Auto
+                            </button>
+                          )}
+                          {!isCompleted && isExtraSlot && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setComboScheduleRows((prev) =>
+                                  prev.filter((r) => r.slotIndex !== row.slotIndex)
+                                )
+                              }
+                              className="px-2 py-1 rounded bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                              title="Remove extra custom trigger"
+                            >
+                              <Trash2 className="w-3 h-3" /> Remove
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    ))}
-                </div>
-              )}
-            </div>
 
-            {/* Complete Dynamic / Hybrid Schedule Preview */}
-            {(() => {
-              const fullSchedule = generateHybridComboSchedule(comboModalUser, customRulesList);
-              return (
-                <div className="space-y-1.5 p-3 bg-slate-900/80 border border-slate-800 rounded-xl">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
-                      <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                      Complete Cycle Combo Schedule ({fullSchedule.length} Combos Total)
-                    </span>
-                    <span className="text-[10px] text-cyan-400 font-mono font-bold">
-                      {fullSchedule.length} Combos across 25 Tasks
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 gap-1 pt-1 max-h-36 overflow-y-auto">
-                    {fullSchedule.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] border ${
-                          item.isAutoFallback
-                            ? 'bg-slate-950/70 border-slate-800 text-slate-300'
-                            : 'bg-amber-950/40 border-amber-800/60 text-amber-200'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-white">
-                            Task #{item.stepNumber}
-                          </span>
-                          <span className="text-slate-400">
-                            Dep: <strong className="text-rose-400 font-mono">+{item.requiredPercent}%</strong>
-                          </span>
-                          <span className="text-slate-400">
-                            Comm: <strong className="text-emerald-400 font-mono">+{item.commissionPercent}%</strong>
-                          </span>
+                      {/* Editable Inputs Row */}
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px]">
+                        <div>
+                          <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                            Trigger Task #
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="25"
+                            disabled={isCompleted}
+                            value={row.stepNumber}
+                            onChange={(e) => {
+                              const nextStep = Math.max(1, Math.min(25, parseInt(e.target.value, 10) || 1));
+                              updateSlotRule(row.slotIndex, (r) => ({
+                                ...r,
+                                stepNumber: nextStep,
+                                isCustomOverride: true,
+                                isAutoFallback: false,
+                              }));
+                            }}
+                            className="w-full bg-slate-950 border border-slate-700 disabled:opacity-60 rounded-lg px-2 py-1.5 text-white font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                          />
                         </div>
-                        <span
-                          className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
-                            item.isAutoFallback
-                              ? 'bg-cyan-950 text-cyan-300 border border-cyan-800/60'
-                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                          }`}
-                        >
-                          {item.isAutoFallback ? `Auto Fallback (${item.sourceLabel})` : 'Custom Trigger'}
+
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[10px] text-amber-300 font-bold">
+                              {inputMode === 'deposit' ? 'Custom Deposit $' : 'Custom Order $'}
+                            </label>
+                            {!isCompleted && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextMode = inputMode === 'deposit' ? 'order' : 'deposit';
+                                  setComboDollarInputModes((prev) => ({
+                                    ...prev,
+                                    [row.slotIndex]: nextMode,
+                                  }));
+                                  updateSlotRule(row.slotIndex, (r) => {
+                                    const bal = comboModalUser.balance;
+                                    if (nextMode === 'deposit' && typeof r.customOrderAmount === 'number') {
+                                      const dep = Number(Math.max(0, r.customOrderAmount - bal).toFixed(2));
+                                      return { ...r, customDepositAmount: dep, customOrderAmount: undefined };
+                                    }
+                                    if (nextMode === 'order' && typeof r.customDepositAmount === 'number') {
+                                      const ord = Number((bal + r.customDepositAmount).toFixed(2));
+                                      return { ...r, customOrderAmount: ord, customDepositAmount: undefined };
+                                    }
+                                    return r;
+                                  });
+                                }}
+                                className="text-[9px] px-1 py-0.2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 font-bold cursor-pointer"
+                                title="Switch between Fixed Deposit/Recharge $ and Fixed Total Order $"
+                              >
+                                {inputMode === 'deposit' ? 'Dep $' : 'Ord $'}
+                              </button>
+                            )}
+                          </div>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            disabled={isCompleted}
+                            value={customDollarValue}
+                            placeholder={`Auto (${resolved.deficit.toFixed(2)})`}
+                            onChange={(e) => {
+                              const raw = e.target.value.trim();
+                              if (!raw) {
+                                const baseRow = baselineSchedule.find((b) => b.slotIndex === row.slotIndex);
+                                updateSlotRule(row.slotIndex, (r) => {
+                                  const hasCommDollar = typeof r.customCommissionAmount === 'number';
+                                  const matchesBase =
+                                    Boolean(baseRow) &&
+                                    !hasCommDollar &&
+                                    r.stepNumber === baseRow!.stepNumber &&
+                                    r.requiredPercent === baseRow!.requiredPercent &&
+                                    r.commissionPercent === baseRow!.commissionPercent;
+                                  return {
+                                    ...r,
+                                    customOrderAmount: undefined,
+                                    customDepositAmount: undefined,
+                                    isCustomOverride: !matchesBase,
+                                    isAutoFallback: matchesBase,
+                                  };
+                                });
+                                return;
+                              }
+                              const num = Math.max(0, parseFloat(raw) || 0);
+                              updateSlotRule(row.slotIndex, (r) => ({
+                                ...r,
+                                customOrderAmount: inputMode === 'order' ? num : undefined,
+                                customDepositAmount: inputMode === 'deposit' ? num : undefined,
+                                isCustomOverride: true,
+                                isAutoFallback: false,
+                              }));
+                            }}
+                            className="w-full bg-slate-950 border border-amber-500/40 disabled:opacity-60 rounded-lg px-2 py-1.5 text-amber-300 font-mono font-bold placeholder:text-slate-600 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                            Deposit % {resolved.hasCustomDollar ? '(Bypassed)' : ''}
+                          </label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            disabled={isCompleted}
+                            value={resolved.hasCustomDollar ? '' : row.requiredPercent}
+                            placeholder={resolved.hasCustomDollar ? 'Fixed $ Used' : 'Auto %'}
+                            onChange={(e) => {
+                              const pct = Math.max(0, parseFloat(e.target.value) || 0);
+                              updateSlotRule(row.slotIndex, (r) => ({
+                                ...r,
+                                requiredPercent: pct,
+                                customOrderAmount: undefined,
+                                customDepositAmount: undefined,
+                                isCustomOverride: true,
+                                isAutoFallback: false,
+                              }));
+                            }}
+                            className="w-full bg-slate-950 border border-slate-700 disabled:opacity-60 rounded-lg px-2 py-1.5 text-rose-300 font-mono font-bold placeholder:text-amber-500/70 placeholder:text-[10px] focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                            Comm % {resolved.hasCustomCommission ? '(Bypassed)' : ''}
+                          </label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0.1"
+                            disabled={isCompleted}
+                            value={resolved.hasCustomCommission ? '' : row.commissionPercent}
+                            placeholder={resolved.hasCustomCommission ? 'Fixed $ Used' : 'Auto %'}
+                            onChange={(e) => {
+                              const pct = Math.max(0.1, parseFloat(e.target.value) || 0.1);
+                              updateSlotRule(row.slotIndex, (r) => ({
+                                ...r,
+                                commissionPercent: pct,
+                                customCommissionAmount: undefined,
+                                isCustomOverride: true,
+                                isAutoFallback: false,
+                              }));
+                            }}
+                            className="w-full bg-slate-950 border border-slate-700 disabled:opacity-60 rounded-lg px-2 py-1.5 text-emerald-300 font-mono font-bold placeholder:text-amber-500/70 placeholder:text-[10px] focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] text-emerald-300 font-bold block mb-1">
+                            Custom Comm $
+                          </label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            disabled={isCompleted}
+                            value={customCommValue}
+                            placeholder={`Auto (${resolved.commission.toFixed(2)})`}
+                            onChange={(e) => {
+                              const raw = e.target.value.trim();
+                              if (!raw) {
+                                const baseRow = baselineSchedule.find((b) => b.slotIndex === row.slotIndex);
+                                updateSlotRule(row.slotIndex, (r) => {
+                                  const hasDepositDollar =
+                                    typeof r.customOrderAmount === 'number' ||
+                                    typeof r.customDepositAmount === 'number';
+                                  const matchesBase =
+                                    Boolean(baseRow) &&
+                                    !hasDepositDollar &&
+                                    r.stepNumber === baseRow!.stepNumber &&
+                                    r.requiredPercent === baseRow!.requiredPercent &&
+                                    r.commissionPercent === baseRow!.commissionPercent;
+                                  return {
+                                    ...r,
+                                    customCommissionAmount: undefined,
+                                    isCustomOverride: !matchesBase,
+                                    isAutoFallback: matchesBase,
+                                  };
+                                });
+                                return;
+                              }
+                              const commDollar = Math.max(0, parseFloat(raw) || 0);
+                              updateSlotRule(row.slotIndex, (r) => ({
+                                ...r,
+                                customCommissionAmount: commDollar,
+                                isCustomOverride: true,
+                                isAutoFallback: false,
+                              }));
+                            }}
+                            className="w-full bg-slate-950 border border-emerald-500/40 disabled:opacity-60 rounded-lg px-2 py-1.5 text-emerald-200 font-mono font-bold placeholder:text-slate-600 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 pt-0.5 border-t border-slate-800/60">
+                        <span>
+                          Est. Order: <strong className="text-slate-200 font-mono">{resolved.totalOrderAmount.toFixed(2)} USDT</strong>
+                          {' · '}Recharge Deficit:{' '}
+                          <strong className="text-rose-300 font-mono">
+                            +{resolved.deficit.toFixed(2)} USDT {resolved.hasCustomDollar ? '(Fixed $ — % Bypassed)' : `(+${resolved.depositPercent}%)`}
+                          </strong>
+                        </span>
+                        <span>
+                          Commission:{' '}
+                          <strong className="text-emerald-300 font-mono">
+                            +{resolved.commission.toFixed(2)} USDT {resolved.hasCustomCommission ? '(Fixed $ — % Bypassed)' : `(+${resolved.commissionPercent}%)`}
+                          </strong>
                         </span>
                       </div>
-                    ))}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Add Extra Combo Trigger Form */}
+              <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-400 block">+ Add Additional Combo Trigger</span>
+                  <span className="text-[10px] text-slate-400">Appends an extra combo beyond baseline ({baselineSchedule.length})</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                      Task Step (1-25)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="25"
+                      value={newComboStep}
+                      onChange={(e) => setNewComboStep(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                      Custom Deposit $ (Opt.)
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={newComboCustomOrderAmt}
+                      onChange={(e) => setNewComboCustomOrderAmt(e.target.value)}
+                      placeholder="Fixed Recharge $"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-amber-300 font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                      Required Deposit %
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newComboDepositPct}
+                      onChange={(e) => setNewComboDepositPct(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-rose-300 font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                      Commission %
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={newComboCommPct}
+                      onChange={(e) => setNewComboCommPct(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-emerald-300 font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                    />
                   </div>
                 </div>
-              );
-            })()}
 
-            {/* Add New Trigger Form */}
-            <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-amber-400 block">+ Add Custom Combo Trigger</span>
-                <span className="text-[10px] text-slate-400">Step 1-25 · Any count (e.g. 6, 7 combos)</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const s = parseInt(newComboStep, 10);
+                    const dep = parseFloat(newComboDepositPct);
+                    const comm = parseFloat(newComboCommPct);
+                    const customDep = newComboCustomOrderAmt.trim() ? parseFloat(newComboCustomOrderAmt) : undefined;
+                    if (isNaN(s) || s < 1 || s > 25) {
+                      notify({ success: false, message: 'Step number must be between 1 and 25.' });
+                      return;
+                    }
+                    if ((customDep === undefined || isNaN(customDep)) && (isNaN(dep) || dep < 0)) {
+                      notify({ success: false, message: 'Enter a valid Custom Deposit $ or Deposit %.' });
+                      return;
+                    }
+                    if (isNaN(comm) || comm <= 0) {
+                      notify({ success: false, message: 'Please enter a valid commission percent.' });
+                      return;
+                    }
+
+                    setComboScheduleRows((prev) => {
+                      const existingAtStep = prev.find((r) => r.stepNumber === s);
+                      const nextSlotIdx = existingAtStep
+                        ? existingAtStep.slotIndex
+                        : prev.reduce((max, r) => Math.max(max, r.slotIndex), -1) + 1;
+
+                      const nextRule: EffectiveComboRule = {
+                        slotIndex: nextSlotIdx,
+                        stepNumber: s,
+                        requiredPercent: isNaN(dep) ? 45 : dep,
+                        commissionPercent: comm,
+                        ...(customDep !== undefined && !isNaN(customDep) && customDep >= 0
+                          ? { customDepositAmount: Number(customDep.toFixed(2)) }
+                          : {}),
+                        isCustomOverride: true,
+                        isAutoFallback: false,
+                        sourceLabel: customDep !== undefined ? `Fixed $${customDep.toFixed(2)} Recharge` : 'Custom Admin Rule',
+                      };
+
+                      if (existingAtStep) {
+                        return prev.map((r) => (r.slotIndex === existingAtStep.slotIndex ? nextRule : r));
+                      }
+                      return [...prev, nextRule];
+                    });
+                    setNewComboCustomOrderAmt('');
+                  }}
+                  className="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-lg transition-colors border border-amber-500/30 flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add / Update Combo Trigger at Task #{newComboStep}</span>
+                </button>
               </div>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <div>
-                  <label className="text-[10px] text-slate-400 font-semibold block mb-1">
-                    Task Step (1-25)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="25"
-                    value={newComboStep}
-                    onChange={(e) => setNewComboStep(e.target.value)}
-                    placeholder="e.g. 14"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-400 font-semibold block mb-1">
-                    Required Deposit %
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={newComboDepositPct}
-                    onChange={(e) => setNewComboDepositPct(e.target.value)}
-                    placeholder="e.g. 36"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-rose-300 font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-400 font-semibold block mb-1">
-                    Commission %
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={newComboCommPct}
-                    onChange={(e) => setNewComboCommPct(e.target.value)}
-                    placeholder="e.g. 20"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-emerald-300 font-mono font-bold focus:outline-hidden focus:ring-1 focus:ring-amber-500"
-                  />
-                </div>
+
+              {/* Modal Actions */}
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setComboScheduleRows(getBaselineComboSchedule(comboModalUser));
+                    setComboDollarInputModes({});
+                  }}
+                  className="px-3 py-2 bg-slate-800 text-cyan-300 hover:bg-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
+                >
+                  Reset All to Auto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setComboModalUser(null)}
+                  className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-semibold hover:bg-slate-700 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const seenSteps = new Set<number>();
+                    for (const row of comboScheduleRows) {
+                      if (row.stepNumber < 1 || row.stepNumber > 25) {
+                        notify({ success: false, message: `Invalid step #${row.stepNumber}. Steps must be 1–25.` });
+                        return;
+                      }
+                      if (seenSteps.has(row.stepNumber)) {
+                        notify({
+                          success: false,
+                          message: `Duplicate trigger at Task #${row.stepNumber}. Each combo must have a unique task number.`,
+                        });
+                        return;
+                      }
+                      seenSteps.add(row.stepNumber);
+                    }
+
+                    const overridesToSave = extractCustomOverridesToSave(comboScheduleRows, comboModalUser);
+                    const totalCombos = comboScheduleRows.length;
+                    const autoRemaining = totalCombos - overridesToSave.length;
+
+                    requestConfirmation({
+                      title: 'Save Combo Schedule & Dollar Overrides?',
+                      description: `Apply ${overridesToSave.length} custom override(s) + ${Math.max(0, autoRemaining)} automatic default(s) (${totalCombos} total combos) for ${comboModalUser.username} (UID: ${comboModalUser.uid})? Completed tasks and cycle progress (${completedCount}/25) remain untouched.`,
+                      confirmLabel: 'Confirm Save Schedule',
+                      variant: 'warning',
+                      onConfirm: () => {
+                        const res = setCustomUserCombos(comboModalUser.id, overridesToSave);
+                        notify(res);
+                        if (res.success) setComboModalUser(null);
+                      },
+                    });
+                  }}
+                  className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black rounded-lg text-xs transition-colors cursor-pointer"
+                >
+                  Save Schedule ({sortedSchedule.length} Combos)
+                </button>
               </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const s = parseInt(newComboStep, 10);
-                  const dep = parseFloat(newComboDepositPct);
-                  const comm = parseFloat(newComboCommPct);
-                  if (isNaN(s) || s < 1 || s > 25) {
-                    notify({ success: false, message: 'Step number must be between 1 and 25.' });
-                    return;
-                  }
-                  if (isNaN(dep) || dep <= 0) {
-                    notify({ success: false, message: 'Please enter a valid deposit percent.' });
-                    return;
-                  }
-                  if (isNaN(comm) || comm <= 0) {
-                    notify({ success: false, message: 'Please enter a valid commission percent.' });
-                    return;
-                  }
-
-                  // Replace if step already exists, or append
-                  setCustomRulesList((prev) => {
-                    const filtered = prev.filter((r) => r.stepNumber !== s);
-                    return [...filtered, { stepNumber: s, requiredPercent: dep, commissionPercent: comm }];
-                  });
-                }}
-                className="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-lg transition-colors border border-amber-500/30 flex items-center justify-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add / Update Trigger for Task #{newComboStep}</span>
-              </button>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="pt-2 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setCustomRulesList([])}
-                className="px-3 py-2 bg-slate-800 text-slate-400 hover:text-white rounded-lg text-xs font-medium"
-              >
-                Clear All
-              </button>
-              <button
-                type="button"
-                onClick={() => setComboModalUser(null)}
-                className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-semibold hover:bg-slate-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  requestConfirmation({
-                    title: 'Save Custom Combo Configuration?',
-                    description: `Are you sure you want to apply ${customRulesList.length} custom combo trigger rule(s) to ${comboModalUser.username} (UID: ${comboModalUser.uid})? Click Confirm to proceed.`,
-                    confirmLabel: 'Confirm Save Combos',
-                    variant: 'warning',
-                    onConfirm: () => {
-                      const res = setCustomUserCombos(comboModalUser.id, customRulesList);
-                      notify(res);
-                      if (res.success) setComboModalUser(null);
-                    },
-                  });
-                }}
-                className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black rounded-lg text-xs transition-colors cursor-pointer"
-              >
-                Save Configuration
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ------------------------------------------------------------- */}
       {/* DEMO ACCOUNT CREATION MODAL */}

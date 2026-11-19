@@ -2,10 +2,12 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  Package,
   X,
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
+import { resolveCategoryFallbackImage, resolveProductThumbnail } from '../../../data/productCatalog';
 import { DepositNavigationParams, GrabbedOrder } from '../../../types';
 
 interface Props {
@@ -27,11 +29,15 @@ export const OrderDetailsModal: React.FC<Props> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [failedImgKeys, setFailedImgKeys] = useState<Record<string, boolean>>({});
+  const [fallbackImgUrls, setFallbackImgUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setSuccessMsg(null);
     setErrorMsg(null);
     setIsSubmitting(false);
+    setFailedImgKeys({});
+    setFallbackImgUrls({});
   }, [order?.id, isOpen]);
 
   if (!isOpen || !order) return null;
@@ -170,43 +176,54 @@ export const OrderDetailsModal: React.FC<Props> = ({
 
         {/* 1 to 3 Matched Product Cards Container matching Screenshot */}
         <div className="space-y-3 max-h-[38vh] overflow-y-auto pr-0.5">
-          {displayItems.map((item, index) => (
-            <div
-              key={item.id || index}
-              className="flex items-center gap-3 border-b border-gray-100 pb-3 last:border-b-0 last:pb-0"
-            >
-              {/* Product Thumbnail */}
-              <div className="w-14 h-14 rounded-xl bg-[#f0f0f0] p-1 flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
-                {item.image ? (
-                  <img
-                    src={item.image}
-                    alt={item.name}
-                    className="w-full h-full object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLElement).style.display = 'none';
-                    }}
-                  />
-                ) : (
-                  <div className="w-full h-full bg-slate-200 rounded-lg" />
-                )}
-              </div>
+          {displayItems.map((item, index) => {
+            const imgKey = `${item.id || 'item'}_${index}`;
+            const safeImgSrc =
+              fallbackImgUrls[imgKey] || resolveProductThumbnail(item.image, item.name);
+            const hasImgError = Boolean(failedImgKeys[imgKey]);
+            return (
+              <div
+                key={item.id || index}
+                className="flex items-center gap-3 border-b border-gray-100 pb-3 last:border-b-0 last:pb-0"
+              >
+                {/* Product Thumbnail */}
+                <div className="w-14 h-14 rounded-xl bg-[#f0f0f0] p-1 flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
+                  {safeImgSrc && !hasImgError ? (
+                    <img
+                      src={safeImgSrc}
+                      alt={item.name}
+                      className="w-full h-full object-contain"
+                      onError={() => {
+                        const kwFallback = resolveCategoryFallbackImage(item.name);
+                        if (!fallbackImgUrls[imgKey] && kwFallback !== safeImgSrc) {
+                          setFallbackImgUrls((prev) => ({ ...prev, [imgKey]: kwFallback }));
+                        } else {
+                          setFailedImgKeys((prev) => ({ ...prev, [imgKey]: true }));
+                        }
+                      }}
+                    />
+                  ) : (
+                    <Package className="w-6 h-6 text-slate-400" />
+                  )}
+                </div>
 
-              {/* Product Info */}
-              <div className="flex-1 min-w-0 pr-1">
-                <h4 className="font-bold text-xs sm:text-[13px] text-slate-800 truncate leading-tight">
-                  {item.name}
-                </h4>
-                <div className="font-bold text-xs text-slate-500 mt-1">
-                  {item.unitPrice.toFixed(2)}USDT
+                {/* Product Info */}
+                <div className="flex-1 min-w-0 pr-1">
+                  <h4 className="font-bold text-xs sm:text-[13px] text-slate-800 truncate leading-tight">
+                    {item.name}
+                  </h4>
+                  <div className="font-bold text-xs text-slate-500 mt-1">
+                    {item.unitPrice.toFixed(2)}USDT
+                  </div>
+                </div>
+
+                {/* Quantity */}
+                <div className="font-bold text-xs sm:text-[13px] text-slate-500 shrink-0">
+                  x{item.quantity}
                 </div>
               </div>
-
-              {/* Quantity */}
-              <div className="font-bold text-xs sm:text-[13px] text-slate-500 shrink-0">
-                x{item.quantity}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Financial Specs List matching Screenshot */}

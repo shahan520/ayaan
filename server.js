@@ -253,9 +253,14 @@ const userSchema = new mongoose.Schema(
     },
     customCombos: [
       {
+        slotIndex: { type: Number },
         stepNumber: { type: Number, required: true },
         requiredPercent: { type: Number, required: true },
         commissionPercent: { type: Number, required: true },
+        customOrderAmount: { type: Number },
+        customDepositAmount: { type: Number },
+        customCommissionAmount: { type: Number },
+        isCustomOverride: { type: Boolean },
       },
     ],
   },
@@ -717,6 +722,9 @@ const vipComboRuleSchema = new mongoose.Schema(
       required: true,
       default: 1,
     },
+    slotIndex: {
+      type: Number,
+    },
     stepNumber: {
       type: Number,
       required: true,
@@ -728,6 +736,18 @@ const vipComboRuleSchema = new mongoose.Schema(
     commissionPercent: {
       type: Number,
       required: true,
+    },
+    customOrderAmount: {
+      type: Number,
+    },
+    customDepositAmount: {
+      type: Number,
+    },
+    customCommissionAmount: {
+      type: Number,
+    },
+    isCustomOverride: {
+      type: Boolean,
     },
     isCustom: {
       type: Boolean,
@@ -3208,9 +3228,14 @@ app.post('/api/combos/rules', async (req, res) => {
       await VipComboRule.deleteMany({ targetUserUid });
       const docs = customCombos.map((c) => ({
         targetUserUid,
+        slotIndex: typeof c.slotIndex === 'number' ? c.slotIndex : undefined,
         stepNumber: c.stepNumber,
         requiredPercent: c.requiredPercent,
         commissionPercent: c.commissionPercent,
+        customOrderAmount: typeof c.customOrderAmount === 'number' ? c.customOrderAmount : undefined,
+        customDepositAmount: typeof c.customDepositAmount === 'number' ? c.customDepositAmount : undefined,
+        customCommissionAmount: typeof c.customCommissionAmount === 'number' ? c.customCommissionAmount : undefined,
+        isCustomOverride: c.isCustomOverride !== false,
         isCustom: true,
       }));
       await VipComboRule.insertMany(docs);

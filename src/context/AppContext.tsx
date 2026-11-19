@@ -11,7 +11,7 @@ import {
 } from '../data/initialData';
 import { generateTieredMatchedProducts, generateComboOrderProducts } from '../data/productCatalog';
 import { getPlatformBalanceValidationMessage } from '../utils/balanceValidation';
-import { generateHybridComboSchedule } from '../utils/comboGenerator';
+import { generateHybridComboSchedule, resolveComboDollarAmounts } from '../utils/comboGenerator';
 import { LanguageCode, translations } from '../utils/i18n';
 import { getApiUrl, renderKeepAlive } from '../utils/apiConfig';
 import {
@@ -1481,182 +1481,149 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isCombo: boolean;
     depositPercent: number;
     commissionPercent: number;
+    fixedOrderAmount?: number;
     fixedDepositDeficit?: number;
     fixedCommission?: number;
     depositAddress?: string;
   } | null => {
-    // 0. DEMO ACCOUNT COMBO SCHEDULE (EXACTLY 4 COMBOS):
-    // For demo accounts, strictly trigger exactly 4 combo orders across the 25-task cycle at tasks: #9, #14, #19, and #24.
-    // Starting balance: 300 USDT.
-    // Total final balance after completing all 25 tasks must range between 2300 to 2700 USDT (target ~2500 USDT).
-    // Dynamic TRC-20 Address Rotation: Sequentially cycles through distinct pool addresses across the 4 stages.
+    const schedule = generateHybridComboSchedule(user);
+    const matched = schedule.find((r) => r.stepNumber === taskNumber);
+    if (!matched) {
+      return null;
+    }
+
+    // 0. DEMO ACCOUNT COMBO SCHEDULE (EXACTLY 4 COMBOS by default, with live admin override support):
     if (user.isDemoAccount) {
       const bal = user.balance;
       const targetFinal = 2500.0; // Anchors accurately within [2300, 2700] USDT
+      const demoPoolAddress =
+        DEMO_TRC20_ADDRESS_POOL[Math.min(DEMO_TRC20_ADDRESS_POOL.length - 1, Math.max(0, matched.slotIndex))];
 
-      switch (taskNumber) {
-        case 9: {
-          // Task #9 (First Combo): Set combo amount within 150 USDT.
-          // Combo deficit requirement is fixed within 150 USDT (135.00 USDT)
-          // Stage 1/4 TRC-20 address: Pool Index 0
-          const deficit = 135.0;
-          const comm = 105.0;
-          const depPct = Number(((deficit / Math.max(1, bal)) * 100).toFixed(2));
-          const totalAmt = Number((bal + deficit).toFixed(2));
-          const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
-          return {
-            isCombo: true,
-            depositPercent: depPct,
-            commissionPercent: commPct,
-            fixedDepositDeficit: deficit,
-            fixedCommission: comm,
-            depositAddress: DEMO_TRC20_ADDRESS_POOL[0],
-          };
-        }
-
-        case 14: {
-          // Task #14 (Second Combo): Set combo amount within 240 USDT.
-          // Combo deficit requirement is fixed within 240 USDT (220.00 USDT)
-          // Stage 2/4 TRC-20 address: Pool Index 1
-          const deficit = 220.0;
-          const comm = 225.0;
-          const depPct = Number(((deficit / Math.max(1, bal)) * 100).toFixed(2));
-          const totalAmt = Number((bal + deficit).toFixed(2));
-          const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
-          return {
-            isCombo: true,
-            depositPercent: depPct,
-            commissionPercent: commPct,
-            fixedDepositDeficit: deficit,
-            fixedCommission: comm,
-            depositAddress: DEMO_TRC20_ADDRESS_POOL[1],
-          };
-        }
-
-        case 19: {
-          // Task #19 (Third Combo): Scale up progress towards intermediate target (~1650 USDT).
-          // Stage 3/4 TRC-20 address: Pool Index 2
-          const deficit = 260.0;
-          const comm = 200.0;
-          const depPct = Number(((deficit / Math.max(1, bal)) * 100).toFixed(2));
-          const totalAmt = Number((bal + deficit).toFixed(2));
-          const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
-          return {
-            isCombo: true,
-            depositPercent: depPct,
-            commissionPercent: commPct,
-            fixedDepositDeficit: deficit,
-            fixedCommission: comm,
-            depositAddress: DEMO_TRC20_ADDRESS_POOL[2],
-          };
-        }
-
-        case 24: {
-          // Task #24 (Fourth and Final Combo):
-          // Set combo amount to be strictly over 400 USDT (410-430 USDT, chosen: 420.00 USDT)
-          // Stage 4/4 TRC-20 address: Pool Index 3 (distinct, preventing repetition)
-          const deficit = 420.0; // Strictly over 400 USDT, within 410-430 USDT
-          const expectedTask25Comm = 30.0;
-          // Calculate combo commission so final total balance strictly lands between 2300 and 2700 USDT (target 2500 USDT)
-          const remainingForComm = targetFinal - (bal + deficit) - expectedTask25Comm;
-          const comm = Number(Math.max(60, Math.min(350, remainingForComm)).toFixed(2));
-          const depPct = Number(((deficit / Math.max(1, bal)) * 100).toFixed(2));
-          const totalAmt = Number((bal + deficit).toFixed(2));
-          const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
-          return {
-            isCombo: true,
-            depositPercent: depPct,
-            commissionPercent: commPct,
-            fixedDepositDeficit: deficit,
-            fixedCommission: comm,
-            depositAddress: DEMO_TRC20_ADDRESS_POOL[3],
-          };
-        }
-
-        default:
-          return null;
-      }
-    }
-
-    // 1. ADMIN CUSTOM COMBOS OVERRIDE:
-    // Honor exact custom combo triggers configured by Admin without injecting extra unwanted combos.
-    if (user.customCombos && user.customCombos.length > 0) {
-      const match = user.customCombos.find((c) => c.stepNumber === taskNumber);
-      if (match) {
+      if (!matched.isAutoFallback) {
+        const resolved = resolveComboDollarAmounts(bal, matched);
+        const hasFixedDepositAmt = typeof matched.customDepositAmount === 'number' && matched.customDepositAmount >= 0;
+        const hasFixedOrderAmt = !hasFixedDepositAmt && typeof matched.customOrderAmount === 'number' && matched.customOrderAmount > 0;
         return {
           isCombo: true,
-          depositPercent: match.requiredPercent,
-          commissionPercent: match.commissionPercent,
+          depositPercent: resolved.depositPercent,
+          commissionPercent: resolved.commissionPercent,
+          ...(hasFixedOrderAmt ? { fixedOrderAmount: resolved.totalOrderAmount } : {}),
+          ...(resolved.hasCustomDollar ? { fixedDepositDeficit: resolved.deficit } : {}),
+          ...(resolved.hasCustomCommission ? { fixedCommission: resolved.commission } : {}),
+          depositAddress: demoPoolAddress,
         };
       }
-      return null;
-    }
 
-    // 2. VIP or Locked Accounts: Trigger EXACTLY 5 Combo Orders schedule
-    // (at Task #8, Task #15, Task #19, Task #23, and Task #25)
-    if (user.isVipAccount || user.isLockedAccount) {
-      switch (taskNumber) {
-        case 8:
-          return { isCombo: true, depositPercent: 267, commissionPercent: 81 };
-        case 15:
-          return { isCombo: true, depositPercent: 150, commissionPercent: 81 };
-        case 19:
-          return { isCombo: true, depositPercent: 130, commissionPercent: 81 };
-        case 23:
-          return { isCombo: true, depositPercent: 90, commissionPercent: 81 };
-        case 25:
-          return { isCombo: true, depositPercent: 43, commissionPercent: 83 };
-        default:
-          return null;
+      if (matched.slotIndex === 0) {
+        const deficit = 135.0;
+        const comm = 105.0;
+        const depPct = Number(((deficit / Math.max(1, bal)) * 100).toFixed(2));
+        const totalAmt = Number((bal + deficit).toFixed(2));
+        const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
+        return {
+          isCombo: true,
+          depositPercent: depPct,
+          commissionPercent: commPct,
+          fixedDepositDeficit: deficit,
+          fixedCommission: comm,
+          depositAddress: DEMO_TRC20_ADDRESS_POOL[0],
+        };
       }
+      if (matched.slotIndex === 1) {
+        const deficit = 220.0;
+        const comm = 225.0;
+        const depPct = Number(((deficit / Math.max(1, bal)) * 100).toFixed(2));
+        const totalAmt = Number((bal + deficit).toFixed(2));
+        const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
+        return {
+          isCombo: true,
+          depositPercent: depPct,
+          commissionPercent: commPct,
+          fixedDepositDeficit: deficit,
+          fixedCommission: comm,
+          depositAddress: DEMO_TRC20_ADDRESS_POOL[1],
+        };
+      }
+      if (matched.slotIndex === 2) {
+        const deficit = 260.0;
+        const comm = 200.0;
+        const depPct = Number(((deficit / Math.max(1, bal)) * 100).toFixed(2));
+        const totalAmt = Number((bal + deficit).toFixed(2));
+        const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
+        return {
+          isCombo: true,
+          depositPercent: depPct,
+          commissionPercent: commPct,
+          fixedDepositDeficit: deficit,
+          fixedCommission: comm,
+          depositAddress: DEMO_TRC20_ADDRESS_POOL[2],
+        };
+      }
+      // Slot index 3 (Task #24 default):
+      const deficit = 420.0;
+      const expectedTask25Comm = 30.0;
+      const remainingForComm = targetFinal - (bal + deficit) - expectedTask25Comm;
+      const comm = Number(Math.max(60, Math.min(350, remainingForComm)).toFixed(2));
+      const depPct = Number(((deficit / Math.max(1, bal)) * 100).toFixed(2));
+      const totalAmt = Number((bal + deficit).toFixed(2));
+      const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
+      return {
+        isCombo: true,
+        depositPercent: depPct,
+        commissionPercent: commPct,
+        fixedDepositDeficit: deficit,
+        fixedCommission: comm,
+        depositAddress: DEMO_TRC20_ADDRESS_POOL[3],
+      };
     }
 
+    // 1. Per-combo Admin Custom Override (supports Custom Order $, Custom Deposit $, Custom Commission $, or %):
+    // Unedited sibling slots still have isAutoFallback === true and continue running automatically!
+    if (!matched.isAutoFallback) {
+      const resolved = resolveComboDollarAmounts(user.balance, matched);
+      const hasFixedDepositAmt = typeof matched.customDepositAmount === 'number' && matched.customDepositAmount >= 0;
+      const hasFixedOrderAmt = !hasFixedDepositAmt && typeof matched.customOrderAmount === 'number' && matched.customOrderAmount > 0;
+      return {
+        isCombo: true,
+        depositPercent: resolved.depositPercent,
+        commissionPercent: resolved.commissionPercent,
+        ...(hasFixedOrderAmt ? { fixedOrderAmount: resolved.totalOrderAmount } : {}),
+        ...(resolved.hasCustomDollar ? { fixedDepositDeficit: resolved.deficit } : {}),
+        ...(resolved.hasCustomCommission ? { fixedCommission: resolved.commission } : {}),
+      };
+    }
+
+    // 2. Automatic Default Slot (Cycle 1, Cycle 2+, or VIP/Locked)
     const cycle = user.cycleNumber || 1;
-
-    // 3. Cycle 1 (New Account / 1st Cycle): Trigger EXACTLY 1 Combo Order (at Task #14 or Task #15).
-    if (cycle === 1) {
-      const targetStep = user.comboOrderStep === 15 ? 15 : 14;
-      if (taskNumber === targetStep) {
-        return { isCombo: true, depositPercent: 36, commissionPercent: 20 };
-      }
-      return null;
+    if (
+      !user.isVipAccount &&
+      !user.isLockedAccount &&
+      cycle === 2 &&
+      matched.stepNumber === 23 &&
+      isCycle2SmallBalanceAccount(user)
+    ) {
+      const bal = user.balance;
+      const deficitPct = 48;
+      const deficit = Number(((bal * deficitPct) / 100).toFixed(2));
+      const totalAmt = Number((bal + deficit).toFixed(2));
+      const targetAfter23 = 326.0;
+      const remainingForComm = Number((targetAfter23 - totalAmt).toFixed(2));
+      const comm = Number(Math.max(35, Math.min(80, remainingForComm)).toFixed(2));
+      const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
+      return {
+        isCombo: true,
+        depositPercent: deficitPct,
+        commissionPercent: commPct,
+        fixedDepositDeficit: deficit,
+        fixedCommission: comm,
+      };
     }
 
-    // 4. Cycle 2 & Onwards (cycle >= 2): Trigger EXACTLY 3 Combo Orders (at Task #7, Task #15, and Task #23).
-    // For accounts starting Cycle #2 with ~30-40 USDT, calibrate Task #23 so final balance lands in 320-350 USDT.
-    if (cycle >= 2) {
-      const isSmallAccount = cycle === 2 && isCycle2SmallBalanceAccount(user);
-
-      if (taskNumber === 7) {
-        return { isCombo: true, depositPercent: 55, commissionPercent: 26 };
-      }
-      if (taskNumber === 15) {
-        return { isCombo: true, depositPercent: 50, commissionPercent: 18 };
-      }
-      if (taskNumber === 23) {
-        if (isSmallAccount) {
-          const bal = user.balance;
-          const deficitPct = 48;
-          const deficit = Number(((bal * deficitPct) / 100).toFixed(2));
-          const totalAmt = Number((bal + deficit).toFixed(2));
-          const targetAfter23 = 326.0;
-          const remainingForComm = Number((targetAfter23 - totalAmt).toFixed(2));
-          const comm = Number(Math.max(35, Math.min(80, remainingForComm)).toFixed(2));
-          const commPct = Number(((comm / totalAmt) * 100).toFixed(2));
-          return {
-            isCombo: true,
-            depositPercent: deficitPct,
-            commissionPercent: commPct,
-            fixedDepositDeficit: deficit,
-            fixedCommission: comm,
-          };
-        }
-        return { isCombo: true, depositPercent: 50, commissionPercent: 18 };
-      }
-      return null;
-    }
-
-    return null;
+    return {
+      isCombo: true,
+      depositPercent: matched.requiredPercent,
+      commissionPercent: matched.commissionPercent,
+    };
   };
 
   const grabOrder = (vipTier: 'VIP 1' | 'VIP 2' | 'VIP 3') => {
@@ -1741,7 +1708,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       comboDepositPercent = comboRule.depositPercent;
       comboCommissionPercent = comboRule.commissionPercent;
 
-      if (comboRule.fixedDepositDeficit !== undefined) {
+      if (comboRule.fixedOrderAmount !== undefined) {
+        requiredBalance = Number(comboRule.fixedOrderAmount.toFixed(2));
+        requiredDepositDeficit = Number(Math.max(0, requiredBalance - bal).toFixed(2));
+      } else if (comboRule.fixedDepositDeficit !== undefined) {
         requiredDepositDeficit = comboRule.fixedDepositDeficit;
         requiredBalance = Number((bal + requiredDepositDeficit).toFixed(2));
       } else {
@@ -1750,14 +1720,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         requiredBalance = Number((bal + requiredDepositDeficit).toFixed(2));
       }
 
-      // Combo product set target matches the required balance (User Balance + Deposit Deficit)
+      // Combo product set target matches exact fixedOrderAmount or requiredBalance (bal + exact custom deposit $)
       const combo = generateComboOrderProducts(bal, requiredBalance);
       matchedItems = combo.items;
-      actualOrderAmt = combo.totalOrderAmount;
+      actualOrderAmt =
+        comboRule.fixedOrderAmount !== undefined
+          ? Number(comboRule.fixedOrderAmount.toFixed(2))
+          : comboRule.fixedDepositDeficit !== undefined
+          ? Number((bal + comboRule.fixedDepositDeficit).toFixed(2))
+          : combo.totalOrderAmount;
 
       if (comboRule.fixedCommission !== undefined) {
         comm = comboRule.fixedCommission;
-        comboCommissionPercent = Number(((comm / actualOrderAmt) * 100).toFixed(2));
+        comboCommissionPercent = Number(((comm / Math.max(1, actualOrderAmt)) * 100).toFixed(2));
         rate = Number((comboCommissionPercent / 100).toFixed(4));
       } else {
         rate = Number((comboRule.commissionPercent / 100).toFixed(4));
@@ -1936,7 +1911,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           shortfall,
           requiredAmount: required,
           currentBalance: targetUser.balance,
-          message: `Mandatory Deposit Deficit: ${shortfall.toFixed(2)} USDT required for Combo Order #${order.comboStepNumber || 14}! Required balance: ${required.toFixed(2)} USDT (Deposit Requirement: +${order.comboDepositPercent || 36}%), Current balance: ${targetUser.balance.toFixed(2)} USDT. Please deposit at least ${shortfall.toFixed(2)} USDT via TRC-20 to complete this combo order and collect +${calculatedCommission.toFixed(2)} USDT commission reward.`,
+          message: `Mandatory Deposit Deficit: ${shortfall.toFixed(2)} USDT required for Combo Order #${order.comboStepNumber || 14}! Required balance: ${required.toFixed(2)} USDT (${order.comboDepositPercent ? `Deposit Requirement: +${order.comboDepositPercent}%` : `Fixed Recharge: ${shortfall.toFixed(2)} USDT`}), Current balance: ${targetUser.balance.toFixed(2)} USDT. Please deposit at least ${shortfall.toFixed(2)} USDT via TRC-20 to complete this combo order and collect +${calculatedCommission.toFixed(2)} USDT commission reward.`,
         };
       }
     }
@@ -1979,7 +1954,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         newBalance = Number(Math.min(2650, newBalance).toFixed(4));
       }
-    } else if (isCycle2SmallBalanceAccount(targetUser)) {
+    } else if (
+      isCycle2SmallBalanceAccount(targetUser) &&
+      !(targetUser.customCombos && targetUser.customCombos.length > 0)
+    ) {
       if (isCycleNowFinished) {
         newBalance = Number(Math.min(348, Math.max(322, newBalance)).toFixed(4));
       } else {
@@ -2349,16 +2327,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const target = users.find((u) => u.id === userId);
     if (!target) return { success: false, message: 'User not found.' };
 
-    syncUserUpdateToBackend(target.uid, { customCombos: combos });
+    const normalizedCombos = combos.map((c) => ({
+      ...c,
+      isCustomOverride: true,
+    }));
+
+    syncUserUpdateToBackend(target.uid, { customCombos: normalizedCombos });
     setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, customCombos: combos } : u))
+      prev.map((u) => (u.id === userId ? { ...u, customCombos: normalizedCombos } : u))
     );
 
-    const customCount = combos.length;
+    const effectiveTotal = generateHybridComboSchedule({
+      ...target,
+      customCombos: normalizedCombos,
+    }).length;
+    const customCount = normalizedCombos.length;
     const summaryText =
       customCount === 0
-        ? 'Cleared custom triggers (reverted to default cycle/VIP rules)'
-        : `${customCount} custom combo trigger(s) active (exact Admin override)`;
+        ? `Reverted all ${effectiveTotal} combo slots to automatic default schedule`
+        : `${customCount} custom override(s) + ${Math.max(0, effectiveTotal - customCount)} auto default (${effectiveTotal} combos total)`;
 
     logAuditAction(
       'SET_CUSTOM_COMBOS',
@@ -2368,7 +2355,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return {
       success: true,
-      message: `Custom combo rules updated for ${target.username}: ${summaryText}.`,
+      message: `Combo schedule updated for ${target.username}: ${summaryText}.`,
     };
   };
 

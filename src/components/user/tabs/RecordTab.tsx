@@ -1,6 +1,7 @@
-import { CheckCircle2, Clock } from 'lucide-react';
+import { CheckCircle2, Clock, Package } from 'lucide-react';
 import React, { useState } from 'react';
 import { useApp } from '../../../context/AppContext';
+import { resolveCategoryFallbackImage, resolveProductThumbnail } from '../../../data/productCatalog';
 import { DepositNavigationParams, GrabbedOrder } from '../../../types';
 import { OrderDetailsModal } from '../modals/OrderDetailsModal';
 
@@ -14,6 +15,8 @@ export const RecordTab: React.FC<Props> = ({ onNavigateToDeposit }) => {
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [inspectOrder, setInspectOrder] = useState<GrabbedOrder | null>(null);
+  const [failedImgKeys, setFailedImgKeys] = useState<Record<string, boolean>>({});
+  const [fallbackImgUrls, setFallbackImgUrls] = useState<Record<string, string>>({});
 
   const userOrders = orders.filter(
     (o) => currentUser && (o.userId === currentUser.id || (o.userUid && String(o.userUid) === String(currentUser.uid)))
@@ -101,41 +104,74 @@ export const RecordTab: React.FC<Props> = ({ onNavigateToDeposit }) => {
                 {/* Product Items List (1 to 3 items) */}
                 {hasMultiItems ? (
                   <div className="space-y-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                    {order.items!.map((item) => (
-                      <div key={item.id} className="flex gap-2.5 items-center">
-                        <div className="w-12 h-12 rounded-lg bg-white border border-slate-200 overflow-hidden shrink-0 p-0.5">
-                          <img
-                            src={item.image}
-                            alt={item.name}
-                            className="w-full h-full object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLElement).style.display = 'none';
-                            }}
-                          />
-                        </div>
-                        <div className="flex-1 min-w-0 pr-1">
-                          <h4 className="font-bold text-xs text-black truncate">{item.name}</h4>
-                          <span className="text-[10px] text-slate-400 block font-medium">
-                            {item.detailsLabel || 'Original details'}
-                          </span>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div className="font-bold text-xs text-black">
-                            {item.unitPrice.toFixed(2)} USDT
+                    {order.items!.map((item, idx) => {
+                      const imgKey = `${order.id}_${item.id || idx}`;
+                      const safeImgSrc =
+                        fallbackImgUrls[imgKey] || resolveProductThumbnail(item.image, item.name);
+                      return (
+                        <div key={item.id || idx} className="flex gap-2.5 items-center">
+                          <div className="w-12 h-12 rounded-lg bg-white border border-slate-200 overflow-hidden shrink-0 p-0.5 flex items-center justify-center">
+                            {!failedImgKeys[imgKey] ? (
+                              <img
+                                src={safeImgSrc}
+                                alt={item.name}
+                                className="w-full h-full object-contain"
+                                onError={() => {
+                                  const kwFallback = resolveCategoryFallbackImage(item.name);
+                                  if (!fallbackImgUrls[imgKey] && kwFallback !== safeImgSrc) {
+                                    setFallbackImgUrls((prev) => ({ ...prev, [imgKey]: kwFallback }));
+                                  } else {
+                                    setFailedImgKeys((prev) => ({ ...prev, [imgKey]: true }));
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <Package className="w-5 h-5 text-slate-400" />
+                            )}
                           </div>
-                          <span className="text-[10px] text-black font-bold">x{item.quantity}</span>
+                          <div className="flex-1 min-w-0 pr-1">
+                            <h4 className="font-bold text-xs text-black truncate">{item.name}</h4>
+                            <span className="text-[10px] text-slate-400 block font-medium">
+                              {item.detailsLabel || 'Original details'}
+                            </span>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="font-bold text-xs text-black">
+                              {item.unitPrice.toFixed(2)} USDT
+                            </div>
+                            <span className="text-[10px] text-black font-bold">x{item.quantity}</span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="flex gap-3 items-center">
-                    <div className="w-16 h-16 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden shrink-0 p-1">
-                      <img
-                        src={order.productImage}
-                        alt={order.productTitle}
-                        className="w-full h-full object-contain"
-                      />
+                    <div className="w-16 h-16 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden shrink-0 p-1 flex items-center justify-center">
+                      {!failedImgKeys[`${order.id}_single`] ? (
+                        <img
+                          src={
+                            fallbackImgUrls[`${order.id}_single`] ||
+                            resolveProductThumbnail(order.productImage, order.productTitle)
+                          }
+                          alt={order.productTitle}
+                          className="w-full h-full object-contain"
+                          onError={() => {
+                            const singleKey = `${order.id}_single`;
+                            const currentSrc =
+                              fallbackImgUrls[singleKey] ||
+                              resolveProductThumbnail(order.productImage, order.productTitle);
+                            const kwFallback = resolveCategoryFallbackImage(order.productTitle);
+                            if (!fallbackImgUrls[singleKey] && kwFallback !== currentSrc) {
+                              setFallbackImgUrls((prev) => ({ ...prev, [singleKey]: kwFallback }));
+                            } else {
+                              setFailedImgKeys((prev) => ({ ...prev, [singleKey]: true }));
+                            }
+                          }}
+                        />
+                      ) : (
+                        <Package className="w-6 h-6 text-slate-400" />
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <h4 className="font-bold text-xs text-black line-clamp-2">
