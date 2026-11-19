@@ -24,7 +24,7 @@ export const AuthModal: React.FC<Props> = ({
   onClose,
   defaultMode = 'login',
 }) => {
-  const { loginUser, registerUser, users, currentUser } = useApp();
+  const { loginUser, registerUser, currentUser } = useApp();
 
   // Helper to extract invite code from URL parameters (?code=... or ?inviteCode=... or ?ref=...) or URL hash
   const getInviteCodeFromUrl = (): string => {
@@ -80,6 +80,8 @@ export const AuthModal: React.FC<Props> = ({
     }
   }, []);
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   if (!isOpen) return null;
 
   // Validation readiness check for Register Confirm button
@@ -89,8 +91,6 @@ export const AuthModal: React.FC<Props> = ({
     regConfirmPassword.length >= 6 &&
     regPassword === regConfirmPassword &&
     regInviteCode.trim().length > 0;
-
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,67 +163,68 @@ export const AuthModal: React.FC<Props> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-3 sm:p-6 overflow-y-auto">
-      <div className="w-full max-w-md bg-gradient-to-b from-[#4a121e] via-[#380b16] to-[#25050e] rounded-[32px] shadow-2xl overflow-hidden border border-white/10 flex flex-col my-auto relative animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 backdrop-blur-xs">
+      <div className="min-h-dvh w-full flex flex-col items-center justify-center px-3.5 py-4 sm:p-6">
+        <div className="w-full max-w-[400px] sm:max-w-[430px] lg:max-w-[450px] bg-gradient-to-b from-[#4a121e] via-[#380b16] to-[#25050e] rounded-[28px] sm:rounded-[32px] shadow-2xl overflow-hidden border border-white/10 flex flex-col relative animate-in fade-in zoom-in-95 duration-200">
 
-        {/* Header Section */}
-        <div className="pt-6 pb-6 px-6 text-center relative">
-          {/* Back button (Only in Register mode, matching screenshot) */}
-          {mode === 'register' && (
-            <button
-              type="button"
-              onClick={() => {
-                setMode('login');
-                setError('');
-              }}
-              className="absolute top-4 left-5 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 active:scale-95 flex items-center justify-center text-white transition-all cursor-pointer"
-              title="Back to Login"
-            >
-              <ChevronLeft className="w-5 h-5 -ml-0.5 text-white" />
-            </button>
-          )}
+          {/* Header Section */}
+          <div className="pt-5 pb-5 sm:pt-7 sm:pb-6 px-5 sm:px-6 text-center relative">
+            {/* Back button (Only in Register mode, matching screenshot) */}
+            {mode === 'register' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('login');
+                  setError('');
+                }}
+                className="absolute top-4 left-4 sm:left-5 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 active:scale-95 flex items-center justify-center text-white transition-all cursor-pointer"
+                title="Back to Login"
+              >
+                <ChevronLeft className="w-5 h-5 -ml-0.5 text-white" />
+              </button>
+            )}
 
-          {/* Dismiss button if user is already logged in and just switched */}
-          {currentUser && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="absolute top-4 right-5 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 active:scale-95 flex items-center justify-center text-white transition-all cursor-pointer"
-              title="Close"
-            >
-              <X className="w-4 h-4 text-white" />
-            </button>
-          )}
+            {/* Dismiss button if user is already logged in and just switched */}
+            {currentUser && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="absolute top-4 right-4 sm:right-5 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 active:scale-95 flex items-center justify-center text-white transition-all cursor-pointer"
+                title="Close"
+              >
+                <X className="w-4 h-4 text-white" />
+              </button>
+            )}
 
-          {/* Circular Logo with Soft Glowing Outer Border */}
-          <div className="w-16 h-16 rounded-full bg-white p-2 mx-auto mb-3 flex items-center justify-center border border-white/40 shadow-md overflow-hidden">
-            <img
-              src="/assets/aistudio/D217d10797D9867123be63C3807Ab91e33301c2c94448713bfa4b0d9f3e7e32a_75c1958b.jpg"
-              alt="WorldexaGlobal Logo"
-              className="w-full h-full object-contain rounded-full"
-            />
+            {/* Circular Logo with Soft Glowing Outer Border */}
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-white p-2 mx-auto mb-2.5 sm:mb-3 flex items-center justify-center border border-white/40 shadow-md overflow-hidden">
+              <img
+                src="/assets/aistudio/D217d10797D9867123be63C3807Ab91e33301c2c94448713bfa4b0d9f3e7e32a_75c1958b.jpg"
+                alt="WorldexaGlobal Logo"
+                className="w-full h-full object-contain rounded-full"
+              />
+            </div>
+
+            {/* Title and Subtitle */}
+            {mode === 'login' ? (
+              <>
+                <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">WorldexaGlobal</h1>
+                <p className="text-xs text-white/80 mt-1 font-normal tracking-wide">
+                  Secure · Fast · Reliable
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Create Account</h1>
+                <p className="text-xs text-white/80 mt-1 font-normal tracking-wide">
+                  WorldexaGlobal · Invite code required to register
+                </p>
+              </>
+            )}
           </div>
 
-          {/* Title and Subtitle */}
-          {mode === 'login' ? (
-            <>
-              <h1 className="text-2xl font-bold text-white tracking-tight">WorldexaGlobal</h1>
-              <p className="text-xs text-white/80 mt-1 font-normal tracking-wide">
-                Secure · Fast · Reliable
-              </p>
-            </>
-          ) : (
-            <>
-              <h1 className="text-2xl font-bold text-white tracking-tight">Create Account</h1>
-              <p className="text-xs text-white/80 mt-1 font-normal tracking-wide">
-                WorldexaGlobal · Invite code required to register
-              </p>
-            </>
-          )}
-        </div>
-
-        {/* White Card Section */}
-        <div className="bg-white rounded-t-[30px] rounded-b-[28px] p-6 sm:p-7 shadow-2xl mx-1.5 mb-1.5 space-y-4">
+          {/* White Card Section */}
+          <div className="bg-white rounded-t-[26px] sm:rounded-t-[30px] rounded-b-[24px] sm:rounded-b-[28px] p-5 sm:p-7 shadow-2xl mx-1.5 mb-1.5 space-y-3.5 sm:space-y-4">
           {/* Notification Banners */}
           {error && (
             <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-start gap-2 animate-in fade-in">
@@ -309,30 +310,6 @@ export const AuthModal: React.FC<Props> = ({
                 >
                   Register
                 </button>
-              </div>
-
-              {/* Fast 1-Click Demo Testing Accounts */}
-              <div className="pt-3 border-t border-slate-100">
-                <span className="text-[10px] font-semibold text-slate-400 block mb-1.5 text-center">
-                  Quick demo accounts (1-click fill):
-                </span>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {users.slice(0, 2).map((u) => (
-                    <button
-                      key={u.id}
-                      type="button"
-                      onClick={() => {
-                        setLoginIdentifier(u.username);
-                        setLoginPassword(u.password || 'password123');
-                        setError('');
-                      }}
-                      className="p-1.5 bg-slate-50 hover:bg-amber-50/60 border border-slate-200 hover:border-amber-300 rounded-lg text-[11px] text-center text-slate-700 font-medium transition-colors cursor-pointer"
-                    >
-                      <span className="font-bold text-slate-800 block truncate">{u.username}</span>
-                      <span className="text-slate-400 text-[10px]">VIP {u.vipLevel}</span>
-                    </button>
-                  ))}
-                </div>
               </div>
             </form>
           ) : (
@@ -457,19 +434,7 @@ export const AuthModal: React.FC<Props> = ({
               </div>
             </form>
           )}
-
-          {/* Dismiss button if user wants to browse as guest */}
-          {!currentUser && (
-            <div className="pt-1 text-center">
-              <button
-                type="button"
-                onClick={onClose}
-                className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
-              >
-                Continue as Guest / Preview
-              </button>
-            </div>
-          )}
+        </div>
         </div>
       </div>
     </div>
