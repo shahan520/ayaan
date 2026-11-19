@@ -1600,7 +1600,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       !user.isLockedAccount &&
       cycle === 2 &&
       matched.stepNumber === 23 &&
-      isCycle2SmallBalanceAccount(user)
+      isCycle2SmallBalanceAccount(user) &&
+      !(user.customCombos && user.customCombos.length > 0)
     ) {
       const bal = user.balance;
       const deficitPct = 48;

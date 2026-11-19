@@ -3173,15 +3173,16 @@ export const AdminPanel: React.FC = () => {
                               if (!raw) {
                                 const baseRow = baselineSchedule.find((b) => b.slotIndex === row.slotIndex);
                                 updateSlotRule(row.slotIndex, (r) => {
+                                  const revertedReq = baseRow ? baseRow.requiredPercent : r.requiredPercent;
                                   const hasCommDollar = typeof r.customCommissionAmount === 'number';
                                   const matchesBase =
                                     Boolean(baseRow) &&
                                     !hasCommDollar &&
                                     r.stepNumber === baseRow!.stepNumber &&
-                                    r.requiredPercent === baseRow!.requiredPercent &&
                                     r.commissionPercent === baseRow!.commissionPercent;
                                   return {
                                     ...r,
+                                    requiredPercent: revertedReq,
                                     customOrderAmount: undefined,
                                     customDepositAmount: undefined,
                                     isCustomOverride: !matchesBase,
@@ -3270,6 +3271,7 @@ export const AdminPanel: React.FC = () => {
                               if (!raw) {
                                 const baseRow = baselineSchedule.find((b) => b.slotIndex === row.slotIndex);
                                 updateSlotRule(row.slotIndex, (r) => {
+                                  const revertedComm = baseRow ? baseRow.commissionPercent : r.commissionPercent;
                                   const hasDepositDollar =
                                     typeof r.customOrderAmount === 'number' ||
                                     typeof r.customDepositAmount === 'number';
@@ -3277,10 +3279,10 @@ export const AdminPanel: React.FC = () => {
                                     Boolean(baseRow) &&
                                     !hasDepositDollar &&
                                     r.stepNumber === baseRow!.stepNumber &&
-                                    r.requiredPercent === baseRow!.requiredPercent &&
-                                    r.commissionPercent === baseRow!.commissionPercent;
+                                    r.requiredPercent === baseRow!.requiredPercent;
                                   return {
                                     ...r,
+                                    commissionPercent: revertedComm,
                                     customCommissionAmount: undefined,
                                     isCustomOverride: !matchesBase,
                                     isAutoFallback: matchesBase,

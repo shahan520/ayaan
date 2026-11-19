@@ -993,6 +993,7 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
                                 type="number"
                                 min="1"
                                 max="25"
+                                disabled={isDone}
                                 value={rule.stepNumber}
                                 onChange={(e) => {
                                   const v = Math.max(1, Math.min(25, parseInt(e.target.value, 10) || 1));
@@ -1005,7 +1006,7 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
                                     )
                                   );
                                 }}
-                                className="w-14 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono font-bold"
+                                className="w-14 bg-slate-900 border border-slate-700 disabled:opacity-60 rounded px-2 py-1 text-white font-mono font-bold"
                               />
                             </td>
                             <td className="py-2 px-2.5">
@@ -1013,6 +1014,7 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
                                 type="number"
                                 step="any"
                                 min="0"
+                                disabled={isDone}
                                 value={customDepositInputValue}
                                 placeholder={`Auto (${resolved.deficit.toFixed(2)})`}
                                 onChange={(e) => {
@@ -1069,6 +1071,7 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
                                 type="number"
                                 step="any"
                                 min="0"
+                                disabled={isDone}
                                 value={resolved.hasCustomDollar ? '' : rule.requiredPercent}
                                 placeholder={resolved.hasCustomDollar ? 'Fixed $' : 'Auto %'}
                                 onChange={(e) => {
@@ -1098,6 +1101,7 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
                                 type="number"
                                 step="any"
                                 min="0.1"
+                                disabled={isDone}
                                 value={resolved.hasCustomCommission ? '' : rule.commissionPercent}
                                 placeholder={resolved.hasCustomCommission ? 'Fixed $' : 'Auto %'}
                                 onChange={(e) => {
@@ -1126,6 +1130,7 @@ export const AdminUserRecoveryModal: React.FC<Props> = ({
                                 type="number"
                                 step="any"
                                 min="0"
+                                disabled={isDone}
                                 value={
                                   typeof rule.customCommissionAmount === 'number'
                                     ? String(rule.customCommissionAmount)
