@@ -1,20 +1,54 @@
 /**
  * ==============================================================================
  * FULL-STACK BACKEND SERVER (server.js)
- * Database: MongoDB Atlas (via Mongoose)
+ * Database: Self-contained Local SQLite VPS Database (./data/worldexaglobal.db)
  * Environment: dotenv (.env)
  * Web Framework: Express.js
  * ==============================================================================
  */
 
 import express from 'express';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
+import {
+  DB_FILE_PATH,
+  CHAT_UPLOADS_DIR,
+  ensureChatUploadsDir,
+  bootstrapDatabase,
+  normalizeWallet,
+  resolveEffectiveTodayCount,
+  getAllUsers,
+  findUserByIdentifier,
+  findUserForLogin,
+  findMemberByInviteOrIdentity,
+  saveUser,
+  updateUserFields,
+  getAllDeposits,
+  getDepositById,
+  upsertDeposit,
+  getOrders,
+  findOrderByIdOrNo,
+  upsertOrder,
+  clearIncompleteOrdersForUser,
+  getComboRules,
+  replaceComboRulesForUser,
+  getWithdrawalsForUser,
+  insertWithdrawalRecord,
+  getChatMessages,
+  findChatMessageById,
+  insertChatMessage,
+  markChatMessagesRead,
+  saveChatUpload,
+  getChatUpload,
+  getAllMonitoringRecords,
+  getMonitoringRecordByUid,
+  upsertMonitoringRow,
+  runTransaction,
+} from './db/sqlite.js';
 
 // 1. Load environment variables from .env file
 dotenv.config();
@@ -24,9 +58,6 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
-const MONGODB_URI =
-  process.env.MONGODB_URI ||
-  'mongodb+srv://shahanislam935_db_user:ciKbafwUqfbSmt7G@cluster0.pwkfalj.mongodb.net/myFirstDatabase?retryWrites=true&w=majority';
 
 // Explicit CORS Middleware with Origin Reflection, Full Headers & 204 Preflight Handling
 app.use((req, res, next) => {
@@ -82,220 +113,10 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ==============================================================================
-// 2. MONGODB ATLAS CONNECTION (MONGOOSE)
-// ==============================================================================
-const connectMongoDB = async () => {
-  try {
-    const conn = await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s if IP is not yet whitelisted
-    });
-    // Requirement 3: Console message on successful connection
-    console.log('MongoDB Connected Successfully');
-    console.log(`Database Host: ${conn.connection.host}`);
-    console.log(`Database Name: ${conn.connection.name}`);
-    await seedInitialMembers();
-    await seedInitialDeposits();
-  } catch (error) {
-    console.error('MongoDB Connection Error:', error.message);
-    console.log('----------------------------------------------------------------------');
-    console.log('NOTICE FOR MONGODB ATLAS IP WHITELIST:');
-    console.log('If you see a connection error, go to MongoDB Atlas Dashboard ->');
-    console.log('Network Access -> Add IP Address -> Select "Allow Access from Anywhere" (0.0.0.0/0).');
-    console.log('----------------------------------------------------------------------');
-  }
-};
-
-// Initiate MongoDB Connection
-connectMongoDB();
-
-// ==============================================================================
-// 3. MONGOOSE SCHEMAS & MODELS
+// 2. INITIAL SEED DATA & LOCAL SQLITE DATABASE BOOTSTRAP
 // ==============================================================================
 
-/**
- * 1) User Model: Registration, login credentials, balance, wallet, profile photo
- */
-const userSchema = new mongoose.Schema(
-  {
-    uid: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-    },
-    username: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-    },
-    password: {
-      type: String,
-      required: true,
-    },
-    withdrawalPassword: {
-      type: String,
-      default: null,
-    },
-    inviteCode: {
-      type: String,
-      required: true,
-    },
-    referredBy: {
-      type: String,
-      default: null,
-    },
-    balance: {
-      type: Number,
-      default: 0.0,
-    },
-    frozenBalance: {
-      type: Number,
-      default: 0.0,
-    },
-    vipLevel: {
-      type: Number,
-      default: 0,
-      min: 0,
-      max: 5,
-    },
-    status: {
-      type: String,
-      enum: ['active', 'frozen'],
-      default: 'active',
-    },
-    // Requirement 4: Profile photo URL storage
-    avatarUrl: {
-      type: String,
-      default: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
-    },
-    wallet: {
-      type: {
-        walletName: { type: String, default: '' },
-        protocol: { type: String, enum: ['TRC-20', 'ERC-20', 'BEP-20'], default: 'TRC-20' },
-        walletAddress: { type: String, default: '' },
-        accountName: { type: String, default: '' },
-        boundAt: { type: String, default: '' },
-      },
-      default: null,
-    },
-    taxPaid: {
-      type: Boolean,
-      default: false,
-    },
-    taxAmountPaid: {
-      type: Number,
-      default: 0,
-    },
-    totalDeposit: {
-      type: Number,
-      default: 0.0,
-    },
-    totalWithdrawal: {
-      type: Number,
-      default: 0.0,
-    },
-    todayOrdersCount: {
-      type: Number,
-      default: 0,
-    },
-    todayCompletedCount: {
-      type: Number,
-      default: 0,
-    },
-    todayCommission: {
-      type: Number,
-      default: 0.0,
-    },
-    yesterdayCommission: {
-      type: Number,
-      default: 0.0,
-    },
-    lastActiveDate: {
-      type: String,
-      default: '',
-    },
-    isVipAccount: {
-      type: Boolean,
-      default: false,
-    },
-    isLockedAccount: {
-      type: Boolean,
-      default: false, // Prevents client from withdrawing when flagged
-    },
-    workPermission: {
-      type: Boolean,
-      default: false,
-    },
-    completedTasksCount: {
-      type: Number,
-      default: 0,
-    },
-    currentCycleTasks: {
-      type: Number,
-      default: 0,
-    },
-    cycleNumber: {
-      type: Number,
-      default: 1,
-    },
-    cycleApprovedByAdmin: {
-      type: Boolean,
-      default: false,
-    },
-    comboOrderStep: {
-      type: Number,
-      default: 14,
-    },
-    cycleStartBalance: {
-      type: Number,
-      default: 30,
-    },
-    customCombos: [
-      {
-        slotIndex: { type: Number },
-        stepNumber: { type: Number, required: true },
-        requiredPercent: { type: Number, required: true },
-        commissionPercent: { type: Number, required: true },
-        customOrderAmount: { type: Number },
-        customDepositAmount: { type: Number },
-        customCommissionAmount: { type: Number },
-        isCustomOverride: { type: Boolean },
-      },
-    ],
-  },
-  { timestamps: true }
-);
-
-const normalizeWallet = (w) => {
-  if (w && typeof w.walletAddress === 'string' && w.walletAddress.trim().length > 0) {
-    return w;
-  }
-  return null;
-};
-
-const resolveEffectiveTodayCount = (u) => {
-  const cycleTasks = typeof u?.currentCycleTasks === 'number' ? u.currentCycleTasks : 0;
-  const rawToday =
-    typeof u?.todayOrdersCount === 'number'
-      ? u.todayOrdersCount
-      : typeof u?.todayCompletedCount === 'number'
-      ? u.todayCompletedCount
-      : 0;
-  if (cycleTasks > 0 && cycleTasks < 25) {
-    return Math.max(rawToday, cycleTasks);
-  }
-  if (cycleTasks >= 25) {
-    return Math.max(rawToday, cycleTasks);
-  }
-  return rawToday;
-};
-
-export const User = mongoose.models.User || mongoose.model('User', userSchema);
-
-// Initial active member pool for immediate referral verification and Atlas seeding
 const SEEDED_MEMBERS = [
-  // Jackal (Code 232602)
   {
     id: 'user_jackal_232602',
     uid: '232602',
@@ -314,18 +135,14 @@ const SEEDED_MEMBERS = [
     cycleApprovedByAdmin: true,
   },
   { uid: '925886', username: 'Hanif8989', password: 'password123', inviteCode: '925886', referredBy: 'SYS888', balance: 479.31, totalDeposit: 450.0, totalWithdrawal: 0.0, vipLevel: 1, status: 'active', workPermission: true, cycleApprovedByAdmin: true },
-  // Level 1: Directly referred by Hanif8989 (925886)
   { uid: '771101', username: 'Karim_88', password: 'password123', inviteCode: '771101', referredBy: '925886', balance: 150.0, totalDeposit: 250.0, totalWithdrawal: 100.0, createdAt: '2026-05-12 10:00:00', vipLevel: 0, status: 'active', workPermission: false },
   { uid: '771102', username: 'Rafiq_21', password: 'password123', inviteCode: '771102', referredBy: '925886', balance: 300.0, totalDeposit: 500.0, totalWithdrawal: 200.0, createdAt: '2026-05-20 11:30:00', vipLevel: 0, status: 'active', workPermission: false },
   { uid: '771105', username: 'Sumon_77', password: 'password123', inviteCode: '771105', referredBy: '925886', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, createdAt: '2026-06-02 09:15:00', vipLevel: 0, status: 'active', workPermission: false },
-  // Level 2: Invited by Level 1 members
   { uid: '771103', username: 'Nasrin_09', password: 'password123', inviteCode: '771103', referredBy: '771101', balance: 80.0, totalDeposit: 120.0, totalWithdrawal: 40.0, createdAt: '2026-05-18 14:00:00', vipLevel: 0, status: 'active', workPermission: false },
   { uid: '771104', username: 'Jahid_55', password: 'password123', inviteCode: '771104', referredBy: '771101', balance: 150.0, totalDeposit: 300.0, totalWithdrawal: 150.0, createdAt: '2026-05-25 16:45:00', vipLevel: 0, status: 'active', workPermission: false },
   { uid: '771106', username: 'Mitu_43', password: 'password123', inviteCode: '771106', referredBy: '771102', balance: 80.0, totalDeposit: 80.0, totalWithdrawal: 0.0, createdAt: '2026-06-10 12:10:00', vipLevel: 0, status: 'active', workPermission: false },
-  // Level 3: Invited by Level 2 members
   { uid: '771107', username: 'Rakib_16', password: 'password123', inviteCode: '771107', referredBy: '771103', balance: 40.0, totalDeposit: 60.0, totalWithdrawal: 20.0, createdAt: '2026-06-05 13:20:00', vipLevel: 0, status: 'active', workPermission: false },
   { uid: '771108', username: 'Shanta_30', password: 'password123', inviteCode: '771108', referredBy: '771104', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, createdAt: '2026-06-15 15:30:00', vipLevel: 0, status: 'active', workPermission: false },
-  // Additional system users
   { uid: '819203', username: 'VIP_Trader25', password: 'password123', inviteCode: '819203', referredBy: 'SYS888', balance: 550.0, totalDeposit: 550.0, totalWithdrawal: 0.0, vipLevel: 2, status: 'active', workPermission: false },
   { uid: '772109', username: 'Newbie_VIP0', password: 'password123', inviteCode: '772109', referredBy: 'SYS100', balance: 0.0, totalDeposit: 0.0, totalWithdrawal: 0.0, vipLevel: 0, status: 'active', workPermission: false },
   { uid: '381942', username: 'Cycle2_Trader', password: 'password123', inviteCode: '381942', referredBy: 'SYS888', balance: 35.0, totalDeposit: 35.0, totalWithdrawal: 0.0, vipLevel: 1, status: 'active', workPermission: true, cycleApprovedByAdmin: true },
@@ -333,64 +150,6 @@ const SEEDED_MEMBERS = [
   { uid: '998811', username: 'Whale_Investor50k', password: 'password123', inviteCode: '998811', referredBy: 'SYS888', balance: 58500.0, totalDeposit: 58500.0, totalWithdrawal: 0.0, vipLevel: 3, status: 'active', workPermission: true, cycleApprovedByAdmin: true },
 ];
 
-// Persistent Global User Database on Disk (survives process reboots and operates reliably across all sessions)
-const DATA_DIR = path.resolve(__dirname, 'data');
-const PERSISTENT_USERS_FILE = path.join(DATA_DIR, 'persistent_users.json');
-
-const ensureDataDir = () => {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-};
-
-const loadPersistentUsers = () => {
-  try {
-    ensureDataDir();
-    if (fs.existsSync(PERSISTENT_USERS_FILE)) {
-      const raw = fs.readFileSync(PERSISTENT_USERS_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const existingUids = new Set(parsed.map((u) => String(u.uid)));
-        const missingSeeds = SEEDED_MEMBERS.filter((s) => !existingUids.has(String(s.uid)));
-        return [...parsed, ...missingSeeds];
-      }
-    }
-  } catch (err) {
-    console.warn('Persistent users load note:', err.message);
-  }
-  return [...SEEDED_MEMBERS];
-};
-
-let ACTIVE_USERS = loadPersistentUsers();
-
-const savePersistentUsers = () => {
-  try {
-    ensureDataDir();
-    fs.writeFileSync(PERSISTENT_USERS_FILE, JSON.stringify(ACTIVE_USERS, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error saving persistent users to disk:', err.message);
-  }
-};
-// Establish disk file immediately
-savePersistentUsers();
-
-const seedInitialMembers = async () => {
-  try {
-    if (mongoose.connection.readyState !== 1) return;
-    for (const member of ACTIVE_USERS) {
-      const exists = await User.findOne({ $or: [{ uid: member.uid }, { username: member.username }] });
-      if (!exists) {
-        await User.create(member);
-      }
-    }
-  } catch (err) {
-    console.warn('Initial member seed note:', err.message);
-  }
-};
-
-// ==============================================================================
-// PERSISTENT DEPOSITS STORE (Disk & Atlas)
-// ==============================================================================
 const SEEDED_DEPOSITS = [
   {
     id: 'dep_101',
@@ -525,416 +284,23 @@ const SEEDED_DEPOSITS = [
   },
 ];
 
-const PERSISTENT_DEPOSITS_FILE = path.join(DATA_DIR, 'persistent_deposits.json');
-
-const loadPersistentDeposits = () => {
-  try {
-    ensureDataDir();
-    if (fs.existsSync(PERSISTENT_DEPOSITS_FILE)) {
-      const raw = fs.readFileSync(PERSISTENT_DEPOSITS_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const existingIds = new Set(parsed.map((d) => d.id));
-        const missingSeeds = SEEDED_DEPOSITS.filter((s) => !existingIds.has(s.id));
-        return [...parsed, ...missingSeeds];
-      }
-    }
-  } catch (err) {
-    console.warn('Persistent deposits load note:', err.message);
-  }
-  return [...SEEDED_DEPOSITS];
-};
-
-let ACTIVE_DEPOSITS = loadPersistentDeposits();
-
-const savePersistentDeposits = () => {
-  try {
-    ensureDataDir();
-    fs.writeFileSync(PERSISTENT_DEPOSITS_FILE, JSON.stringify(ACTIVE_DEPOSITS, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error saving persistent deposits to disk:', err.message);
-  }
-};
-savePersistentDeposits();
-
-const seedInitialDeposits = async () => {
-  try {
-    if (mongoose.connection.readyState !== 1) return;
-    for (const dep of ACTIVE_DEPOSITS) {
-      const exists = await Deposit.findOne({ id: dep.id });
-      if (!exists) {
-        await Deposit.create(dep);
-      }
-    }
-  } catch (err) {
-    console.warn('Initial deposit seed note:', err.message);
-  }
-};
+bootstrapDatabase({
+  seededMembers: SEEDED_MEMBERS,
+  seededDeposits: SEEDED_DEPOSITS,
+});
+console.log(`Local SQLite VPS Database initialized: ${DB_FILE_PATH}`);
 
 // ==============================================================================
-// PERSISTENT SUBMITTED ORDERS STORE (Idempotency ledger for order commissions)
+// 3. REAL-TIME CHAT & MONITORING WEBSOCKET INFRASTRUCTURE
 // ==============================================================================
-const PERSISTENT_ORDERS_FILE = path.join(DATA_DIR, 'persistent_orders.json');
 
-const loadPersistentOrders = () => {
-  try {
-    ensureDataDir();
-    if (fs.existsSync(PERSISTENT_ORDERS_FILE)) {
-      const raw = fs.readFileSync(PERSISTENT_ORDERS_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed;
-      }
-    }
-  } catch (err) {
-    console.warn('Persistent orders load note:', err.message);
-  }
-  return [];
-};
-
-let ACTIVE_SUBMITTED_ORDERS = loadPersistentOrders();
-
-const savePersistentOrders = () => {
-  try {
-    ensureDataDir();
-    fs.writeFileSync(PERSISTENT_ORDERS_FILE, JSON.stringify(ACTIVE_SUBMITTED_ORDERS, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error saving persistent orders to disk:', err.message);
-  }
-};
-savePersistentOrders();
-
-/**
- * 2) Task Simulation Model: Orders, commission calculation, combo steps
- */
-const taskSimulationSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    username: {
-      type: String,
-    },
-    orderNumber: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    taskNumber: {
-      type: Number,
-      required: true, // 1 to 25
-    },
-    cycleNumber: {
-      type: Number,
-      required: true,
-      default: 1,
-    },
-    productTitle: {
-      type: String,
-      required: true,
-    },
-    productPrice: {
-      type: Number,
-      required: true,
-    },
-    commission: {
-      type: Number,
-      required: true,
-    },
-    isCombo: {
-      type: Boolean,
-      default: false,
-    },
-    comboStep: {
-      type: Number,
-      default: 0,
-    },
-    status: {
-      type: String,
-      enum: ['incomplete', 'pending', 'completed', 'shortage'],
-      default: 'completed',
-    },
-    platform: {
-      type: String,
-      default: 'Amazon',
-    },
-    vipTier: {
-      type: String,
-      default: 'VIP 1',
-    },
-    expectedIncome: {
-      type: Number,
-      default: 0,
-    },
-    requiredBalance: {
-      type: Number,
-    },
-    comboDepositPercent: {
-      type: Number,
-    },
-    comboCommissionPercent: {
-      type: Number,
-    },
-    requiredDepositDeficit: {
-      type: Number,
-    },
-    depositAddress: {
-      type: String,
-    },
-    items: {
-      type: mongoose.Schema.Types.Mixed,
-    },
-    userBalanceBefore: {
-      type: Number,
-    },
-    userBalanceAfter: {
-      type: Number,
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
-  },
-  { timestamps: true }
-);
-
-export const TaskSimulation =
-  mongoose.models.TaskSimulation || mongoose.model('TaskSimulation', taskSimulationSchema);
-
-/**
- * 3) VIP Combo Rules Model: Dynamic custom combo rules & hybrid default fallback
- */
-const vipComboRuleSchema = new mongoose.Schema(
-  {
-    targetUserUid: {
-      type: String,
-      default: null, // null for global default rules, or UID for user-specific custom combos
-    },
-    vipLevel: {
-      type: Number,
-      required: true,
-      default: 1,
-    },
-    cycleNumber: {
-      type: Number,
-      required: true,
-      default: 1,
-    },
-    slotIndex: {
-      type: Number,
-    },
-    stepNumber: {
-      type: Number,
-      required: true,
-    },
-    requiredPercent: {
-      type: Number,
-      required: true,
-    },
-    commissionPercent: {
-      type: Number,
-      required: true,
-    },
-    customOrderAmount: {
-      type: Number,
-    },
-    customDepositAmount: {
-      type: Number,
-    },
-    customCommissionAmount: {
-      type: Number,
-    },
-    isCustomOverride: {
-      type: Boolean,
-    },
-    isCustom: {
-      type: Boolean,
-      default: false,
-    },
-  },
-  { timestamps: true }
-);
-
-export const VipComboRule =
-  mongoose.models.VipComboRule || mongoose.model('VipComboRule', vipComboRuleSchema);
-
-/**
- * 4) Withdrawal Tax Model: Mandatory 25% recurring tax rule on balances over 50,000 USDT
- */
-const withdrawalTaxRecordSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    username: {
-      type: String,
-    },
-    amount: {
-      type: Number,
-      required: true,
-    },
-    userBalanceAtRequest: {
-      type: Number,
-      required: true,
-    },
-    // Requirement 4: Recurring 25% tax when balance >= 50,000 USDT
-    isHighBalanceTaxApplied: {
-      type: Boolean,
-      default: false,
-    },
-    taxPercent: {
-      type: Number,
-      default: 0, // 25% for balance >= 50,000 USDT
-    },
-    taxAmount: {
-      type: Number,
-      default: 0,
-    },
-    netAmount: {
-      type: Number,
-      required: true,
-    },
-    walletAddress: {
-      type: String,
-      required: true,
-    },
-    protocol: {
-      type: String,
-      default: 'TRC-20',
-    },
-    status: {
-      type: String,
-      enum: ['pending', 'approved', 'rejected'],
-      default: 'pending',
-    },
-    adminRemarks: {
-      type: String,
-      default: '',
-    },
-  },
-  { timestamps: true }
-);
-
-export const WithdrawalTaxRecord =
-  mongoose.models.WithdrawalTaxRecord ||
-  mongoose.model('WithdrawalTaxRecord', withdrawalTaxRecordSchema);
-
-/**
- * 5) Deposit Model: Deposit vouchers, verification hash, multi-channel approval, persistent balance crediting
- */
-const depositSchema = new mongoose.Schema(
-  {
-    id: { type: String, required: true, unique: true },
-    userId: { type: String },
-    userUid: { type: String, required: true },
-    username: { type: String, required: true },
-    amount: { type: Number, required: true },
-    currency: { type: String, default: 'USDT' },
-    protocol: { type: String, default: 'TRC-20' },
-    depositAddress: { type: String },
-    txid: { type: String, required: true },
-    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
-    balanceCredited: { type: Boolean },
-    creditedAt: { type: String },
-    createdAt: { type: String },
-    reviewedAt: { type: String },
-    reviewedBy: { type: String },
-    rejectionReason: { type: String },
-  },
-  { timestamps: true }
-);
-
-export const Deposit = mongoose.models.Deposit || mongoose.model('Deposit', depositSchema);
-
-/**
- * 6) Customer Service Live Chat Model & Persistent Store (Disk & MongoDB)
- */
-const chatMessageSchema = new mongoose.Schema(
-  {
-    id: { type: String, required: true, unique: true },
-    userUid: { type: String, required: true, index: true },
-    username: { type: String, required: true },
-    sender: { type: String, enum: ['user', 'admin'], required: true },
-    adminName: { type: String, default: 'Support Agent' },
-    text: { type: String, default: '' },
-    imageUrl: { type: String, default: undefined },
-    imageName: { type: String, default: undefined },
-    timestamp: { type: String, required: true },
-    readByAdmin: { type: Boolean, default: false },
-    readByUser: { type: Boolean, default: false },
-  },
-  { timestamps: true }
-);
-
-export const ChatMessage =
-  mongoose.models.ChatMessage || mongoose.model('ChatMessage', chatMessageSchema);
-
-const chatUploadSchema = new mongoose.Schema(
-  {
-    filename: { type: String, required: true, unique: true },
-    mimeType: { type: String, required: true },
-    dataBase64: { type: String, required: true },
-  },
-  { timestamps: true }
-);
-
-export const ChatUpload =
-  mongoose.models.ChatUpload || mongoose.model('ChatUpload', chatUploadSchema);
-
-const CHAT_UPLOADS_DIR = path.join(DATA_DIR, 'chat_uploads');
-const ensureChatUploadsDir = () => {
-  ensureDataDir();
-  if (!fs.existsSync(CHAT_UPLOADS_DIR)) {
-    fs.mkdirSync(CHAT_UPLOADS_DIR, { recursive: true });
-  }
-};
-
-const PERSISTENT_CHAT_FILE = path.join(DATA_DIR, 'persistent_chat.json');
-
-const loadPersistentChat = () => {
-  try {
-    ensureDataDir();
-    if (fs.existsSync(PERSISTENT_CHAT_FILE)) {
-      const raw = fs.readFileSync(PERSISTENT_CHAT_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed;
-      }
-    }
-  } catch (err) {
-    console.warn('Persistent chat load note:', err.message);
-  }
-  return [];
-};
-
-let ACTIVE_CHAT_MESSAGES = loadPersistentChat();
-
-const savePersistentChat = () => {
-  try {
-    ensureDataDir();
-    fs.writeFileSync(
-      PERSISTENT_CHAT_FILE,
-      JSON.stringify(ACTIVE_CHAT_MESSAGES, null, 2),
-      'utf-8'
-    );
-  } catch (err) {
-    console.error('Error saving persistent chat to disk:', err.message);
-  }
-};
-savePersistentChat();
-
-// Real-time WebSocket clients registry
 const chatClients = new Set();
 
 const broadcastChatEvent = (payload, targetUserUid) => {
   const serialized = JSON.stringify(payload);
   chatClients.forEach((client) => {
     try {
-      if (client.readyState !== 1) return; // WebSocket.OPEN === 1
+      if (client.readyState !== 1) return;
       if (
         client.role === 'admin' ||
         (targetUserUid && String(client.userUid) === String(targetUserUid))
@@ -944,113 +310,6 @@ const broadcastChatEvent = (payload, targetUserUid) => {
     } catch {}
   });
 };
-
-const getMergedChatMessages = async (filterUserUid = null) => {
-  const msgMap = new Map();
-  ACTIVE_CHAT_MESSAGES.forEach((m) => {
-    if (!filterUserUid || String(m.userUid) === String(filterUserUid)) {
-      msgMap.set(m.id, m);
-    }
-  });
-
-  if (mongoose.connection.readyState === 1) {
-    try {
-      const query = filterUserUid ? { userUid: String(filterUserUid) } : {};
-      const mongoMsgs = await ChatMessage.find(query).lean();
-      mongoMsgs.forEach((mm) => {
-        const clean = {
-          id: mm.id,
-          userUid: String(mm.userUid),
-          username: mm.username,
-          sender: mm.sender,
-          adminName: mm.adminName || 'Support Agent',
-          text: mm.text || '',
-          imageUrl: mm.imageUrl || undefined,
-          imageName: mm.imageName || undefined,
-          timestamp: mm.timestamp,
-          readByAdmin: Boolean(mm.readByAdmin),
-          readByUser: Boolean(mm.readByUser),
-        };
-        const existing = msgMap.get(clean.id);
-        if (!existing) {
-          msgMap.set(clean.id, clean);
-        } else {
-          // Preserve read flags if already marked true on either store
-          msgMap.set(clean.id, {
-            ...existing,
-            ...clean,
-            readByAdmin: Boolean(existing.readByAdmin || clean.readByAdmin),
-            readByUser: Boolean(existing.readByUser || clean.readByUser),
-          });
-        }
-      });
-    } catch (err) {
-      console.warn('Mongo fetch chat messages note:', err.message);
-    }
-  }
-
-  return Array.from(msgMap.values()).sort((a, b) =>
-    String(a.timestamp || '').localeCompare(String(b.timestamp || ''))
-  );
-};
-
-/**
- * 7) Real-Time User Monitoring & Telemetry Model (Disk & MongoDB)
- */
-const userMonitoringSchema = new mongoose.Schema(
-  {
-    userUid: { type: String, required: true, unique: true, index: true },
-    username: { type: String, default: '' },
-    lastActiveAt: { type: String, default: null },
-    lastLoginAt: { type: String, default: null },
-    lastIp: { type: String, default: null },
-    locationCountry: { type: String, default: null },
-    locationCity: { type: String, default: null },
-    locationRegion: { type: String, default: null },
-    lastCopiedTrc20At: { type: String, default: null },
-    lastCopiedTrc20Address: { type: String, default: null },
-    copyCount: { type: Number, default: 0 },
-    activePlatform: { type: String, default: null },
-  },
-  { timestamps: true }
-);
-
-export const UserMonitoring =
-  mongoose.models.UserMonitoring || mongoose.model('UserMonitoring', userMonitoringSchema);
-
-const PERSISTENT_MONITORING_FILE = path.join(DATA_DIR, 'persistent_monitoring.json');
-
-const loadPersistentMonitoring = () => {
-  try {
-    ensureDataDir();
-    if (fs.existsSync(PERSISTENT_MONITORING_FILE)) {
-      const raw = fs.readFileSync(PERSISTENT_MONITORING_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed;
-      }
-    }
-  } catch (err) {
-    console.warn('Persistent monitoring load note:', err.message);
-  }
-  return [];
-};
-
-let ACTIVE_MONITORING = loadPersistentMonitoring();
-
-const savePersistentMonitoring = () => {
-  try {
-    ensureDataDir();
-    fs.writeFileSync(
-      PERSISTENT_MONITORING_FILE,
-      JSON.stringify(ACTIVE_MONITORING, null, 2),
-      'utf-8'
-    );
-  } catch (err) {
-    console.error('Error saving persistent monitoring to disk:', err.message);
-  }
-};
-savePersistentMonitoring();
 
 const monitorAdminClients = new Set();
 const monitorUserSockets = new Map(); // userUid -> Set<WebSocket>
@@ -1128,9 +387,9 @@ const lookupIpGeo = async (ip) => {
   return null;
 };
 
-const buildNormalizedMonitoringRecord = (uid, base = {}) => {
+const buildNormalizedMonitoringRecord = (uid, base = {}, userMap = null) => {
   const cleanUid = String(uid);
-  const userObj = ACTIVE_USERS.find((u) => String(u.uid) === cleanUid);
+  const userObj = userMap ? userMap.get(cleanUid) : findUserByIdentifier({ uid: cleanUid });
   const sockets = monitorUserSockets.get(cleanUid);
   const isOnline = Boolean(sockets && sockets.size > 0);
   return {
@@ -1161,102 +420,35 @@ const broadcastMonitorEvent = (payload) => {
   });
 };
 
-const upsertMonitoringRecord = async (uid, patch = {}) => {
-  const cleanUid = String(uid || '').trim();
-  if (!cleanUid) return null;
-
-  const idx = ACTIVE_MONITORING.findIndex((r) => String(r.userUid) === cleanUid);
-  const current = idx >= 0 ? ACTIVE_MONITORING[idx] : { userUid: cleanUid };
-  const merged = {
-    ...current,
-    ...patch,
-    userUid: cleanUid,
-  };
-
-  if (idx >= 0) {
-    ACTIVE_MONITORING[idx] = merged;
-  } else {
-    ACTIVE_MONITORING.unshift(merged);
-  }
-  savePersistentMonitoring();
-
-  if (mongoose.connection.readyState === 1) {
-    try {
-      await UserMonitoring.updateOne(
-        { userUid: cleanUid },
-        {
-          $set: {
-            userUid: cleanUid,
-            username: merged.username || '',
-            lastActiveAt: merged.lastActiveAt || null,
-            lastLoginAt: merged.lastLoginAt || null,
-            lastIp: merged.lastIp || null,
-            locationCountry: merged.locationCountry || null,
-            locationCity: merged.locationCity || null,
-            locationRegion: merged.locationRegion || null,
-            lastCopiedTrc20At: merged.lastCopiedTrc20At || null,
-            lastCopiedTrc20Address: merged.lastCopiedTrc20Address || null,
-            copyCount: typeof merged.copyCount === 'number' ? merged.copyCount : 0,
-            activePlatform: merged.activePlatform || null,
-          },
-        },
-        { upsert: true }
-      );
-    } catch (dbErr) {
-      console.warn('MongoDB monitoring upsert note:', dbErr.message);
-    }
-  }
-
-  const normalized = buildNormalizedMonitoringRecord(cleanUid, merged);
+const upsertMonitoringRecord = (uid, patch = {}) => {
+  const saved = upsertMonitoringRow(uid, patch);
+  if (!saved) return null;
+  const normalized = buildNormalizedMonitoringRecord(saved.userUid, saved);
   broadcastMonitorEvent({ type: 'monitor:update', record: normalized });
   return normalized;
 };
 
-const getMergedMonitoringRecords = async () => {
+const getMergedMonitoringRecords = () => {
+  const users = getAllUsers();
+  const userMap = new Map(users.map((u) => [String(u.uid), u]));
   const map = new Map();
-  ACTIVE_USERS.forEach((u) => {
+
+  users.forEach((u) => {
     if (u?.uid) {
-      map.set(String(u.uid), buildNormalizedMonitoringRecord(u.uid, { username: u.username }));
+      map.set(
+        String(u.uid),
+        buildNormalizedMonitoringRecord(u.uid, { username: u.username }, userMap)
+      );
     }
   });
 
-  ACTIVE_MONITORING.forEach((m) => {
+  getAllMonitoringRecords().forEach((m) => {
     if (m?.userUid) {
       const uid = String(m.userUid);
       const prev = map.get(uid) || {};
-      map.set(uid, buildNormalizedMonitoringRecord(uid, { ...prev, ...m }));
+      map.set(uid, buildNormalizedMonitoringRecord(uid, { ...prev, ...m }, userMap));
     }
   });
-
-  if (mongoose.connection.readyState === 1) {
-    try {
-      const mongoRows = await UserMonitoring.find({}).lean();
-      mongoRows.forEach((mr) => {
-        if (!mr?.userUid) return;
-        const uid = String(mr.userUid);
-        const prev = map.get(uid) || {};
-        map.set(
-          uid,
-          buildNormalizedMonitoringRecord(uid, {
-            ...prev,
-            ...mr,
-            // Preserve newer in-memory timestamps if ahead
-            lastActiveAt:
-              String(prev.lastActiveAt || '') > String(mr.lastActiveAt || '')
-                ? prev.lastActiveAt
-                : mr.lastActiveAt,
-            lastCopiedTrc20At:
-              String(prev.lastCopiedTrc20At || '') > String(mr.lastCopiedTrc20At || '')
-                ? prev.lastCopiedTrc20At
-                : mr.lastCopiedTrc20At,
-            copyCount: Math.max(prev.copyCount || 0, mr.copyCount || 0),
-          })
-        );
-      });
-    } catch (err) {
-      console.warn('Mongo fetch monitoring records note:', err.message);
-    }
-  }
 
   return Array.from(map.values()).sort((a, b) => {
     if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
@@ -1270,24 +462,23 @@ const getMergedMonitoringRecords = async () => {
 
 // Health Check
 app.get('/api/health', (req, res) => {
-  const dbStatus = mongoose.connection.readyState;
-  // readyState: 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
   res.json({
     status: 'ok',
     message: 'Backend server is running',
     database: {
-      connected: dbStatus === 1,
-      state: ['disconnected', 'connected', 'connecting', 'disconnecting'][dbStatus] || 'unknown',
-      host: mongoose.connection.host || null,
+      connected: true,
+      engine: 'sqlite',
+      state: 'connected',
+      path: './data/worldexaglobal.db',
     },
   });
 });
 
 /**
  * POST /api/auth/register
- * Register a new user with strict invite code validation, 6-digit numeric UID, and persistent disk storage
+ * Register a new user with strict invite code validation, 6-digit numeric UID, and local SQLite persistence
  */
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', (req, res) => {
   try {
     const { username, password, inviteCode } = req.body;
 
@@ -1304,55 +495,17 @@ app.post('/api/auth/register', async (req, res) => {
     const cleanUser = username.trim();
     const cleanCode = inviteCode.trim().toUpperCase();
 
-    // Check if user already exists in ACTIVE_USERS memory/disk
-    let existingUser = ACTIVE_USERS.find(
-      (u) => u.username && u.username.toLowerCase() === cleanUser.toLowerCase()
-    );
-
-    // Also check MongoDB if connected
-    if (!existingUser && mongoose.connection.readyState === 1) {
-      try {
-        existingUser = await User.findOne({ username: { $regex: new RegExp(`^${cleanUser}$`, 'i') } });
-      } catch (dbErr) {
-        console.warn('Database username lookup notice:', dbErr.message);
-      }
-    }
-
+    const existingUser = findUserByIdentifier({ username: cleanUser });
     if (existingUser) {
       return res.status(400).json({ success: false, message: 'This username is already taken.' });
     }
 
-    // Validate Invitation Code: Match any system code OR any existing member's invite code, UID, or username
     const SYSTEM_CODES = ['SYS888', 'SYS100', 'TRADEVIP', 'ALPHA99', 'VELORA888'];
     const isSystemCode = SYSTEM_CODES.includes(cleanCode);
-    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     let matchingMember = null;
     if (!isSystemCode) {
-      // 1. Check in persistent ACTIVE_USERS pool (e.g., Jackal 232602, Hanif8989 925886, etc.)
-      matchingMember =
-        ACTIVE_USERS.find(
-          (m) =>
-            (m.inviteCode && String(m.inviteCode).toUpperCase() === cleanCode) ||
-            (m.uid && String(m.uid).toUpperCase() === cleanCode) ||
-            (m.username && m.username.toUpperCase() === cleanCode)
-        ) || null;
-
-      // 2. Fallback to MongoDB if connected
-      if (!matchingMember && mongoose.connection.readyState === 1) {
-        try {
-          matchingMember = await User.findOne({
-            $or: [
-              { inviteCode: { $regex: new RegExp(`^${escapeRegex(cleanCode)}$`, 'i') } },
-              { uid: cleanCode },
-              { username: { $regex: new RegExp(`^${escapeRegex(cleanCode)}$`, 'i') } },
-            ],
-            status: { $ne: 'frozen' },
-          });
-        } catch (dbErr) {
-          console.warn('Database member search notice:', dbErr.message);
-        }
-      }
+      matchingMember = findMemberByInviteOrIdentity(cleanCode);
     }
 
     const isSixDigitUserCode = /^\d{6}$/.test(cleanCode);
@@ -1366,9 +519,10 @@ app.post('/api/auth/register', async (req, res) => {
 
     const canonicalReferredBy = matchingMember ? (matchingMember.inviteCode || matchingMember.uid) : cleanCode;
 
-    // Generate unique 6-digit UID or accept frontend generated uid
-    let uidCandidate = req.body.uid ? String(req.body.uid).trim() : Math.floor(100000 + Math.random() * 900000).toString();
-    const existingUids = new Set(ACTIVE_USERS.map((u) => String(u.uid)));
+    let uidCandidate = req.body.uid
+      ? String(req.body.uid).trim()
+      : Math.floor(100000 + Math.random() * 900000).toString();
+    const existingUids = new Set(getAllUsers().map((u) => String(u.uid)));
     while (existingUids.has(uidCandidate)) {
       uidCandidate = Math.floor(100000 + Math.random() * 900000).toString();
     }
@@ -1407,52 +561,12 @@ app.post('/api/auth/register', async (req, res) => {
       isDemoAccount: false,
     };
 
-    // Save to ACTIVE_USERS and write to disk immediately
-    const existingIdx = ACTIVE_USERS.findIndex((u) => u.uid === uidCandidate || u.username.toLowerCase() === cleanUser.toLowerCase());
-    if (existingIdx >= 0) {
-      ACTIVE_USERS[existingIdx] = newCreatedUser;
-    } else {
-      ACTIVE_USERS.unshift(newCreatedUser);
-    }
-    savePersistentUsers();
-
-    // Persist to MongoDB Atlas if connected
-    let savedMongoUser = null;
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const newUserModel = new User({
-          uid: uidCandidate,
-          username: cleanUser,
-          password,
-          inviteCode: uidCandidate,
-          referredBy: canonicalReferredBy,
-          balance: 0.0,
-          totalDeposit: 0.0,
-          totalWithdrawal: 0.0,
-          vipLevel: 0,
-          avatarUrl: '/assets/aistudio/a3.f53cf407_cf3e68d0.png',
-          wallet: null,
-          withdrawalPassword: null,
-          cycleNumber: 1,
-          currentCycleTasks: 0,
-          completedTasksCount: 0,
-          comboOrderStep: 14,
-          workPermission: false,
-          cycleApprovedByAdmin: false,
-        });
-        savedMongoUser = await newUserModel.save();
-      } catch (dbSaveErr) {
-        console.warn('MongoDB save fallback to persistent store:', dbSaveErr.message);
-      }
-    }
+    const persisted = saveUser(newCreatedUser);
 
     return res.status(201).json({
       success: true,
       message: `Registration successful! Your UID is ${uidCandidate}`,
-      user: {
-        ...newCreatedUser,
-        id: savedMongoUser ? savedMongoUser._id.toString() : newCreatedUser.id,
-      },
+      user: persisted,
     });
   } catch (error) {
     console.error('Registration Error:', error);
@@ -1462,9 +576,9 @@ app.post('/api/auth/register', async (req, res) => {
 
 /**
  * GET /api/invites/validate/:code
- * Verify that an invitation code matches an active system code or member in MongoDB/Disk
+ * Verify that an invitation code matches an active system code or member in SQLite
  */
-app.get('/api/invites/validate/:code', async (req, res) => {
+app.get('/api/invites/validate/:code', (req, res) => {
   try {
     const rawCode = (req.params.code || '').trim().toUpperCase();
     if (!rawCode) {
@@ -1476,30 +590,7 @@ app.get('/api/invites/validate/:code', async (req, res) => {
       return res.json({ valid: true, type: 'system', code: rawCode });
     }
 
-    // 1. Check in persistent ACTIVE_USERS pool first (instant response)
-    let member =
-      ACTIVE_USERS.find(
-        (m) =>
-          (m.inviteCode && String(m.inviteCode).toUpperCase() === rawCode) ||
-          (m.uid && String(m.uid).toUpperCase() === rawCode) ||
-          (m.username && m.username.toUpperCase() === rawCode)
-      ) || null;
-
-    // 2. Check MongoDB if connected
-    if (!member && mongoose.connection.readyState === 1) {
-      try {
-        const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        member = await User.findOne({
-          $or: [
-            { inviteCode: { $regex: new RegExp(`^${escapeRegex(rawCode)}$`, 'i') } },
-            { uid: rawCode },
-            { username: { $regex: new RegExp(`^${escapeRegex(rawCode)}$`, 'i') } },
-          ],
-          status: { $ne: 'frozen' },
-        });
-      } catch {}
-    }
-
+    const member = findMemberByInviteOrIdentity(rawCode);
     if (member) {
       return res.json({
         valid: true,
@@ -1530,41 +621,12 @@ app.get('/api/invites/validate/:code', async (req, res) => {
 });
 
 /**
-/**
  * GET /api/users
- * Returns list of active and all registered users from persistent disk store & MongoDB
+ * Returns list of all registered users from local SQLite database
  */
-app.get('/api/users', async (req, res) => {
+app.get('/api/users', (req, res) => {
   try {
-    let mongoUsers = [];
-    if (mongoose.connection.readyState === 1) {
-      try {
-        mongoUsers = await User.find({});
-      } catch (err) {
-        console.warn('Mongo fetch users note:', err.message);
-      }
-    }
-
-    const activeMap = new Map(ACTIVE_USERS.map((u) => [String(u.uid), u]));
-    mongoUsers.forEach((mu) => {
-      const uObj = mu.toObject();
-      const existing = activeMap.get(String(mu.uid));
-      if (!existing) {
-        activeMap.set(String(mu.uid), {
-          id: mu._id?.toString() || ('user_' + mu.uid),
-          ...uObj,
-        });
-      } else {
-        // Merge mongo fields if present
-        activeMap.set(String(mu.uid), {
-          ...existing,
-          ...uObj,
-          id: existing.id || mu._id?.toString() || ('user_' + mu.uid),
-        });
-      }
-    });
-
-    const safeUsers = Array.from(activeMap.values()).map((u) => {
+    const safeUsers = getAllUsers().map((u) => {
       const effectiveToday = resolveEffectiveTodayCount(u);
       return {
         ...u,
@@ -1592,61 +654,35 @@ app.get('/api/users', async (req, res) => {
 
     return res.json({ success: true, users: safeUsers });
   } catch (err) {
-    return res.json({
-      success: true,
-      users: ACTIVE_USERS.map((u) => ({
-        ...u,
-        wallet: normalizeWallet(u.wallet),
-        workPermission: u.workPermission === true,
-        cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
-      })),
-    });
+    console.error('Error fetching users:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to load users.' });
   }
 });
 
 /**
  * POST /api/users/sync
- * Sync users created on client into the persistent server database
+ * Sync users created on client into local SQLite database
  */
 app.post('/api/users/sync', (req, res) => {
   try {
     const { users: clientUsers, user: clientUser } = req.body;
-    let modified = false;
 
-    if (clientUser && clientUser.uid) {
-      const existingIdx = ACTIVE_USERS.findIndex((u) => String(u.uid) === String(clientUser.uid));
-      if (existingIdx >= 0) {
-        ACTIVE_USERS[existingIdx] = { ...ACTIVE_USERS[existingIdx], ...clientUser };
-      } else {
-        ACTIVE_USERS.unshift(clientUser);
+    runTransaction(() => {
+      if (clientUser && clientUser.uid) {
+        const existing = findUserByIdentifier({ uid: clientUser.uid });
+        saveUser(existing ? { ...existing, ...clientUser } : clientUser);
       }
-      modified = true;
-    }
 
-    if (Array.isArray(clientUsers)) {
-      clientUsers.forEach((cu) => {
-        if (!cu || !cu.uid) return;
-        const idx = ACTIVE_USERS.findIndex((u) => String(u.uid) === String(cu.uid));
-        if (idx >= 0) {
-          ACTIVE_USERS[idx] = { ...ACTIVE_USERS[idx], ...cu };
-        } else {
-          ACTIVE_USERS.push(cu);
-          modified = true;
-        }
-      });
-    }
-
-    if (modified) {
-      savePersistentUsers();
-    }
-
-    const safeUsers = ACTIVE_USERS.map((u) => {
-      return {
-        ...u,
-        id: u.id || ('user_' + u.uid),
-      };
+      if (Array.isArray(clientUsers)) {
+        clientUsers.forEach((cu) => {
+          if (!cu || !cu.uid || !cu.username) return;
+          const existing = findUserByIdentifier({ uid: cu.uid });
+          saveUser(existing ? { ...existing, ...cu } : cu);
+        });
+      }
     });
 
+    const safeUsers = getAllUsers();
     return res.json({ success: true, users: safeUsers });
   } catch (err) {
     console.error('User sync error:', err.message);
@@ -1656,63 +692,19 @@ app.post('/api/users/sync', (req, res) => {
 
 /**
  * POST /api/users/update
- * Update user fields (workPermission, balance, totalDeposit, status, wallet, VIP) in persistent database
+ * Update user fields in local SQLite database
  */
-app.post('/api/users/update', async (req, res) => {
+app.post('/api/users/update', (req, res) => {
   try {
     const { uid, id, updates } = req.body;
     if (!uid && !id) {
       return res.status(400).json({ success: false, message: 'UID or ID is required.' });
     }
 
-    let targetIdx = ACTIVE_USERS.findIndex(
-      (u) => (uid && String(u.uid) === String(uid)) || (id && (u.id === id || String(u.uid) === String(id)))
-    );
-
-    if (targetIdx < 0 && mongoose.connection.readyState === 1) {
-      try {
-        const query = uid ? { uid: String(uid) } : { $or: [{ _id: id }, { uid: String(id) }] };
-        const mongoUser = await User.findOne(query);
-        if (mongoUser) {
-          const uObj = mongoUser.toObject();
-          ACTIVE_USERS.unshift({
-            id: mongoUser._id?.toString() || ('user_' + mongoUser.uid),
-            ...uObj,
-          });
-          targetIdx = 0;
-        }
-      } catch {}
-    }
-
-    if (targetIdx >= 0) {
-      const normalizedUpdates = { ...updates };
-      if ('wallet' in normalizedUpdates) {
-        normalizedUpdates.wallet = normalizeWallet(normalizedUpdates.wallet);
-      }
-      ACTIVE_USERS[targetIdx] = {
-        ...ACTIVE_USERS[targetIdx],
-        ...normalizedUpdates,
-      };
-      savePersistentUsers();
-    }
-
-    // Also persist to MongoDB Atlas if connected
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const query = uid ? { uid: String(uid) } : { $or: [{ _id: id }, { uid: String(id) }] };
-        const mongoSet = { ...updates };
-        if ('wallet' in mongoSet) {
-          mongoSet.wallet = normalizeWallet(mongoSet.wallet);
-        }
-        await User.updateOne(query, { $set: mongoSet });
-      } catch (dbErr) {
-        console.warn('MongoDB user update notice:', dbErr.message);
-      }
-    }
-
+    const updated = updateUserFields({ uid, id }, updates || {});
     return res.json({
       success: true,
-      user: targetIdx >= 0 ? { ...ACTIVE_USERS[targetIdx], wallet: normalizeWallet(ACTIVE_USERS[targetIdx].wallet) } : null,
+      user: updated ? { ...updated, wallet: normalizeWallet(updated.wallet) } : null,
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to update user' });
@@ -1721,53 +713,31 @@ app.post('/api/users/update', async (req, res) => {
 
 /**
  * GET /api/deposits
- * Returns list of all deposit vouchers from persistent disk store & MongoDB
+ * Returns list of all deposit vouchers from local SQLite database
  */
-app.get('/api/deposits', async (req, res) => {
+app.get('/api/deposits', (req, res) => {
   try {
-    let mongoDeps = [];
-    if (mongoose.connection.readyState === 1) {
-      try {
-        mongoDeps = await Deposit.find({}).sort({ createdAt: -1 });
-      } catch (err) {
-        console.warn('Mongo fetch deposits notice:', err.message);
-      }
-    }
-
-    const depMap = new Map(ACTIVE_DEPOSITS.map((d) => [d.id, d]));
-    mongoDeps.forEach((md) => {
-      const dObj = md.toObject();
-      const existing = depMap.get(md.id);
-      if (!existing) {
-        depMap.set(md.id, dObj);
-      } else {
-        depMap.set(md.id, { ...existing, ...dObj });
-      }
-    });
-
-    const depositsList = Array.from(depMap.values()).sort((a, b) => {
-      return (b.createdAt || '').localeCompare(a.createdAt || '');
-    });
-
+    const depositsList = getAllDeposits();
     return res.json({ success: true, deposits: depositsList });
   } catch (err) {
-    return res.json({ success: true, deposits: ACTIVE_DEPOSITS });
+    return res.status(500).json({ success: false, message: 'Failed to load deposits' });
   }
 });
 
 /**
  * POST /api/deposits/submit
- * Submit a new deposit voucher (persisted to disk & MongoDB).
- * Allows multiple deposits with the same TXID — uniqueness is tracked strictly by deposit.id.
+ * Submit a new deposit voucher into local SQLite database
  */
-app.post('/api/deposits/submit', async (req, res) => {
+app.post('/api/deposits/submit', (req, res) => {
   try {
     const { deposit } = req.body;
     if (!deposit || !deposit.id) {
       return res.status(400).json({ success: false, message: 'Deposit record is required.' });
     }
 
+    const existing = getDepositById(deposit.id);
     const normalizedDeposit = {
+      ...(existing || {}),
       ...deposit,
       id: String(deposit.id),
       userUid: String(deposit.userUid || ''),
@@ -1780,88 +750,21 @@ app.post('/api/deposits/submit', async (req, res) => {
       balanceCredited: deposit.status === 'approved' ? Boolean(deposit.balanceCredited) : false,
     };
 
-    const existsIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === normalizedDeposit.id);
-    if (existsIdx >= 0) {
-      ACTIVE_DEPOSITS[existsIdx] = { ...ACTIVE_DEPOSITS[existsIdx], ...normalizedDeposit };
-    } else {
-      ACTIVE_DEPOSITS.unshift(normalizedDeposit);
-    }
-    savePersistentDeposits();
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await Deposit.updateOne(
-          { id: normalizedDeposit.id },
-          { $set: normalizedDeposit },
-          { upsert: true }
-        );
-      } catch (dbErr) {
-        console.warn('Mongo deposit submit notice:', dbErr.message);
-      }
-    }
-
-    return res.json({ success: true, deposit: normalizedDeposit });
+    const saved = upsertDeposit(normalizedDeposit);
+    return res.json({ success: true, deposit: saved });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to submit deposit: ' + err.message });
   }
 });
 
-// In-flight lock set keyed strictly by unique depositId to serialize concurrent approvals of the same deposit
+// In-flight lock set keyed strictly by unique depositId
 const IN_FLIGHT_DEPOSIT_APPROVALS = new Set();
-
-const findUserFromMemoryOrMongo = async ({ userUid, userId, username }) => {
-  const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
-  const tUid = String(userUid || '').trim();
-  const tId = String(userId || '').trim();
-  const tUname = norm(username);
-
-  let userIdx = ACTIVE_USERS.findIndex((u) => {
-    if (tUid && String(u.uid) === tUid) return true;
-    if (tId && (u.id === tId || String(u.uid) === tId)) return true;
-    if (tUname && norm(u.username) === tUname) return true;
-    return false;
-  });
-
-  let mongoUser = null;
-  if (mongoose.connection.readyState === 1) {
-    try {
-      const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const orClauses = [];
-      if (tUid) orClauses.push({ uid: tUid });
-      if (tId && mongoose.Types.ObjectId.isValid(tId)) orClauses.push({ _id: tId });
-      if (tUname) {
-        orClauses.push({ username: { $regex: new RegExp(`^${escapeRegex(tUname)}$`, 'i') } });
-      }
-      if (userIdx >= 0 && ACTIVE_USERS[userIdx]?.uid) {
-        orClauses.push({ uid: String(ACTIVE_USERS[userIdx].uid) });
-      }
-      if (orClauses.length > 0) {
-        mongoUser = await User.findOne({ $or: orClauses });
-        if (mongoUser && userIdx < 0) {
-          const uObj = mongoUser.toObject();
-          ACTIVE_USERS.unshift({
-            id: mongoUser._id?.toString() || ('user_' + mongoUser.uid),
-            ...uObj,
-          });
-          userIdx = 0;
-          savePersistentUsers();
-        }
-      }
-    } catch (dbErr) {
-      console.warn('MongoDB user lookup notice:', dbErr.message);
-    }
-  }
-
-  return { userIdx, mongoUser };
-};
 
 /**
  * POST /api/deposits/approve
- * Approves a deposit: Marks deposit as approved and atomically increments user balance and totalDeposit.
- * STRICT IDEMPOTENCY: Tracked strictly by unique depositId (never by txid) so multiple deposits
- * sharing the same test TXID credit independently and each deposit credits EXACTLY ONCE.
+ * Approves a deposit atomically in SQLite, marking deposit approved & incrementing user balance ONCE.
  */
-app.post('/api/deposits/approve', async (req, res) => {
+app.post('/api/deposits/approve', (req, res) => {
   const { depositId, amount, userUid, userId, username, adminUsername, txid, depositAddress } = req.body || {};
   if (!depositId) {
     return res.status(400).json({ success: false, message: 'Deposit ID is required.' });
@@ -1880,179 +783,76 @@ app.post('/api/deposits/approve', async (req, res) => {
     const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
     const reviewer = adminUsername || 'admin';
 
-    // 1. Check existing deposit strictly by unique depositId in memory + MongoDB
-    let depIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === depositId);
-    let targetDeposit = depIdx >= 0 ? ACTIVE_DEPOSITS[depIdx] : null;
-    let mongoDep = null;
+    const result = runTransaction(() => {
+      const targetDeposit = getDepositById(depositId);
+      const effectiveUserUid = String(userUid || targetDeposit?.userUid || '');
+      const effectiveUserId = String(userId || targetDeposit?.userId || '');
+      const effectiveUsername = username || targetDeposit?.username || '';
 
-    if (mongoose.connection.readyState === 1) {
-      try {
-        mongoDep = await Deposit.findOne({ id: depositId });
-        if (mongoDep) {
-          const mongoDepObj = mongoDep.toObject();
-          if (!targetDeposit) {
-            targetDeposit = mongoDepObj;
-            ACTIVE_DEPOSITS.unshift(targetDeposit);
-            depIdx = 0;
-          } else {
-            targetDeposit = { ...targetDeposit, ...mongoDepObj };
-            ACTIVE_DEPOSITS[depIdx] = targetDeposit;
-          }
-        }
-      } catch (dbErr) {
-        console.warn('MongoDB deposit lookup notice:', dbErr.message);
+      if (targetDeposit && targetDeposit.status === 'approved') {
+        const existingUser = findUserByIdentifier({
+          uid: effectiveUserUid,
+          id: effectiveUserId,
+          username: effectiveUsername,
+        });
+        return {
+          httpStatus: 200,
+          body: {
+            success: true,
+            alreadyApproved: true,
+            message: `Deposit ${depositId} has already been approved. Balance was not incremented again.`,
+            deposit: targetDeposit,
+            user: existingUser,
+          },
+        };
       }
-    }
 
-    const effectiveUserUid = String(userUid || targetDeposit?.userUid || '');
-    const effectiveUserId = String(userId || targetDeposit?.userId || '');
-    const effectiveUsername = username || targetDeposit?.username || '';
+      if (targetDeposit && targetDeposit.status === 'rejected') {
+        return {
+          httpStatus: 400,
+          body: {
+            success: false,
+            message: `Deposit ${depositId} was already rejected.`,
+          },
+        };
+      }
 
-    // 2. STRICT IDEMPOTENCY GUARD (by unique depositId ONLY, never by txid):
-    // If deposit has already been approved, DO NOT increment user balance again!
-    if (targetDeposit && targetDeposit.status === 'approved') {
-      const { userIdx, mongoUser } = await findUserFromMemoryOrMongo({
-        userUid: effectiveUserUid,
-        userId: effectiveUserId,
+      const parsedAmount = Number(Number(amount ?? targetDeposit?.amount ?? 0).toFixed(4));
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        return {
+          httpStatus: 400,
+          body: {
+            success: false,
+            message: 'Valid positive deposit amount is required.',
+          },
+        };
+      }
+
+      const targetUser = findUserByIdentifier({
+        uid: effectiveUserUid,
+        id: effectiveUserId,
         username: effectiveUsername,
       });
-      const existingUser =
-        mongoUser
-          ? {
-              ...(userIdx >= 0 ? ACTIVE_USERS[userIdx] : {}),
-              ...mongoUser.toObject(),
-              id: (userIdx >= 0 && ACTIVE_USERS[userIdx]?.id) || mongoUser._id?.toString() || ('user_' + mongoUser.uid),
-            }
-          : userIdx >= 0
-          ? ACTIVE_USERS[userIdx]
-          : null;
 
-      return res.json({
-        success: true,
-        alreadyApproved: true,
-        message: `Deposit ${depositId} has already been approved. Balance was not incremented again.`,
-        deposit: targetDeposit,
-        user: existingUser,
-      });
-    }
-
-    if (targetDeposit && targetDeposit.status === 'rejected') {
-      return res.status(400).json({
-        success: false,
-        message: `Deposit ${depositId} was already rejected.`,
-      });
-    }
-
-    const parsedAmount = Number(Number(amount ?? targetDeposit?.amount ?? 0).toFixed(4));
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Valid positive deposit amount is required.',
-      });
-    }
-
-    // 3. Resolve target user FIRST (before marking deposit approved!) so we never approve a deposit without crediting
-    const { userIdx, mongoUser } = await findUserFromMemoryOrMongo({
-      userUid: effectiveUserUid,
-      userId: effectiveUserId,
-      username: effectiveUsername,
-    });
-
-    if (userIdx < 0 && !mongoUser) {
-      return res.status(404).json({
-        success: false,
-        message: 'Target user not found. Deposit remains pending and was not approved.',
-      });
-    }
-
-    const memUser = userIdx >= 0 ? ACTIVE_USERS[userIdx] : null;
-    const resolvedUid = String((mongoUser && mongoUser.uid) || (memUser && memUser.uid) || effectiveUserUid);
-    const resolvedUserId = (memUser && memUser.id) || (mongoUser && mongoUser._id?.toString()) || effectiveUserId;
-    const resolvedUsername = (mongoUser && mongoUser.username) || (memUser && memUser.username) || effectiveUsername;
-
-    // 4. Atomically transition deposit status -> 'approved' & balanceCredited: true
-    if (mongoose.connection.readyState === 1) {
-      try {
-        if (mongoDep) {
-          const claimed = await Deposit.findOneAndUpdate(
-            { id: depositId, status: { $ne: 'approved' } },
-            {
-              $set: {
-                status: 'approved',
-                balanceCredited: true,
-                creditedAt: nowStr,
-                reviewedAt: nowStr,
-                reviewedBy: reviewer,
-              },
-            },
-            { new: true }
-          );
-          if (!claimed) {
-            // Concurrent request already claimed and approved this depositId
-            const latestDep = await Deposit.findOne({ id: depositId });
-            const latestUser = await User.findOne({ uid: resolvedUid });
-            if (latestDep) {
-              const obj = latestDep.toObject();
-              if (depIdx >= 0) ACTIVE_DEPOSITS[depIdx] = obj;
-              else ACTIVE_DEPOSITS.unshift(obj);
-              savePersistentDeposits();
-            }
-            return res.json({
-              success: true,
-              alreadyApproved: true,
-              message: `Deposit ${depositId} has already been approved. Balance was not incremented again.`,
-              deposit: latestDep ? latestDep.toObject() : targetDeposit,
-              user: latestUser ? latestUser.toObject() : memUser,
-            });
-          }
-          targetDeposit = claimed.toObject();
-        } else {
-          const newDepPayload = {
-            id: depositId,
-            userId: resolvedUserId || '',
-            userUid: resolvedUid,
-            username: resolvedUsername,
-            amount: parsedAmount,
-            currency: targetDeposit?.currency || 'USDT',
-            protocol: targetDeposit?.protocol || 'TRC-20',
-            depositAddress: depositAddress || targetDeposit?.depositAddress || '',
-            txid: txid || targetDeposit?.txid || ('tx_approved_' + Date.now()),
-            status: 'approved',
-            balanceCredited: true,
-            creditedAt: nowStr,
-            createdAt: targetDeposit?.createdAt || nowStr,
-            reviewedAt: nowStr,
-            reviewedBy: reviewer,
-          };
-          await Deposit.updateOne({ id: depositId }, { $set: newDepPayload }, { upsert: true });
-          targetDeposit = newDepPayload;
-        }
-      } catch (dbErr) {
-        console.warn('MongoDB deposit approve transition notice:', dbErr.message);
+      if (!targetUser) {
+        return {
+          httpStatus: 404,
+          body: {
+            success: false,
+            message: 'Target user not found. Deposit remains pending and was not approved.',
+          },
+        };
       }
-    }
 
-    if (depIdx >= 0) {
-      ACTIVE_DEPOSITS[depIdx] = {
-        ...ACTIVE_DEPOSITS[depIdx],
-        ...(targetDeposit || {}),
-        status: 'approved',
-        balanceCredited: true,
-        creditedAt: nowStr,
-        reviewedAt: nowStr,
-        reviewedBy: reviewer,
-      };
-      targetDeposit = ACTIVE_DEPOSITS[depIdx];
-    } else {
-      targetDeposit = {
+      const savedDeposit = upsertDeposit({
         ...(targetDeposit || {}),
         id: depositId,
-        userId: resolvedUserId || '',
-        userUid: resolvedUid,
-        username: resolvedUsername,
+        userId: targetUser.id || effectiveUserId || '',
+        userUid: String(targetUser.uid),
+        username: targetUser.username || effectiveUsername,
         amount: parsedAmount,
-        currency: 'USDT',
-        protocol: 'TRC-20',
+        currency: targetDeposit?.currency || 'USDT',
+        protocol: targetDeposit?.protocol || 'TRC-20',
         depositAddress: depositAddress || targetDeposit?.depositAddress || '',
         txid: txid || targetDeposit?.txid || ('tx_approved_' + Date.now()),
         status: 'approved',
@@ -2061,129 +861,41 @@ app.post('/api/deposits/approve', async (req, res) => {
         createdAt: targetDeposit?.createdAt || nowStr,
         reviewedAt: nowStr,
         reviewedBy: reviewer,
-      };
-      ACTIVE_DEPOSITS.unshift(targetDeposit);
-    }
-    savePersistentDeposits();
+      });
 
-    // 5. Atomically increment user's balance and totalDeposit EXACTLY ONCE
-    // STRICT DECOUPLING: Deposit approval ONLY credits balance/totalDeposit/vipLevel.
-    // It MUST NEVER enable or toggle on workPermission or cycleApprovedByAdmin.
-    let updatedUser = null;
+      const newBal = Number((Number(targetUser.balance || 0) + parsedAmount).toFixed(4));
+      const newTotalDep = Number((Number(targetUser.totalDeposit || 0) + parsedAmount).toFixed(4));
 
-    if (mongoose.connection.readyState === 1 && mongoUser) {
-      try {
-        // Ensure numeric fields before atomic $inc (guards against null/undefined fields)
-        if (typeof mongoUser.balance !== 'number' || typeof mongoUser.totalDeposit !== 'number') {
-          await User.updateOne(
-            { _id: mongoUser._id },
-            {
-              $set: {
-                balance: Number(mongoUser.balance || 0),
-                totalDeposit: Number(mongoUser.totalDeposit || 0),
-              },
-            }
-          );
-        }
-
-        const incDoc = await User.findOneAndUpdate(
-          { _id: mongoUser._id },
-          { $inc: { balance: parsedAmount, totalDeposit: parsedAmount } },
-          { new: true }
-        );
-
-        if (incDoc) {
-          const cleanBal = Number(Number(incDoc.balance || 0).toFixed(4));
-          const cleanTotalDep = Number(Number(incDoc.totalDeposit || 0).toFixed(4));
-
-          let vip = incDoc.vipLevel || 0;
-          if (cleanBal >= 899) vip = Math.max(vip, 3);
-          else if (cleanBal >= 499) vip = Math.max(vip, 2);
-          else if (cleanBal >= 20) vip = Math.max(vip, 1);
-
-          if (cleanBal !== incDoc.balance || cleanTotalDep !== incDoc.totalDeposit || vip !== incDoc.vipLevel) {
-            await User.updateOne(
-              { _id: mongoUser._id },
-              {
-                $set: {
-                  balance: cleanBal,
-                  totalDeposit: cleanTotalDep,
-                  vipLevel: vip,
-                },
-              }
-            );
-          }
-
-          const baseMem = memUser || { id: mongoUser._id?.toString() || ('user_' + mongoUser.uid), ...mongoUser.toObject() };
-          updatedUser = {
-            ...baseMem,
-            ...incDoc.toObject(),
-            id: baseMem.id,
-            balance: cleanBal,
-            totalDeposit: cleanTotalDep,
-            vipLevel: vip,
-            workPermission: baseMem.workPermission === true,
-            cycleApprovedByAdmin: baseMem.cycleApprovedByAdmin === true,
-          };
-
-          if (userIdx >= 0) {
-            ACTIVE_USERS[userIdx] = updatedUser;
-          } else {
-            ACTIVE_USERS.unshift(updatedUser);
-          }
-          savePersistentUsers();
-        }
-      } catch (dbErr) {
-        console.warn('MongoDB atomic deposit balance increment notice:', dbErr.message);
-      }
-    }
-
-    if (!updatedUser && userIdx >= 0) {
-      const u = ACTIVE_USERS[userIdx];
-      const newBal = Number((Number(u.balance || 0) + parsedAmount).toFixed(4));
-      const newTotalDep = Number((Number(u.totalDeposit || 0) + parsedAmount).toFixed(4));
-
-      let vip = u.vipLevel || 0;
+      let vip = targetUser.vipLevel || 0;
       if (newBal >= 899) vip = Math.max(vip, 3);
       else if (newBal >= 499) vip = Math.max(vip, 2);
       else if (newBal >= 20) vip = Math.max(vip, 1);
 
-      ACTIVE_USERS[userIdx] = {
-        ...u,
-        balance: newBal,
-        totalDeposit: newTotalDep,
-        vipLevel: vip,
-        workPermission: u.workPermission === true,
-        cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
-      };
-      updatedUser = ACTIVE_USERS[userIdx];
-      savePersistentUsers();
-
-      if (mongoose.connection.readyState === 1) {
-        try {
-          await User.updateOne(
-            { $or: [{ uid: u.uid }, { username: u.username }] },
-            {
-              $set: {
-                balance: newBal,
-                totalDeposit: newTotalDep,
-                vipLevel: vip,
-              },
-            }
-          );
-        } catch (dbErr) {
-          console.warn('MongoDB user deposit fallback increment notice:', dbErr.message);
+      // STRICT DECOUPLING: Deposit approval ONLY credits balance/totalDeposit/vipLevel.
+      const updatedUser = updateUserFields(
+        { uid: targetUser.uid },
+        {
+          balance: newBal,
+          totalDeposit: newTotalDep,
+          vipLevel: vip,
+          workPermission: targetUser.workPermission === true,
+          cycleApprovedByAdmin: targetUser.cycleApprovedByAdmin === true,
         }
-      }
-    }
+      );
 
-    return res.json({
-      success: true,
-      alreadyApproved: false,
-      message: `Deposit of ${parsedAmount} USDT approved and balance credited!`,
-      deposit: targetDeposit,
-      user: updatedUser,
+      return {
+        httpStatus: 200,
+        body: {
+          success: true,
+          alreadyApproved: false,
+          message: `Deposit of ${parsedAmount} USDT approved and balance credited!`,
+          deposit: savedDeposit,
+          user: updatedUser,
+        },
+      };
     });
+
+    return res.status(result.httpStatus).json(result.body);
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to approve deposit: ' + err.message });
   } finally {
@@ -2193,11 +905,9 @@ app.post('/api/deposits/approve', async (req, res) => {
 
 /**
  * POST /api/admin/recalculate-balance
- * Recalculates and sets user balance to:
- *   sum(unique approved deposits by deposit.id) + earnedCommissions - totalWithdrawals
- * Deduplicates deposits strictly by unique deposit document ID (never by txid).
+ * Recalculates balance from unique approved deposits + commissions - withdrawals
  */
-app.post('/api/admin/recalculate-balance', async (req, res) => {
+app.post('/api/admin/recalculate-balance', (req, res) => {
   try {
     const {
       userUid,
@@ -2213,69 +923,24 @@ app.post('/api/admin/recalculate-balance', async (req, res) => {
     }
 
     const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
+    const u = findUserByIdentifier({ uid: userUid, id: userId, username });
 
-    // 1. Locate user in ACTIVE_USERS or MongoDB
-    const { userIdx, mongoUser } = await findUserFromMemoryOrMongo({ userUid, userId, username });
-
-    if (userIdx < 0 && !mongoUser) {
+    if (!u) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
-
-    const u = mongoUser
-      ? {
-          ...(userIdx >= 0 ? ACTIVE_USERS[userIdx] : {}),
-          ...mongoUser.toObject(),
-          id: (userIdx >= 0 && ACTIVE_USERS[userIdx]?.id) || mongoUser._id?.toString() || ('user_' + mongoUser.uid),
-        }
-      : ACTIVE_USERS[userIdx];
 
     const uidStr = String(u.uid);
     const unameLower = norm(u.username);
     const uId = u.id;
-    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const unameRegex = new RegExp(`^${escapeRegex(u.username)}$`, 'i');
 
-    // 2. Fetch all approved deposits for this user from memory + MongoDB
-    // Deduplicate STRICTLY by unique deposit ID (never by txid)
-    let mongoDeps = [];
-    let mongoCompletedTasks = [];
-    let mongoWithdrawals = [];
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        [mongoDeps, mongoCompletedTasks, mongoWithdrawals] = await Promise.all([
-          Deposit.find({
-            status: 'approved',
-            $or: [{ userUid: uidStr }, { userId: uId }, { username: unameRegex }],
-          }),
-          TaskSimulation.find({
-            status: 'completed',
-            $or: [{ userId: uidStr }, { userId: uId }, { username: unameRegex }],
-          }),
-          WithdrawalTaxRecord.find({
-            status: { $ne: 'rejected' },
-            $or: [{ userId: uidStr }, { userId: uId }, { username: unameRegex }],
-          }),
-        ]);
-      } catch (mErr) {
-        console.warn('MongoDB recalculation fetch notice:', mErr.message);
-      }
-    }
-
+    // Deduplicate approved deposits strictly by deposit id
     const approvedDepMap = new Map();
-    ACTIVE_DEPOSITS.forEach((d) => {
+    getAllDeposits().forEach((d) => {
       if (
         d.status === 'approved' &&
         (String(d.userUid) === uidStr || d.userId === uId || norm(d.username) === unameLower)
       ) {
         approvedDepMap.set(String(d.id), d);
-      }
-    });
-    mongoDeps.forEach((md) => {
-      const dObj = md.toObject();
-      const key = String(dObj.id || md._id);
-      if (!approvedDepMap.has(key)) {
-        approvedDepMap.set(key, dObj);
       }
     });
 
@@ -2284,22 +949,15 @@ app.post('/api/admin/recalculate-balance', async (req, res) => {
       userApprovedDeposits.reduce((sum, d) => sum + Number(d.amount || 0), 0).toFixed(4)
     );
 
-    // 3. Sum earned commissions from unique completed orders (disk + MongoDB) and persisted commission totals
+    // Sum earned commissions from completed orders & persisted counters
     const completedOrderMap = new Map();
-    ACTIVE_SUBMITTED_ORDERS.forEach((o) => {
+    getOrders().forEach((o) => {
       if (
         o.status === 'completed' &&
         (String(o.userUid) === uidStr || o.userId === uId || norm(o.username) === unameLower)
       ) {
         const key = String(o.orderNo || o.orderId || '');
         if (key) completedOrderMap.set(key, Number(o.commission || 0));
-      }
-    });
-    mongoCompletedTasks.forEach((t) => {
-      const tObj = t.toObject();
-      const key = String(tObj.orderNumber || tObj._id || '');
-      if (key && !completedOrderMap.has(key)) {
-        completedOrderMap.set(key, Number(tObj.commission || 0));
       }
     });
 
@@ -2317,16 +975,16 @@ app.post('/api/admin/recalculate-balance', async (req, res) => {
         : 0;
     const earnedCommissions = Number(Math.max(ordersCommSum, persistedCommSum, clientComm).toFixed(4));
 
-    // 4. Sum non-rejected withdrawals
-    const mongoWithdrawalsSum = Number(
-      mongoWithdrawals.reduce((sum, w) => sum + Number(w.amount || 0), 0).toFixed(4)
+    const dbWithdrawals = getWithdrawalsForUser({ uid: uidStr, id: uId, username: u.username });
+    const dbWithdrawalsSum = Number(
+      dbWithdrawals.reduce((sum, w) => sum + Number(w.amount || 0), 0).toFixed(4)
     );
     const clientWd =
       typeof clientTotalWithdrawals === 'number' && !isNaN(clientTotalWithdrawals)
         ? Number(Math.max(0, clientTotalWithdrawals).toFixed(4))
         : 0;
     const totalWithdrawals = Number(
-      Math.max(mongoWithdrawalsSum, clientWd, Number(u.totalWithdrawal || 0)).toFixed(4)
+      Math.max(dbWithdrawalsSum, clientWd, Number(u.totalWithdrawal || 0)).toFixed(4)
     );
 
     const exactBalance = Number(
@@ -2339,40 +997,17 @@ app.post('/api/admin/recalculate-balance', async (req, res) => {
     else if (exactBalance >= 499) vip = Math.max(vip, 2);
     else if (exactBalance >= 20) vip = Math.max(vip, 1);
 
-    const updatedRecord = {
-      ...u,
-      balance: exactBalance,
-      totalDeposit: exactTotalDeposit,
-      totalWithdrawal: totalWithdrawals,
-      vipLevel: vip,
-      workPermission: u.workPermission === true,
-      cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
-    };
-
-    if (userIdx >= 0) {
-      ACTIVE_USERS[userIdx] = updatedRecord;
-    } else {
-      ACTIVE_USERS.unshift(updatedRecord);
-    }
-    savePersistentUsers();
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await User.updateOne(
-          { $or: [{ uid: u.uid }, { username: u.username }] },
-          {
-            $set: {
-              balance: exactBalance,
-              totalDeposit: exactTotalDeposit,
-              totalWithdrawal: totalWithdrawals,
-              vipLevel: vip,
-            },
-          }
-        );
-      } catch (dbErr) {
-        console.warn('MongoDB user balance correction notice:', dbErr.message);
+    const updatedRecord = updateUserFields(
+      { uid: uidStr },
+      {
+        balance: exactBalance,
+        totalDeposit: exactTotalDeposit,
+        totalWithdrawal: totalWithdrawals,
+        vipLevel: vip,
+        workPermission: u.workPermission === true,
+        cycleApprovedByAdmin: u.cycleApprovedByAdmin === true,
       }
-    }
+    );
 
     return res.json({
       success: true,
@@ -2393,34 +1028,21 @@ app.post('/api/admin/recalculate-balance', async (req, res) => {
 
 /**
  * POST /api/admin/adjust-balance
- * Explicitly sets or adjusts a user's balance with an audit note
+ * Explicitly sets or adjusts a user's balance
  */
-app.post('/api/admin/adjust-balance', async (req, res) => {
+app.post('/api/admin/adjust-balance', (req, res) => {
   try {
-    const { userUid, userId, username, newBalance, mode = 'set', amount = 0, reason, adminUsername } = req.body;
+    const { userUid, userId, username, newBalance, mode = 'set', amount = 0 } = req.body;
     if (!userUid && !userId && !username) {
       return res.status(400).json({ success: false, message: 'User identifier is required.' });
     }
 
-    const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
-    const tUid = String(userUid || '');
-    const tId = String(userId || '');
-    const tUname = norm(username);
-
-    const userIdx = ACTIVE_USERS.findIndex((u) => {
-      if (tUid && String(u.uid) === tUid) return true;
-      if (tId && (u.id === tId || String(u.uid) === tId)) return true;
-      if (tUname && norm(u.username) === tUname) return true;
-      return false;
-    });
-
-    if (userIdx < 0) {
+    const u = findUserByIdentifier({ uid: userUid, id: userId, username });
+    if (!u) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    const u = ACTIVE_USERS[userIdx];
     let finalBal = u.balance || 0;
-
     if (mode === 'set' && typeof newBalance === 'number') {
       finalBal = Number(newBalance.toFixed(4));
     } else if (mode === 'credit') {
@@ -2434,33 +1056,12 @@ app.post('/api/admin/adjust-balance', async (req, res) => {
     else if (finalBal >= 499) vip = Math.max(vip, 2);
     else if (finalBal >= 20) vip = Math.max(vip, 1);
 
-    ACTIVE_USERS[userIdx] = {
-      ...u,
-      balance: finalBal,
-      vipLevel: vip,
-    };
-    savePersistentUsers();
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await User.updateOne(
-          { $or: [{ uid: u.uid }, { username: u.username }] },
-          {
-            $set: {
-              balance: finalBal,
-              vipLevel: vip,
-            },
-          }
-        );
-      } catch (dbErr) {
-        console.warn('MongoDB user balance adjust notice:', dbErr.message);
-      }
-    }
+    const updated = updateUserFields({ uid: u.uid }, { balance: finalBal, vipLevel: vip });
 
     return res.json({
       success: true,
       message: `User ${u.username} balance updated to ${finalBal.toFixed(2)} USDT`,
-      user: ACTIVE_USERS[userIdx],
+      user: updated,
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to adjust balance: ' + err.message });
@@ -2471,7 +1072,7 @@ app.post('/api/admin/adjust-balance', async (req, res) => {
  * POST /api/deposits/reject
  * Reject a deposit voucher
  */
-app.post('/api/deposits/reject', async (req, res) => {
+app.post('/api/deposits/reject', (req, res) => {
   try {
     const { depositId, reason, adminUsername } = req.body;
     if (!depositId) {
@@ -2482,37 +1083,16 @@ app.post('/api/deposits/reject', async (req, res) => {
     const reviewer = adminUsername || 'admin';
     const rejectReason = reason || 'Invalid transaction hash';
 
-    const depIdx = ACTIVE_DEPOSITS.findIndex((d) => d.id === depositId);
+    const existing = getDepositById(depositId);
     let targetDeposit = null;
-
-    if (depIdx >= 0) {
-      ACTIVE_DEPOSITS[depIdx] = {
-        ...ACTIVE_DEPOSITS[depIdx],
+    if (existing) {
+      targetDeposit = upsertDeposit({
+        ...existing,
         status: 'rejected',
         rejectionReason: rejectReason,
         reviewedAt: nowStr,
         reviewedBy: reviewer,
-      };
-      targetDeposit = ACTIVE_DEPOSITS[depIdx];
-      savePersistentDeposits();
-    }
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await Deposit.updateOne(
-          { id: depositId },
-          {
-            $set: {
-              status: 'rejected',
-              rejectionReason: rejectReason,
-              reviewedAt: nowStr,
-              reviewedBy: reviewer,
-            },
-          }
-        );
-      } catch (dbErr) {
-        console.warn('MongoDB deposit reject notice:', dbErr.message);
-      }
+      });
     }
 
     return res.json({
@@ -2527,9 +1107,9 @@ app.post('/api/deposits/reject', async (req, res) => {
 
 /**
  * POST /api/orders/grab
- * Persists a newly grabbed incomplete order (e.g., pending Combo Order #14) so it survives logouts, reloads, and session changes
+ * Persists a newly grabbed incomplete order into local SQLite database
  */
-app.post('/api/orders/grab', async (req, res) => {
+app.post('/api/orders/grab', (req, res) => {
   try {
     const { order, userUid, username } = req.body;
     if (!order || !order.orderNo) {
@@ -2537,9 +1117,12 @@ app.post('/api/orders/grab', async (req, res) => {
     }
 
     const uidStr = String(userUid || order.userUid || '');
-    const u = ACTIVE_USERS.find(
-      (x) => (uidStr && String(x.uid) === uidStr) || (order.userId && x.id === order.userId)
-    );
+    const u = findUserByIdentifier({ uid: uidStr, id: order.userId });
+
+    const existing = findOrderByIdOrNo({ orderNo: order.orderNo, orderId: order.id || order.orderId });
+    if (existing && existing.status === 'completed') {
+      return res.json({ success: true, order: existing });
+    }
 
     const record = {
       ...order,
@@ -2548,57 +1131,13 @@ app.post('/api/orders/grab', async (req, res) => {
       userUid: uidStr || (u ? String(u.uid) : ''),
       userId: order.userId || (u ? u.id : ''),
       username: username || (u ? u.username : ''),
+      taskNumber: Number(order.comboStepNumber || (u ? (u.currentCycleTasks || 0) + 1 : 1)),
+      cycleNumber: u?.cycleNumber || 1,
       status: 'incomplete',
     };
 
-    const existIdx = ACTIVE_SUBMITTED_ORDERS.findIndex(
-      (o) => String(o.orderNo) === record.orderNo || (record.orderId && o.orderId === record.orderId)
-    );
-    if (existIdx >= 0) {
-      if (ACTIVE_SUBMITTED_ORDERS[existIdx].status !== 'completed') {
-        ACTIVE_SUBMITTED_ORDERS[existIdx] = { ...ACTIVE_SUBMITTED_ORDERS[existIdx], ...record };
-      }
-    } else {
-      ACTIVE_SUBMITTED_ORDERS.unshift(record);
-    }
-    savePersistentOrders();
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await TaskSimulation.updateOne(
-          { orderNumber: record.orderNo },
-          {
-            $set: {
-              userId: record.userUid || record.userId,
-              username: record.username,
-              orderNumber: record.orderNo,
-              taskNumber: Number(order.comboStepNumber || (u ? (u.currentCycleTasks || 0) + 1 : 1)),
-              cycleNumber: u?.cycleNumber || 1,
-              productTitle: record.productTitle || 'Matched Retail Order',
-              productPrice: Number(record.orderAmount || 0),
-              commission: Number(record.commission || 0),
-              expectedIncome: Number(record.expectedIncome || 0),
-              platform: record.platform || 'Amazon',
-              vipTier: record.vipTier || 'VIP 1',
-              isCombo: !!record.isComboOrder,
-              comboStep: Number(record.comboStepNumber || 0),
-              requiredBalance: record.requiredBalance,
-              comboDepositPercent: record.comboDepositPercent,
-              comboCommissionPercent: record.comboCommissionPercent,
-              requiredDepositDeficit: record.requiredDepositDeficit,
-              depositAddress: record.depositAddress,
-              items: record.items || [],
-              status: 'incomplete',
-            },
-          },
-          { upsert: true }
-        );
-      } catch (dbErr) {
-        console.warn('MongoDB grab order persist notice:', dbErr.message);
-      }
-    }
-
-    return res.json({ success: true, order: record });
+    const saved = upsertOrder(record);
+    return res.json({ success: true, order: saved });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to persist grabbed order: ' + err.message });
   }
@@ -2606,10 +1145,9 @@ app.post('/api/orders/grab', async (req, res) => {
 
 /**
  * POST /api/orders/submit
- * Atomically submits an order, credits commission to user's main account balance EXACTLY ONCE,
- * updates task/cycle/daily commission stats in both disk store and MongoDB.
+ * Atomically submits an order, credits commission to balance ONCE, and saves state in SQLite
  */
-app.post('/api/orders/submit', async (req, res) => {
+app.post('/api/orders/submit', (req, res) => {
   try {
     const {
       orderId,
@@ -2630,243 +1168,149 @@ app.post('/api/orders/submit', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Order identifier (orderId or orderNo) is required.' });
     }
 
-    const norm = (s) => (s ? String(s).trim().toLowerCase() : '');
-    const tUid = String(userUid || '');
-    const tId = String(userId || '');
-    const tUname = norm(username);
-
-    const findUserIdx = () =>
-      ACTIVE_USERS.findIndex((u) => {
-        if (tUid && String(u.uid) === tUid) return true;
-        if (tId && (u.id === tId || String(u.uid) === tId)) return true;
-        if (tUname && norm(u.username) === tUname) return true;
-        return false;
-      });
-
-    // 1. STRICT IDEMPOTENCY GUARD: Prevent double-counting commission if same order was ALREADY COMPLETED
-    let alreadySubmittedRecord = ACTIVE_SUBMITTED_ORDERS.find(
-      (o) =>
-        o.status === 'completed' &&
-        ((orderId && o.orderId === orderId) || (orderNo && String(o.orderNo) === String(orderNo)))
-    );
-
-    if (!alreadySubmittedRecord && mongoose.connection.readyState === 1 && orderNo) {
-      try {
-        const existingMongoTask = await TaskSimulation.findOne({
-          orderNumber: String(orderNo),
-          status: 'completed',
-        });
-        if (existingMongoTask) {
-          alreadySubmittedRecord = existingMongoTask.toObject();
-        }
-      } catch (dbErr) {
-        console.warn('MongoDB order idempotency lookup notice:', dbErr.message);
-      }
-    }
-
-    if (alreadySubmittedRecord) {
-      const idx = findUserIdx();
-      return res.json({
-        success: true,
-        alreadySubmitted: true,
-        message: 'Order has already been submitted and credited.',
-        orderRecord: alreadySubmittedRecord,
-        user: idx >= 0 ? ACTIVE_USERS[idx] : null,
-      });
-    }
-
-    let userIdx = findUserIdx();
-
-    // Load from MongoDB if present there but not in ACTIVE_USERS yet
-    if (userIdx < 0 && mongoose.connection.readyState === 1) {
-      try {
-        const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const mongoUser = await User.findOne({
-          $or: [
-            ...(tUid ? [{ uid: tUid }] : []),
-            ...(tUname ? [{ username: { $regex: new RegExp(`^${escapeRegex(tUname)}$`, 'i') } }] : []),
-          ],
-        });
-        if (mongoUser) {
-          const uObj = mongoUser.toObject();
-          ACTIVE_USERS.unshift({
-            id: mongoUser._id?.toString() || ('user_' + mongoUser.uid),
-            ...uObj,
-          });
-          userIdx = 0;
-        }
-      } catch (dbErr) {
-        console.warn('MongoDB user lookup for order submit notice:', dbErr.message);
-      }
-    }
-
-    if (userIdx < 0) {
-      return res.status(404).json({ success: false, message: 'User not found.' });
-    }
-
-    const u = ACTIVE_USERS[userIdx];
-
-    // 2. STRICT WORK PERMISSION & 25-TASK CYCLE LOCK CHECK
-    if (u.workPermission !== true) {
-      return res.status(403).json({
-        success: false,
-        isPermissionLocked: true,
-        message: 'Work Permission Required: Your account is pending Admin approval before submitting orders.',
-      });
-    }
-    if ((u.currentCycleTasks || 0) >= 25 || !u.cycleApprovedByAdmin) {
-      return res.status(403).json({
-        success: false,
-        isCycleLocked: true,
-        message: '25-Task Cycle Completed: Task-grabbing permission is locked until an Admin approves your next cycle.',
-      });
-    }
-
-    const comm = Number(Number(commission || 0).toFixed(4));
-    if (isNaN(comm) || comm < 0) {
-      return res.status(400).json({ success: false, message: 'Invalid commission amount.' });
-    }
-
-    const today = new Date().toISOString().substring(0, 10);
-    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const isNewDay = u.lastActiveDate && u.lastActiveDate !== today;
-    const currentTodayComm = isNewDay ? 0 : (u.todayCommission ?? 0);
-    const yestComm = isNewDay ? (u.todayCommission ?? 0) : (u.yesterdayCommission ?? 0);
-
-    const nextCompletedLifetime = (u.completedTasksCount || 0) + 1;
-    const nextCycleTasks = (u.currentCycleTasks || 0) + 1;
-    const isCycleNowFinished = nextCycleTasks >= 25;
-    // Active cycle completed task count stays persisted against the active cycle (never reset to 0 mid-cycle)
-    const nextTodayTimes = Math.max((u.todayOrdersCount ?? 0) + 1, nextCycleTasks);
-
-    const balanceBefore = Number(u.balance || 0);
-    let newBalance = Number((balanceBefore + comm).toFixed(4));
-
-    const isCycle2Small =
-      (u.cycleNumber || 1) === 2 &&
-      (u.cycleStartBalance === undefined || (u.cycleStartBalance >= 25 && u.cycleStartBalance <= 45)) &&
-      balanceBefore < 450;
-
-    if (u.isDemoAccount) {
-      newBalance = isCycleNowFinished
-        ? Number(Math.min(2680, Math.max(2320, newBalance)).toFixed(4))
-        : Number(Math.min(2650, newBalance).toFixed(4));
-    } else if (isCycle2Small) {
-      newBalance = isCycleNowFinished
-        ? Number(Math.min(348, Math.max(322, newBalance)).toFixed(4))
-        : Number(Math.min(340, newBalance).toFixed(4));
-    }
-
-    let vip = u.vipLevel || 0;
-    if (newBalance >= 899) vip = Math.max(vip, 3);
-    else if (newBalance >= 499) vip = Math.max(vip, 2);
-    else if (newBalance >= 20) vip = Math.max(vip, 1);
-
-    const updatedUserFields = {
-      balance: newBalance,
-      vipLevel: vip,
-      todayOrdersCount: nextTodayTimes,
-      todayCompletedCount: nextTodayTimes,
-      todayCommission: Number((currentTodayComm + comm).toFixed(4)),
-      yesterdayCommission: yestComm,
-      lastActiveDate: today,
-      completedTasksCount: nextCompletedLifetime,
-      currentCycleTasks: nextCycleTasks,
-      cycleApprovedByAdmin: !isCycleNowFinished,
-      workPermission: isCycleNowFinished ? false : true,
-    };
-
-    ACTIVE_USERS[userIdx] = {
-      ...u,
-      ...updatedUserFields,
-    };
-    savePersistentUsers();
-
-    const orderRecord = {
-      orderId: orderId || ('ord_' + Date.now()),
-      orderNo: String(orderNo || ('ORD' + Date.now())),
-      userUid: String(u.uid),
-      userId: u.id || ('user_' + u.uid),
-      username: u.username,
-      platform,
-      vipTier,
-      productTitle,
-      orderAmount: Number(orderAmount || 0),
-      commission: comm,
-      expectedIncome: Number((Number(orderAmount || 0) + comm).toFixed(4)),
-      isComboOrder: !!isComboOrder,
-      comboStepNumber: comboStepNumber || 0,
-      balanceBefore,
-      balanceAfter: newBalance,
-      status: 'completed',
-      completedAt: nowStr,
-    };
-    const existingOrderIdx = ACTIVE_SUBMITTED_ORDERS.findIndex(
-      (o) => String(o.orderNo) === orderRecord.orderNo || (orderRecord.orderId && o.orderId === orderRecord.orderId)
-    );
-    if (existingOrderIdx >= 0) {
-      ACTIVE_SUBMITTED_ORDERS[existingOrderIdx] = {
-        ...ACTIVE_SUBMITTED_ORDERS[existingOrderIdx],
-        ...orderRecord,
-        status: 'completed',
-      };
-    } else {
-      ACTIVE_SUBMITTED_ORDERS.unshift(orderRecord);
-    }
-    savePersistentOrders();
-
-    // Persist to MongoDB Atlas if connected
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await User.updateOne(
-          { $or: [{ uid: String(u.uid) }, { username: u.username }] },
-          { $set: updatedUserFields }
-        );
-        await TaskSimulation.updateOne(
-          { orderNumber: orderRecord.orderNo },
-          {
-            $set: {
-              userId: String(u.uid),
-              username: u.username,
-              orderNumber: orderRecord.orderNo,
-              taskNumber: nextCycleTasks,
-              cycleNumber: u.cycleNumber || 1,
-              productTitle: orderRecord.productTitle,
-              productPrice: orderRecord.orderAmount,
-              commission: comm,
-              expectedIncome: orderRecord.expectedIncome,
-              platform: orderRecord.platform,
-              vipTier: orderRecord.vipTier,
-              isCombo: !!isComboOrder,
-              comboStep: comboStepNumber || 0,
-              status: 'completed',
-              userBalanceBefore: balanceBefore,
-              userBalanceAfter: newBalance,
-            },
+    const outcome = runTransaction(() => {
+      const alreadySubmittedRecord = findOrderByIdOrNo({ orderId, orderNo });
+      if (alreadySubmittedRecord && alreadySubmittedRecord.status === 'completed') {
+        const uExisting = findUserByIdentifier({ uid: userUid, id: userId, username });
+        return {
+          httpStatus: 200,
+          body: {
+            success: true,
+            alreadySubmitted: true,
+            message: 'Order has already been submitted and credited.',
+            orderRecord: alreadySubmittedRecord,
+            user: uExisting,
           },
-          { upsert: true }
-        );
-      } catch (dbErr) {
-        console.warn('MongoDB order submit persist notice:', dbErr.message);
+        };
       }
-    }
 
-    return res.json({
-      success: true,
-      alreadySubmitted: false,
-      commission: comm,
-      newBalance,
-      isCycleNowFinished,
-      message: `Order submitted! Commission +${comm.toFixed(4)} USDT credited to balance.`,
-      orderRecord,
-      user: {
-        ...ACTIVE_USERS[userIdx],
-        todayOrdersCount: nextTodayTimes,
-        todayCompletedCount: nextTodayTimes,
-        workPermission: ACTIVE_USERS[userIdx].workPermission === true,
-        cycleApprovedByAdmin: ACTIVE_USERS[userIdx].cycleApprovedByAdmin === true,
-      },
+      const u = findUserByIdentifier({ uid: userUid, id: userId, username });
+      if (!u) {
+        return { httpStatus: 404, body: { success: false, message: 'User not found.' } };
+      }
+
+      if (u.workPermission !== true) {
+        return {
+          httpStatus: 403,
+          body: {
+            success: false,
+            isPermissionLocked: true,
+            message: 'Work Permission Required: Your account is pending Admin approval before submitting orders.',
+          },
+        };
+      }
+      if ((u.currentCycleTasks || 0) >= 25 || !u.cycleApprovedByAdmin) {
+        return {
+          httpStatus: 403,
+          body: {
+            success: false,
+            isCycleLocked: true,
+            message: '25-Task Cycle Completed: Task-grabbing permission is locked until an Admin approves your next cycle.',
+          },
+        };
+      }
+
+      const comm = Number(Number(commission || 0).toFixed(4));
+      if (isNaN(comm) || comm < 0) {
+        return { httpStatus: 400, body: { success: false, message: 'Invalid commission amount.' } };
+      }
+
+      const today = new Date().toISOString().substring(0, 10);
+      const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      const isNewDay = u.lastActiveDate && u.lastActiveDate !== today;
+      const currentTodayComm = isNewDay ? 0 : (u.todayCommission ?? 0);
+      const yestComm = isNewDay ? (u.todayCommission ?? 0) : (u.yesterdayCommission ?? 0);
+
+      const nextCompletedLifetime = (u.completedTasksCount || 0) + 1;
+      const nextCycleTasks = (u.currentCycleTasks || 0) + 1;
+      const isCycleNowFinished = nextCycleTasks >= 25;
+      const nextTodayTimes = Math.max((u.todayOrdersCount ?? 0) + 1, nextCycleTasks);
+
+      const balanceBefore = Number(u.balance || 0);
+      let newBalance = Number((balanceBefore + comm).toFixed(4));
+
+      const isCycle2Small =
+        (u.cycleNumber || 1) === 2 &&
+        (u.cycleStartBalance === undefined || (u.cycleStartBalance >= 25 && u.cycleStartBalance <= 45)) &&
+        balanceBefore < 450 &&
+        !(u.customCombos && u.customCombos.length > 0);
+
+      if (u.isDemoAccount) {
+        newBalance = isCycleNowFinished
+          ? Number(Math.min(2680, Math.max(2320, newBalance)).toFixed(4))
+          : Number(Math.min(2650, newBalance).toFixed(4));
+      } else if (isCycle2Small) {
+        newBalance = isCycleNowFinished
+          ? Number(Math.min(348, Math.max(322, newBalance)).toFixed(4))
+          : Number(Math.min(340, newBalance).toFixed(4));
+      }
+
+      let vip = u.vipLevel || 0;
+      if (newBalance >= 899) vip = Math.max(vip, 3);
+      else if (newBalance >= 499) vip = Math.max(vip, 2);
+      else if (newBalance >= 20) vip = Math.max(vip, 1);
+
+      const updatedUser = updateUserFields(
+        { uid: u.uid },
+        {
+          balance: newBalance,
+          vipLevel: vip,
+          todayOrdersCount: nextTodayTimes,
+          todayCompletedCount: nextTodayTimes,
+          todayCommission: Number((currentTodayComm + comm).toFixed(4)),
+          yesterdayCommission: yestComm,
+          lastActiveDate: today,
+          completedTasksCount: nextCompletedLifetime,
+          currentCycleTasks: nextCycleTasks,
+          cycleApprovedByAdmin: !isCycleNowFinished,
+          workPermission: isCycleNowFinished ? false : true,
+        }
+      );
+
+      const orderRecord = upsertOrder({
+        orderId: orderId || ('ord_' + Date.now()),
+        orderNo: String(orderNo || ('ORD' + Date.now())),
+        userUid: String(u.uid),
+        userId: u.id || ('user_' + u.uid),
+        username: u.username,
+        platform,
+        vipTier,
+        productTitle,
+        orderAmount: Number(orderAmount || 0),
+        commission: comm,
+        expectedIncome: Number((Number(orderAmount || 0) + comm).toFixed(4)),
+        isComboOrder: !!isComboOrder,
+        comboStepNumber: comboStepNumber || 0,
+        balanceBefore,
+        balanceAfter: newBalance,
+        taskNumber: nextCycleTasks,
+        cycleNumber: u.cycleNumber || 1,
+        status: 'completed',
+        completedAt: nowStr,
+      });
+
+      return {
+        httpStatus: 200,
+        body: {
+          success: true,
+          alreadySubmitted: false,
+          commission: comm,
+          newBalance,
+          isCycleNowFinished,
+          message: `Order submitted! Commission +${comm.toFixed(4)} USDT credited to balance.`,
+          orderRecord,
+          user: {
+            ...updatedUser,
+            todayOrdersCount: nextTodayTimes,
+            todayCompletedCount: nextTodayTimes,
+            workPermission: updatedUser.workPermission === true,
+            cycleApprovedByAdmin: updatedUser.cycleApprovedByAdmin === true,
+          },
+        },
+      };
     });
+
+    return res.status(outcome.httpStatus).json(outcome.body);
   } catch (err) {
     console.error('Order submit error:', err);
     return res.status(500).json({ success: false, message: 'Failed to submit order: ' + err.message });
@@ -2875,73 +1319,15 @@ app.post('/api/orders/submit', async (req, res) => {
 
 /**
  * GET /api/orders
- * Returns persisted incomplete & completed orders from disk store & MongoDB so order history and pending tasks survive logouts/reloads
+ * Returns persisted incomplete & completed orders from local SQLite database
  */
-app.get('/api/orders', async (req, res) => {
+app.get('/api/orders', (req, res) => {
   try {
     const { userUid } = req.query;
-    const orderMap = new Map();
-
-    ACTIVE_SUBMITTED_ORDERS.forEach((o) => {
-      if (o && o.orderNo) {
-        orderMap.set(String(o.orderNo), o);
-      }
-    });
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const filter = userUid ? { userId: String(userUid) } : {};
-        const mongoSims = await TaskSimulation.find(filter).sort({ createdAt: -1 }).limit(300);
-        mongoSims.forEach((ms) => {
-          const obj = ms.toObject();
-          const key = String(obj.orderNumber);
-          const existing = orderMap.get(key);
-          const mappedStatus = obj.status === 'incomplete' || obj.status === 'pending' ? 'incomplete' : 'completed';
-          if (!existing || (existing.status !== 'completed' && mappedStatus === 'completed')) {
-            orderMap.set(key, {
-              orderId: existing?.orderId || ('ord_mongo_' + obj._id.toString()),
-              id: existing?.id || ('ord_mongo_' + obj._id.toString()),
-              orderNo: key,
-              userUid: String(obj.userId),
-              username: obj.username,
-              platform: obj.platform || existing?.platform || 'Amazon',
-              vipTier: obj.vipTier || existing?.vipTier || 'VIP 1',
-              productTitle: obj.productTitle,
-              orderAmount: obj.productPrice,
-              commission: obj.commission,
-              expectedIncome: obj.expectedIncome || Number(((obj.productPrice || 0) + (obj.commission || 0)).toFixed(4)),
-              isComboOrder: !!obj.isCombo,
-              comboStepNumber: obj.comboStep || 0,
-              requiredBalance: obj.requiredBalance ?? existing?.requiredBalance,
-              comboDepositPercent: obj.comboDepositPercent ?? existing?.comboDepositPercent,
-              comboCommissionPercent: obj.comboCommissionPercent ?? existing?.comboCommissionPercent,
-              requiredDepositDeficit: obj.requiredDepositDeficit ?? existing?.requiredDepositDeficit,
-              depositAddress: obj.depositAddress ?? existing?.depositAddress,
-              items: Array.isArray(obj.items) && obj.items.length > 0 ? obj.items : existing?.items,
-              status: mappedStatus,
-              createdAt: obj.createdAt
-                ? new Date(obj.createdAt).toISOString().replace('T', ' ').substring(0, 19)
-                : (existing?.createdAt || ''),
-              completedAt:
-                mappedStatus === 'completed'
-                  ? (obj.updatedAt ? new Date(obj.updatedAt).toISOString().replace('T', ' ').substring(0, 19) : existing?.completedAt || '')
-                  : undefined,
-            });
-          }
-        });
-      } catch (dbErr) {
-        console.warn('Mongo orders fetch notice:', dbErr.message);
-      }
-    }
-
-    let list = Array.from(orderMap.values());
-    if (userUid) {
-      list = list.filter((o) => String(o.userUid) === String(userUid));
-    }
-
+    const list = getOrders(userUid ? String(userUid) : null);
     return res.json({ success: true, orders: list });
   } catch (err) {
-    return res.json({ success: true, orders: ACTIVE_SUBMITTED_ORDERS });
+    return res.status(500).json({ success: false, message: 'Failed to fetch orders' });
   }
 });
 
@@ -2959,13 +1345,14 @@ app.get('/api/invites', (req, res) => {
       { id: 'inv_sys_5', code: 'VELORA888', type: 'system', createdBy: 'admin', creatorRole: 'super_admin', usageCount: 3, maxUses: null, status: 'active', createdAt: '2026-02-18 18:00:00' },
     ];
 
-    const userCodes = ACTIVE_USERS.map((u) => ({
+    const allUsers = getAllUsers();
+    const userCodes = allUsers.map((u) => ({
       id: 'inv_user_' + u.uid,
       code: u.inviteCode || u.uid,
       type: 'user',
       createdBy: `${u.uid} (${u.username})`,
       creatorRole: 'user',
-      usageCount: ACTIVE_USERS.filter((other) => other.referredBy === (u.inviteCode || u.uid) || other.referredBy === u.uid).length,
+      usageCount: allUsers.filter((other) => other.referredBy === (u.inviteCode || u.uid) || other.referredBy === u.uid).length,
       maxUses: null,
       status: 'active',
       createdAt: u.createdAt || '2026-05-01 10:00:00',
@@ -2979,9 +1366,9 @@ app.get('/api/invites', (req, res) => {
 
 /**
  * POST /api/auth/login
- * Strict password verification on login against persistent user credentials
+ * Strict password verification on login against local SQLite credentials
  */
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -2992,47 +1379,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please enter your password.' });
     }
 
-    const cleanUser = username.trim();
-
-    // 1. Check in persistent ACTIVE_USERS memory/disk store and MongoDB, merging latest state
-    const activeUser = ACTIVE_USERS.find(
-      (u) =>
-        (u.username && u.username.toLowerCase() === cleanUser.toLowerCase()) ||
-        (u.uid && String(u.uid) === cleanUser)
-    ) || null;
-
-    let mongoUserDoc = null;
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        mongoUserDoc = await User.findOne({
-          $or: [
-            { username: { $regex: new RegExp(`^${escapeRegex(cleanUser)}$`, 'i') } },
-            { uid: cleanUser },
-          ],
-        });
-      } catch (dbErr) {
-        console.warn('MongoDB login search error:', dbErr.message);
-      }
-    }
-
-    const mongoObj = mongoUserDoc ? mongoUserDoc.toObject() : null;
-    let user = null;
-    if (activeUser && mongoObj) {
-      user = {
-        ...activeUser,
-        ...mongoObj,
-        id: activeUser.id || (mongoObj._id ? mongoObj._id.toString() : ('user_' + mongoObj.uid)),
-      };
-    } else if (activeUser) {
-      user = activeUser;
-    } else if (mongoObj) {
-      user = {
-        ...mongoObj,
-        id: mongoObj._id ? mongoObj._id.toString() : ('user_' + mongoObj.uid),
-      };
-    }
-
+    const user = findUserForLogin(username.trim());
     if (!user) {
       return res.status(404).json({ success: false, message: 'User account not found. Please register first.' });
     }
@@ -3041,7 +1388,6 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Your account is frozen. Please contact customer service.' });
     }
 
-    // STRICT PASSWORD VERIFICATION
     if (user.password !== password) {
       return res.status(401).json({
         success: false,
@@ -3055,7 +1401,7 @@ app.post('/api/auth/login', async (req, res) => {
       success: true,
       message: 'Login successful!',
       user: {
-        id: user.id || (user._id ? user._id.toString() : ('user_' + user.uid)),
+        id: user.id || ('user_' + user.uid),
         uid: user.uid,
         username: user.username,
         withdrawalPassword: user.withdrawalPassword || null,
@@ -3094,28 +1440,24 @@ app.post('/api/auth/login', async (req, res) => {
 
 /**
  * POST /api/user/avatar
- * Update and store profile photo URL in MongoDB
+ * Update and store profile photo URL in local SQLite database
  */
-app.post('/api/user/avatar', async (req, res) => {
+app.post('/api/user/avatar', (req, res) => {
   try {
     const { userId, avatarUrl } = req.body;
-
     if (!userId || !avatarUrl) {
       return res.status(400).json({ success: false, message: 'User ID and avatar URL are required.' });
     }
 
-    const user = await User.findOne({ $or: [{ _id: userId }, { uid: userId }] });
-    if (!user) {
+    const updated = updateUserFields({ id: userId, uid: userId }, { avatarUrl });
+    if (!updated) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
-
-    user.avatarUrl = avatarUrl;
-    await user.save();
 
     return res.json({
       success: true,
       message: 'Profile photo updated successfully!',
-      avatarUrl: user.avatarUrl,
+      avatarUrl: updated.avatarUrl,
     });
   } catch (error) {
     console.error('Avatar update error:', error);
@@ -3125,16 +1467,13 @@ app.post('/api/user/avatar', async (req, res) => {
 
 /**
  * POST /api/tasks/simulate
- * Simulates task completion, handles cycle progression, and saves record to MongoDB
- * Features:
- * - Cycle 2 (starting 30-40 USDT) progression strictly targeting 320-350 USDT final balance
- * - Special combo triggers and commission multipliers
+ * Simulates task completion, handles cycle progression, and saves record to SQLite
  */
-app.post('/api/tasks/simulate', async (req, res) => {
+app.post('/api/tasks/simulate', (req, res) => {
   try {
     const { userId, taskIndex, startBalance } = req.body;
 
-    const user = await User.findOne({ $or: [{ _id: userId }, { uid: userId }] });
+    const user = findUserByIdentifier({ id: userId, uid: userId });
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
@@ -3143,54 +1482,55 @@ app.post('/api/tasks/simulate', async (req, res) => {
     const cycle = user.cycleNumber || 1;
     const initialCycleBal = startBalance || user.cycleStartBalance || 30;
 
-    // Cycle 2: Target 320-350 USDT from 30-40 USDT starting balance
     let commission = 0;
     let isCombo = false;
-    let productPrice = +(user.balance * 0.45).toFixed(2);
+    const productPrice = +(user.balance * 0.45).toFixed(2);
 
     if (cycle === 2 && initialCycleBal >= 30 && initialCycleBal <= 40) {
-      // 25 tasks smoothly calibrated to land total balance strictly in 320 - 350 USDT
-      const totalProfitTarget = 300; // 35 USDT initial + 300 USDT profit = 335 USDT final
-      const basePerTaskProfit = totalProfitTarget / 25; // ~12 USDT average
+      const totalProfitTarget = 300;
+      const basePerTaskProfit = totalProfitTarget / 25;
       commission = +(basePerTaskProfit * (0.85 + Math.random() * 0.3)).toFixed(4);
     } else {
-      // Standard VIP 1 commission (0.5% - 1.5% of product price)
       commission = +(productPrice * 0.005).toFixed(4);
     }
 
-    // Check if this task is a combo task
     if (user.comboOrderStep === currentTask) {
       isCombo = true;
-      commission = +(commission * 3.5).toFixed(4); // Extra combo reward
+      commission = +(commission * 3.5).toFixed(4);
     }
 
     const balanceBefore = user.balance;
     const balanceAfter = +(user.balance + commission).toFixed(4);
-
-    user.balance = balanceAfter;
-    user.currentCycleTasks = currentTask;
-    user.completedTasksCount = (user.completedTasksCount || 0) + 1;
-    await user.save();
-
-    // Save simulation record in MongoDB
     const orderNum = 'ORD' + Date.now().toString().slice(-8) + Math.floor(100 + Math.random() * 900);
-    const simulationRecord = new TaskSimulation({
-      userId: user.uid,
-      username: user.username,
-      orderNumber: orderNum,
-      taskNumber: currentTask,
-      cycleNumber: cycle,
-      productTitle: `Premium Crypto Asset Trading Package #${currentTask}`,
-      productPrice,
-      commission,
-      isCombo,
-      comboStep: isCombo ? currentTask : 0,
-      status: 'completed',
-      userBalanceBefore: balanceBefore,
-      userBalanceAfter: balanceAfter,
-    });
 
-    await simulationRecord.save();
+    runTransaction(() => {
+      updateUserFields(
+        { uid: user.uid },
+        {
+          balance: balanceAfter,
+          currentCycleTasks: currentTask,
+          completedTasksCount: (user.completedTasksCount || 0) + 1,
+        }
+      );
+
+      upsertOrder({
+        orderId: 'ord_' + orderNum,
+        orderNo: orderNum,
+        userUid: user.uid,
+        userId: user.id,
+        username: user.username,
+        taskNumber: currentTask,
+        cycleNumber: cycle,
+        productTitle: `Premium Asset Order #${currentTask}`,
+        orderAmount: productPrice,
+        commission,
+        isComboOrder: isCombo,
+        comboStepNumber: isCombo ? currentTask : 0,
+        status: 'completed',
+        balanceBefore,
+        balanceAfter,
+      });
+    });
 
     return res.json({
       success: true,
@@ -3209,38 +1549,24 @@ app.post('/api/tasks/simulate', async (req, res) => {
 
 /**
  * GET & POST /api/combos/rules
- * Fetch and configure VIP combo rules (dynamic admin count with hybrid automatic fallback)
+ * Fetch and configure VIP combo rules in SQLite
  */
-app.get('/api/combos/rules', async (req, res) => {
+app.get('/api/combos/rules', (req, res) => {
   try {
-    const rules = await VipComboRule.find().sort({ stepNumber: 1 });
+    const rules = getComboRules();
     return res.json({ success: true, rules });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error fetching combo rules.' });
   }
 });
 
-app.post('/api/combos/rules', async (req, res) => {
+app.post('/api/combos/rules', (req, res) => {
   try {
     const { targetUserUid, customCombos } = req.body;
-    // Save custom combo configuration
     if (targetUserUid && Array.isArray(customCombos)) {
-      await VipComboRule.deleteMany({ targetUserUid });
-      const docs = customCombos.map((c) => ({
-        targetUserUid,
-        slotIndex: typeof c.slotIndex === 'number' ? c.slotIndex : undefined,
-        stepNumber: c.stepNumber,
-        requiredPercent: c.requiredPercent,
-        commissionPercent: c.commissionPercent,
-        customOrderAmount: typeof c.customOrderAmount === 'number' ? c.customOrderAmount : undefined,
-        customDepositAmount: typeof c.customDepositAmount === 'number' ? c.customDepositAmount : undefined,
-        customCommissionAmount: typeof c.customCommissionAmount === 'number' ? c.customCommissionAmount : undefined,
-        isCustomOverride: c.isCustomOverride !== false,
-        isCustom: true,
-      }));
-      await VipComboRule.insertMany(docs);
+      replaceComboRulesForUser(targetUserUid, customCombos);
     }
-    return res.json({ success: true, message: 'Custom combo rules saved successfully in MongoDB.' });
+    return res.json({ success: true, message: 'Custom combo rules saved successfully.' });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error saving combo rules.' });
   }
@@ -3248,20 +1574,17 @@ app.post('/api/combos/rules', async (req, res) => {
 
 /**
  * POST /api/withdrawals/request
- * Withdrawal validation:
- * 1. Checks locked TRC-20 wallet (admin-only reset)
- * 2. Mandatory recurring 25% tax whenever user balance is >= 50,000 USDT without exception
+ * Validates withdrawal password, wallet, lock state, and mandatory 25% high-balance tax
  */
-app.post('/api/withdrawals/request', async (req, res) => {
+app.post('/api/withdrawals/request', (req, res) => {
   try {
     const { userId, amount, withdrawalPassword } = req.body;
 
-    const user = await User.findOne({ $or: [{ _id: userId }, { uid: userId }] });
+    const user = findUserByIdentifier({ id: userId, uid: userId });
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    // Check withdrawal password
     if (!user.withdrawalPassword) {
       return res.status(400).json({ success: false, message: 'Please set a withdrawal security password first.' });
     }
@@ -3269,12 +1592,10 @@ app.post('/api/withdrawals/request', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Incorrect withdrawal security password.' });
     }
 
-    // Check wallet binding
     if (!user.wallet || !user.wallet.walletAddress) {
       return res.status(400).json({ success: false, message: 'Please bind a TRC-20 wallet address first.' });
     }
 
-    // Check account withdrawal lock
     if (user.isLockedAccount) {
       return res.status(403).json({
         success: false,
@@ -3290,39 +1611,36 @@ app.post('/api/withdrawals/request', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Insufficient balance for this withdrawal.' });
     }
 
-    // MANDATORY RECURRING 25% TAX FOR BALANCES OVER 50,000 USDT:
     let taxPercent = 0;
     let taxAmount = 0;
     let isHighBalanceTax = false;
 
     if (user.balance >= 50000) {
       isHighBalanceTax = true;
-      taxPercent = 25; // 25% mandatory tax
+      taxPercent = 25;
       taxAmount = +(withdrawAmt * 0.25).toFixed(4);
     }
 
     const netAmount = +(withdrawAmt - taxAmount).toFixed(4);
+    const balanceBefore = user.balance;
+    const balanceAfter = +(user.balance - withdrawAmt).toFixed(4);
 
-    // Deduct user balance
-    user.balance = +(user.balance - withdrawAmt).toFixed(4);
-    await user.save();
-
-    // Save record to MongoDB
-    const record = new WithdrawalTaxRecord({
-      userId: user.uid,
-      username: user.username,
-      amount: withdrawAmt,
-      userBalanceAtRequest: user.balance + withdrawAmt,
-      isHighBalanceTaxApplied: isHighBalanceTax,
-      taxPercent,
-      taxAmount,
-      netAmount,
-      walletAddress: user.wallet.walletAddress,
-      protocol: user.wallet.protocol || 'TRC-20',
-      status: 'pending',
+    const record = runTransaction(() => {
+      updateUserFields({ uid: user.uid }, { balance: balanceAfter });
+      return insertWithdrawalRecord({
+        userId: user.uid,
+        username: user.username,
+        amount: withdrawAmt,
+        userBalanceAtRequest: balanceBefore,
+        isHighBalanceTaxApplied: isHighBalanceTax,
+        taxPercent,
+        taxAmount,
+        netAmount,
+        walletAddress: user.wallet.walletAddress,
+        protocol: user.wallet.protocol || 'TRC-20',
+        status: 'pending',
+      });
     });
-
-    await record.save();
 
     return res.json({
       success: true,
@@ -3330,7 +1648,7 @@ app.post('/api/withdrawals/request', async (req, res) => {
         ? 'Withdrawal submitted with mandatory 25% high-balance tax deducted.'
         : 'Withdrawal submitted successfully.',
       record: {
-        id: record._id,
+        id: record.id,
         amount: withdrawAmt,
         taxPercent,
         taxAmount,
@@ -3344,6 +1662,7 @@ app.post('/api/withdrawals/request', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Server error processing withdrawal.' });
   }
 });
+
 // ==============================================================================
 // 4.1 ADMIN SECURE ROUTE PROTECTION & AUTHENTICATION MIDDLEWARE
 // ==============================================================================
@@ -3362,10 +1681,6 @@ const verifyAdminAuth = (req, res, next) => {
   next();
 };
 
-/**
- * POST /api/admin/login
- * Secure authentication gate for /admin route
- */
 app.post('/api/admin/login', (req, res) => {
   const { username, password, securityPin } = req.body;
   if (!username || !password) {
@@ -3400,10 +1715,6 @@ app.post('/api/admin/login', (req, res) => {
   });
 });
 
-/**
- * GET /api/admin/verify
- * Protected verification endpoint for active admin sessions
- */
 app.get('/api/admin/verify', verifyAdminAuth, (req, res) => {
   return res.json({
     success: true,
@@ -3415,18 +1726,15 @@ app.get('/api/admin/verify', verifyAdminAuth, (req, res) => {
 // 4.2 CUSTOMER SERVICE LIVE CHAT REST API ROUTES
 // ==============================================================================
 
-/**
- * GET /api/chat/threads
- * Returns all user conversation threads sorted by most recent message
- */
-app.get('/api/chat/threads', async (req, res) => {
+app.get('/api/chat/threads', (req, res) => {
   try {
-    const allMessages = await getMergedChatMessages();
+    const allMessages = getChatMessages();
+    const userMap = new Map(getAllUsers().map((u) => [String(u.uid), u]));
     const threadsMap = new Map();
 
     allMessages.forEach((msg) => {
       const uid = String(msg.userUid);
-      const userObj = ACTIVE_USERS.find((u) => String(u.uid) === uid);
+      const userObj = userMap.get(uid);
       const existing = threadsMap.get(uid);
       const isUnreadForAdmin = msg.sender === 'user' && !msg.readByAdmin;
 
@@ -3478,21 +1786,15 @@ app.get('/api/chat/threads', async (req, res) => {
   }
 });
 
-/**
- * GET /api/chat/messages/:userId
- * Returns chronological conversation history for a specific user (by 6-digit uid or user id)
- */
-app.get('/api/chat/messages/:userId', async (req, res) => {
+app.get('/api/chat/messages/:userId', (req, res) => {
   try {
     const rawUserId = String(req.params.userId || '').trim();
     if (!rawUserId) {
       return res.status(400).json({ success: false, message: 'userId is required.' });
     }
-    const matchedUser = ACTIVE_USERS.find(
-      (u) => String(u.uid) === rawUserId || String(u.id) === rawUserId
-    );
+    const matchedUser = findUserByIdentifier({ uid: rawUserId, id: rawUserId });
     const resolvedUid = matchedUser ? String(matchedUser.uid) : rawUserId;
-    const messages = await getMergedChatMessages(resolvedUid);
+    const messages = getChatMessages(resolvedUid);
     return res.json({ success: true, messages });
   } catch (err) {
     console.error('Error fetching user chat messages:', err.message);
@@ -3500,18 +1802,16 @@ app.get('/api/chat/messages/:userId', async (req, res) => {
   }
 });
 
-app.get('/api/chat/messages', async (req, res) => {
+app.get('/api/chat/messages', (req, res) => {
   try {
     const rawUserId = String(req.query.userId || req.query.userUid || '').trim();
     if (!rawUserId) {
-      const messages = await getMergedChatMessages();
+      const messages = getChatMessages();
       return res.json({ success: true, messages });
     }
-    const matchedUser = ACTIVE_USERS.find(
-      (u) => String(u.uid) === rawUserId || String(u.id) === rawUserId
-    );
+    const matchedUser = findUserByIdentifier({ uid: rawUserId, id: rawUserId });
     const resolvedUid = matchedUser ? String(matchedUser.uid) : rawUserId;
-    const messages = await getMergedChatMessages(resolvedUid);
+    const messages = getChatMessages(resolvedUid);
     return res.json({ success: true, messages });
   } catch (err) {
     console.error('Error fetching chat messages:', err.message);
@@ -3519,11 +1819,7 @@ app.get('/api/chat/messages', async (req, res) => {
   }
 });
 
-/**
- * POST /api/chat/send (also mounted on /api/support/message and /api/chat/messages)
- * Persist a new user or admin chat message to disk & MongoDB and broadcast over WebSocket
- */
-const handleSendChatMessage = async (req, res) => {
+const handleSendChatMessage = (req, res) => {
   try {
     const {
       id,
@@ -3540,9 +1836,7 @@ const handleSendChatMessage = async (req, res) => {
     } = req.body || {};
 
     const rawUidOrId = String(userUid || userId || '').trim();
-    const matchedByUidOrId = ACTIVE_USERS.find(
-      (u) => String(u.uid) === rawUidOrId || String(u.id) === rawUidOrId
-    );
+    const matchedByUidOrId = findUserByIdentifier({ uid: rawUidOrId, id: rawUidOrId });
     const cleanUid = matchedByUidOrId ? String(matchedByUidOrId.uid) : rawUidOrId;
     const cleanText = String(text !== undefined ? text : message || '').trim();
     const rawImageUrl = typeof imageUrl === 'string' ? imageUrl.trim() : '';
@@ -3569,15 +1863,14 @@ const handleSendChatMessage = async (req, res) => {
       });
     }
 
-    const userObj = matchedByUidOrId || ACTIVE_USERS.find((u) => String(u.uid) === cleanUid);
+    const userObj = matchedByUidOrId || findUserByIdentifier({ uid: cleanUid });
     const resolvedUsername = String(username || userObj?.username || `User_${cleanUid}`).trim();
     const msgId =
       id && String(id).trim()
         ? String(id).trim()
         : `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    // Idempotency check
-    const existing = ACTIVE_CHAT_MESSAGES.find((m) => m.id === msgId);
+    const existing = findChatMessageById(msgId);
     if (existing) {
       return res.status(200).json({
         success: true,
@@ -3586,7 +1879,7 @@ const handleSendChatMessage = async (req, res) => {
       });
     }
 
-    const newMessage = {
+    const newMessage = insertChatMessage({
       id: msgId,
       userUid: cleanUid,
       username: resolvedUsername,
@@ -3598,22 +1891,8 @@ const handleSendChatMessage = async (req, res) => {
       timestamp: cleanTimestamp,
       readByAdmin: cleanSender === 'admin',
       readByUser: cleanSender === 'user',
-    };
+    });
 
-    ACTIVE_CHAT_MESSAGES.push(newMessage);
-    savePersistentChat();
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await ChatMessage.create(newMessage);
-      } catch (dbErr) {
-        if (dbErr?.code !== 11000) {
-          console.warn('MongoDB chat save note:', dbErr.message);
-        }
-      }
-    }
-
-    // Real-time WebSocket broadcast to connected Admin & matching User
     broadcastChatEvent({ type: 'chat:message', message: newMessage }, cleanUid);
 
     return res.status(200).json({
@@ -3631,11 +1910,7 @@ app.post('/api/chat/send', handleSendChatMessage);
 app.post('/api/support/message', handleSendChatMessage);
 app.post('/api/chat/messages', handleSendChatMessage);
 
-/**
- * POST /api/chat/upload
- * Stores an uploaded chat photo/screenshot to disk and MongoDB and returns its viewable URL
- */
-app.post('/api/chat/upload', async (req, res) => {
+app.post('/api/chat/upload', (req, res) => {
   try {
     const { dataUrl, fileName } = req.body || {};
     if (!dataUrl || typeof dataUrl !== 'string') {
@@ -3674,18 +1949,7 @@ app.post('/api/chat/upload', async (req, res) => {
 
     ensureChatUploadsDir();
     fs.writeFileSync(path.join(CHAT_UPLOADS_DIR, safeFilename), buffer);
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await ChatUpload.create({
-          filename: safeFilename,
-          mimeType,
-          dataBase64: base64Data,
-        });
-      } catch (dbErr) {
-        console.warn('MongoDB chat upload store note:', dbErr.message);
-      }
-    }
+    saveChatUpload({ filename: safeFilename, mimeType, dataBase64: base64Data });
 
     const cleanOrigName =
       typeof fileName === 'string' && fileName.trim()
@@ -3703,11 +1967,7 @@ app.post('/api/chat/upload', async (req, res) => {
   }
 });
 
-/**
- * GET /api/chat/uploads/:filename
- * Serves uploaded chat images from disk or MongoDB fallback
- */
-app.get('/api/chat/uploads/:filename', async (req, res) => {
+app.get('/api/chat/uploads/:filename', (req, res) => {
   try {
     const safeName = path.basename(String(req.params.filename || '').trim());
     if (!safeName || !/^[A-Za-z0-9_.-]+$/.test(safeName)) {
@@ -3731,18 +1991,16 @@ app.get('/api/chat/uploads/:filename', async (req, res) => {
       return res.sendFile(filePath);
     }
 
-    if (mongoose.connection.readyState === 1) {
-      const record = await ChatUpload.findOne({ filename: safeName }).lean();
-      if (record && record.dataBase64) {
-        const buffer = Buffer.from(record.dataBase64, 'base64');
-        try {
-          ensureChatUploadsDir();
-          fs.writeFileSync(filePath, buffer);
-        } catch {}
-        res.setHeader('Content-Type', record.mimeType || defaultMime);
-        res.setHeader('Cache-Control', 'public, max-age=31536000');
-        return res.send(buffer);
-      }
+    const record = getChatUpload(safeName);
+    if (record && record.dataBase64) {
+      const buffer = Buffer.from(record.dataBase64, 'base64');
+      try {
+        ensureChatUploadsDir();
+        fs.writeFileSync(filePath, buffer);
+      } catch {}
+      res.setHeader('Content-Type', record.mimeType || defaultMime);
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      return res.send(buffer);
     }
 
     return res.status(404).json({ success: false, message: 'Chat image not found.' });
@@ -3752,11 +2010,7 @@ app.get('/api/chat/uploads/:filename', async (req, res) => {
   }
 });
 
-/**
- * POST /api/chat/read
- * Marks unread messages for a conversation as read by admin or user
- */
-app.post('/api/chat/read', async (req, res) => {
+app.post('/api/chat/read', (req, res) => {
   try {
     const { userUid, reader } = req.body || {};
     const cleanUid = String(userUid || '').trim();
@@ -3764,42 +2018,7 @@ app.post('/api/chat/read', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Valid userUid and reader are required.' });
     }
 
-    let changed = false;
-    ACTIVE_CHAT_MESSAGES = ACTIVE_CHAT_MESSAGES.map((m) => {
-      if (String(m.userUid) !== cleanUid) return m;
-      if (reader === 'admin' && m.sender === 'user' && !m.readByAdmin) {
-        changed = true;
-        return { ...m, readByAdmin: true };
-      }
-      if (reader === 'user' && m.sender === 'admin' && !m.readByUser) {
-        changed = true;
-        return { ...m, readByUser: true };
-      }
-      return m;
-    });
-
-    if (changed) {
-      savePersistentChat();
-    }
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        if (reader === 'admin') {
-          await ChatMessage.updateMany(
-            { userUid: cleanUid, sender: 'user', readByAdmin: false },
-            { $set: { readByAdmin: true } }
-          );
-        } else {
-          await ChatMessage.updateMany(
-            { userUid: cleanUid, sender: 'admin', readByUser: false },
-            { $set: { readByUser: true } }
-          );
-        }
-      } catch (dbErr) {
-        console.warn('MongoDB chat read update note:', dbErr.message);
-      }
-    }
-
+    markChatMessagesRead(cleanUid, reader);
     broadcastChatEvent({ type: 'chat:read', userUid: cleanUid, reader }, cleanUid);
 
     return res.json({ success: true });
@@ -3813,13 +2032,9 @@ app.post('/api/chat/read', async (req, res) => {
 // 4.3 REAL-TIME USER MONITORING REST API ROUTES
 // ==============================================================================
 
-/**
- * GET /api/monitoring/users
- * Returns merged real-time monitoring records for all users
- */
-app.get('/api/monitoring/users', async (req, res) => {
+app.get('/api/monitoring/users', (req, res) => {
   try {
-    const records = await getMergedMonitoringRecords();
+    const records = getMergedMonitoringRecords();
     const onlineCount = records.filter((r) => r.isOnline).length;
     return res.json({ success: true, records, onlineCount });
   } catch (err) {
@@ -3828,10 +2043,6 @@ app.get('/api/monitoring/users', async (req, res) => {
   }
 });
 
-/**
- * POST /api/monitoring/event
- * Silent telemetry tracker for session login/location, TRC-20 address copies, and platform selection
- */
 app.post('/api/monitoring/event', async (req, res) => {
   try {
     const {
@@ -3849,8 +2060,8 @@ app.post('/api/monitoring/event', async (req, res) => {
     }
 
     const nowIso = new Date().toISOString();
-    const existing = ACTIVE_MONITORING.find((r) => String(r.userUid) === cleanUid) || {};
-    const userObj = ACTIVE_USERS.find((u) => String(u.uid) === cleanUid);
+    const existing = getMonitoringRecordByUid(cleanUid) || {};
+    const userObj = findUserByIdentifier({ uid: cleanUid });
 
     const patch = {
       username: username || userObj?.username || existing.username || `User_${cleanUid}`,
@@ -3861,7 +2072,6 @@ app.post('/api/monitoring/event', async (req, res) => {
       if (!existing.lastLoginAt) {
         patch.lastLoginAt = nowIso;
       } else if (existing.lastActiveAt) {
-        // Update lastLoginAt if starting a new session after > 5 mins gap
         const gapMs = Date.now() - new Date(existing.lastActiveAt).getTime();
         if (isNaN(gapMs) || gapMs > 5 * 60 * 1000) {
           patch.lastLoginAt = nowIso;
@@ -3901,7 +2111,7 @@ app.post('/api/monitoring/event', async (req, res) => {
       }
     }
 
-    const record = await upsertMonitoringRecord(cleanUid, patch);
+    const record = upsertMonitoringRecord(cleanUid, patch);
     return res.json({ success: true, record });
   } catch (err) {
     console.warn('Monitoring event error:', err.message);
@@ -3913,12 +2123,7 @@ app.post('/api/monitoring/event', async (req, res) => {
 // 4.4 ADMIN ACCOUNT & ORDER RECOVERY ENDPOINT
 // ==============================================================================
 
-/**
- * POST /api/admin/recover-user-state
- * Atomically updates user balance, completed task number, combo set/triggers,
- * earned commission, and active incomplete order details across disk & MongoDB.
- */
-app.post('/api/admin/recover-user-state', async (req, res) => {
+app.post('/api/admin/recover-user-state', (req, res) => {
   try {
     const { userUid, userId, userUpdates, activeOrderAction, activeOrderPayload } = req.body || {};
     const cleanUid = String(userUid || '').trim();
@@ -3928,139 +2133,48 @@ app.post('/api/admin/recover-user-state', async (req, res) => {
       return res.status(400).json({ success: false, message: 'User UID or ID is required.' });
     }
 
-    const { userIdx, mongoUser } = await findUserFromMemoryOrMongo({
-      userUid: cleanUid,
-      userId: cleanId,
-    });
-
-    if (userIdx < 0 && !mongoUser) {
+    const targetUser = findUserByIdentifier({ uid: cleanUid, id: cleanId });
+    if (!targetUser) {
       return res.status(404).json({ success: false, message: 'Target user not found.' });
     }
 
-    const targetUid = cleanUid || String(ACTIVE_USERS[userIdx]?.uid || mongoUser?.uid || '');
+    const targetUid = String(targetUser.uid);
     const normalizedUpdates = { ...(userUpdates || {}) };
 
-    if (userIdx >= 0) {
-      ACTIVE_USERS[userIdx] = {
-        ...ACTIVE_USERS[userIdx],
-        ...normalizedUpdates,
-      };
-      savePersistentUsers();
-    }
+    const result = runTransaction(() => {
+      const updatedUser = updateUserFields({ uid: targetUid }, normalizedUpdates);
+      let updatedActiveOrder = null;
 
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await User.updateOne(
-          { uid: targetUid },
-          { $set: normalizedUpdates }
-        );
-      } catch (dbErr) {
-        console.warn('MongoDB user recovery update note:', dbErr.message);
-      }
-    }
-
-    // Handle active incomplete order restoration / update / clear
-    let updatedActiveOrder = null;
-    if (activeOrderAction === 'clear') {
-      ACTIVE_SUBMITTED_ORDERS = ACTIVE_SUBMITTED_ORDERS.filter(
-        (o) => !(String(o.userUid) === targetUid && o.status === 'incomplete')
-      );
-      savePersistentOrders();
-      if (mongoose.connection.readyState === 1) {
-        try {
-          await TaskSimulation.deleteMany({ userId: targetUid, status: 'incomplete' });
-        } catch (dbErr) {
-          console.warn('MongoDB clear active order note:', dbErr.message);
-        }
-      }
-    } else if ((activeOrderAction === 'update' || activeOrderAction === 'create') && activeOrderPayload) {
-      const ordNo = String(activeOrderPayload.orderNo || ('260' + Date.now()));
-      const ordId = String(activeOrderPayload.id || activeOrderPayload.orderId || ('ord_' + Date.now()));
-      const cleanOrder = {
-        ...activeOrderPayload,
-        id: ordId,
-        orderId: ordId,
-        orderNo: ordNo,
-        userUid: targetUid,
-        userId: cleanId || ACTIVE_USERS[userIdx]?.id || ('user_' + targetUid),
-        username: ACTIVE_USERS[userIdx]?.username || activeOrderPayload.username || '',
-        status: 'incomplete',
-      };
-
-      // Ensure no duplicate stale incomplete orders remain for this user
-      ACTIVE_SUBMITTED_ORDERS = ACTIVE_SUBMITTED_ORDERS.filter(
-        (o) =>
-          !(
-            String(o.userUid) === targetUid &&
-            o.status === 'incomplete' &&
-            String(o.orderNo) !== ordNo
-          )
-      );
-
-      const existIdx = ACTIVE_SUBMITTED_ORDERS.findIndex(
-        (o) =>
-          String(o.orderNo) === ordNo ||
-          (o.orderId && o.orderId === ordId) ||
-          (o.id && o.id === ordId)
-      );
-      if (existIdx >= 0) {
-        ACTIVE_SUBMITTED_ORDERS[existIdx] = {
-          ...ACTIVE_SUBMITTED_ORDERS[existIdx],
-          ...cleanOrder,
+      if (activeOrderAction === 'clear') {
+        clearIncompleteOrdersForUser(targetUid);
+      } else if ((activeOrderAction === 'update' || activeOrderAction === 'create') && activeOrderPayload) {
+        const ordNo = String(activeOrderPayload.orderNo || ('260' + Date.now()));
+        const ordId = String(activeOrderPayload.id || activeOrderPayload.orderId || ('ord_' + Date.now()));
+        const cleanOrder = {
+          ...activeOrderPayload,
+          id: ordId,
+          orderId: ordId,
+          orderNo: ordNo,
+          userUid: targetUid,
+          userId: cleanId || updatedUser?.id || ('user_' + targetUid),
+          username: updatedUser?.username || activeOrderPayload.username || '',
+          taskNumber: Number(activeOrderPayload.comboStepNumber || normalizedUpdates.currentCycleTasks || 1),
+          cycleNumber: Number(normalizedUpdates.cycleNumber || updatedUser?.cycleNumber || 1),
           status: 'incomplete',
         };
-      } else {
-        ACTIVE_SUBMITTED_ORDERS.unshift(cleanOrder);
-      }
-      savePersistentOrders();
-      updatedActiveOrder = cleanOrder;
 
-      if (mongoose.connection.readyState === 1) {
-        try {
-          await TaskSimulation.deleteMany({
-            userId: targetUid,
-            status: 'incomplete',
-            orderNumber: { $ne: ordNo },
-          });
-          await TaskSimulation.updateOne(
-            { orderNumber: ordNo },
-            {
-              $set: {
-                userId: targetUid,
-                username: cleanOrder.username,
-                orderNumber: ordNo,
-                taskNumber: Number(cleanOrder.comboStepNumber || normalizedUpdates.currentCycleTasks || 1),
-                cycleNumber: Number(normalizedUpdates.cycleNumber || 1),
-                productTitle: cleanOrder.productTitle || 'Matched Retail Order',
-                productPrice: Number(cleanOrder.orderAmount || 0),
-                commission: Number(cleanOrder.commission || 0),
-                expectedIncome: Number(cleanOrder.expectedIncome || 0),
-                platform: cleanOrder.platform || 'Amazon',
-                vipTier: cleanOrder.vipTier || 'VIP 1',
-                isCombo: !!cleanOrder.isComboOrder,
-                comboStep: Number(cleanOrder.comboStepNumber || 0),
-                requiredBalance: cleanOrder.requiredBalance,
-                comboDepositPercent: cleanOrder.comboDepositPercent,
-                comboCommissionPercent: cleanOrder.comboCommissionPercent,
-                requiredDepositDeficit: cleanOrder.requiredDepositDeficit,
-                depositAddress: cleanOrder.depositAddress,
-                items: cleanOrder.items || [],
-                status: 'incomplete',
-              },
-            },
-            { upsert: true }
-          );
-        } catch (dbErr) {
-          console.warn('MongoDB recover order persist note:', dbErr.message);
-        }
+        clearIncompleteOrdersForUser(targetUid, ordNo);
+        updatedActiveOrder = upsertOrder(cleanOrder);
       }
-    }
+
+      return { updatedUser, updatedActiveOrder };
+    });
 
     return res.json({
       success: true,
       message: `Account state recovered for UID ${targetUid}.`,
-      user: userIdx >= 0 ? ACTIVE_USERS[userIdx] : null,
-      activeOrder: updatedActiveOrder,
+      user: result.updatedUser,
+      activeOrder: result.updatedActiveOrder,
     });
   } catch (err) {
     console.error('Admin recover user state error:', err);
@@ -4094,7 +2208,6 @@ const setupViteOrStatic = async () => {
 
 const viteReadyPromise = setupViteOrStatic();
 
-// Root health check endpoint for Render / Cloud scanners (non-HTML callers)
 app.get('/', (req, res, next) => {
   const accept = req.headers.accept || '';
   if (accept.includes('text/html') || accept === '*/*' || !accept) {
@@ -4107,12 +2220,9 @@ app.get('/', (req, res, next) => {
   });
 });
 
-// Mount dynamic Vite / static handler that awaits Vite init on incoming requests
-// so app.listen binds port 3000 immediately without hitting startup probe timeouts.
 const distDir = path.join(__dirname, 'dist');
 const staticFallback = express.static(distDir);
 
-// Ensure unmatched /api/* routes ALWAYS return JSON 404 (never an HTML page)
 app.use('/api', (req, res) => {
   return res.status(404).json({
     success: false,
@@ -4120,7 +2230,6 @@ app.use('/api', (req, res) => {
   });
 });
 
-// Ensure Express errors on /api/* (e.g. malformed JSON body) ALWAYS return JSON
 app.use((err, req, res, next) => {
   if (req.path.startsWith('/api') || (req.originalUrl && req.originalUrl.startsWith('/api'))) {
     const statusCode = Number(err?.status || err?.statusCode || 500);
@@ -4165,10 +2274,10 @@ app.get('*', async (req, res, next) => {
   return res.status(503).send('Frontend build not found.');
 });
 
-// Listen immediately on PORT so health checks succeed without waiting for Vite/Mongo cold start
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`======================================================================`);
   console.log(`Backend Server listening on http://0.0.0.0:${PORT}`);
+  console.log(`Database: ${DB_FILE_PATH}`);
   console.log(`Health check: http://0.0.0.0:${PORT}/api/health`);
   console.log(`======================================================================`);
 });
@@ -4230,7 +2339,7 @@ wssChat.on('connection', (ws, req) => {
   });
 });
 
-wssMonitor.on('connection', async (ws, req) => {
+wssMonitor.on('connection', (ws, req) => {
   let role = 'user';
   let userUid = '';
   let username = '';
@@ -4247,7 +2356,7 @@ wssMonitor.on('connection', async (ws, req) => {
   if (role === 'admin') {
     monitorAdminClients.add(ws);
     try {
-      const records = await getMergedMonitoringRecords();
+      const records = getMergedMonitoringRecords();
       if (ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'monitor:snapshot', records }));
       }
@@ -4260,7 +2369,7 @@ wssMonitor.on('connection', async (ws, req) => {
 
     const nowIso = new Date().toISOString();
     const serverIp = extractClientIp(req);
-    const existing = ACTIVE_MONITORING.find((r) => String(r.userUid) === userUid) || {};
+    const existing = getMonitoringRecordByUid(userUid) || {};
     const patch = {
       username: username || existing.username,
       lastActiveAt: nowIso,
@@ -4268,19 +2377,20 @@ wssMonitor.on('connection', async (ws, req) => {
     if (serverIp && !isPrivateOrLocalIp(serverIp)) {
       patch.lastIp = serverIp;
     }
-    await upsertMonitoringRecord(userUid, patch);
+    upsertMonitoringRecord(userUid, patch);
 
-    // Non-blocking geo enrichment if server IP is public and location missing or IP changed
     if (serverIp && !isPrivateOrLocalIp(serverIp) && (!existing.locationCountry || existing.lastIp !== serverIp)) {
-      lookupIpGeo(serverIp).then((geo) => {
-        if (geo) {
-          upsertMonitoringRecord(userUid, {
-            locationCountry: geo.country,
-            locationCity: geo.city,
-            locationRegion: geo.region,
-          }).catch(() => {});
-        }
-      }).catch(() => {});
+      lookupIpGeo(serverIp)
+        .then((geo) => {
+          if (geo) {
+            upsertMonitoringRecord(userUid, {
+              locationCountry: geo.country,
+              locationCity: geo.city,
+              locationRegion: geo.region,
+            });
+          }
+        })
+        .catch(() => {});
     }
   }
 
@@ -4290,11 +2400,7 @@ wssMonitor.on('connection', async (ws, req) => {
       if (data?.type === 'ping') {
         ws.send(JSON.stringify({ type: 'pong' }));
         if (role === 'user' && userUid) {
-          const idx = ACTIVE_MONITORING.findIndex((r) => String(r.userUid) === userUid);
-          const nowIso = new Date().toISOString();
-          if (idx >= 0) {
-            ACTIVE_MONITORING[idx] = { ...ACTIVE_MONITORING[idx], lastActiveAt: nowIso };
-          }
+          upsertMonitoringRow(userUid, { lastActiveAt: new Date().toISOString() });
         }
       }
     } catch {}
@@ -4311,7 +2417,7 @@ wssMonitor.on('connection', async (ws, req) => {
           monitorUserSockets.delete(userUid);
           upsertMonitoringRecord(userUid, {
             lastActiveAt: new Date().toISOString(),
-          }).catch(() => {});
+          });
         }
       }
     }
