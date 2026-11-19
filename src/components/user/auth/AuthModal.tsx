@@ -199,7 +199,7 @@ export const AuthModal: React.FC<Props> = ({
           <div className="w-16 h-16 rounded-full bg-white p-2 mx-auto mb-3 flex items-center justify-center border border-white/40 shadow-md overflow-hidden">
             <img
               src="/assets/aistudio/D217d10797D9867123be63C3807Ab91e33301c2c94448713bfa4b0d9f3e7e32a_75c1958b.jpg"
-              alt="Global E-commerce Logo"
+              alt="WorldexaGlobal Logo"
               className="w-full h-full object-contain rounded-full"
             />
           </div>
@@ -207,7 +207,7 @@ export const AuthModal: React.FC<Props> = ({
           {/* Title and Subtitle */}
           {mode === 'login' ? (
             <>
-              <h1 className="text-2xl font-bold text-white tracking-tight">Global E-commerce</h1>
+              <h1 className="text-2xl font-bold text-white tracking-tight">WorldexaGlobal</h1>
               <p className="text-xs text-white/80 mt-1 font-normal tracking-wide">
                 Secure · Fast · Reliable
               </p>
@@ -216,7 +216,7 @@ export const AuthModal: React.FC<Props> = ({
             <>
               <h1 className="text-2xl font-bold text-white tracking-tight">Create Account</h1>
               <p className="text-xs text-white/80 mt-1 font-normal tracking-wide">
-                Global E-commerce · Invite code required to register
+                WorldexaGlobal · Invite code required to register
               </p>
             </>
           )}

@@ -358,7 +358,7 @@ export const AdminPanel: React.FC = () => {
           </div>
           <div className="min-w-0">
             <div className="text-xs font-extrabold text-white tracking-tight truncate">
-              Global E-commerce
+              WorldexaGlobal
             </div>
             <div className="text-[10px] font-semibold uppercase tracking-widest text-amber-400/90">
               Enterprise Admin
@@ -493,7 +493,7 @@ export const AdminPanel: React.FC = () => {
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="font-extrabold text-sm sm:text-base text-white tracking-tight truncate">
-                  Global E-commerce Admin Console
+                  WorldexaGlobal Admin Console
                 </h1>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-red-950 text-red-300 border border-red-800 uppercase font-bold shrink-0">
                   RBAC Active

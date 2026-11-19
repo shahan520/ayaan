@@ -293,7 +293,7 @@ export const ServiceTab: React.FC = () => {
               {/* Persistent Greeting Card */}
               <div className="flex flex-col items-start">
                 <div className="max-w-[85%] p-2.5 rounded-xl bg-white text-slate-800 border border-slate-200 rounded-bl-none shadow-xs">
-                  Hello {currentUser?.username || 'Trader'}! Welcome to Global E-commerce Official Customer
+                  Hello {currentUser?.username || 'Trader'}! Welcome to WorldexaGlobal Official Customer
                   Service. Send a message below and an administrator will respond directly here.
                 </div>
                 <span className="text-[9px] text-slate-400 mt-1 px-1">Official Support</span>
